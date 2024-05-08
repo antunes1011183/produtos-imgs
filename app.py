@@ -12,6 +12,11 @@ from io import BytesIO
 from flask import send_from_directory
 import os
 from werkzeug.utils import secure_filename
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import logging
+from logging.handlers import RotatingFileHandler
 
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'}
 
@@ -40,6 +45,35 @@ class Produto(db.Model):
     marca = db.Column(db.String(255))
     preco_medio = db.Column(db.Float)
     categoriaText = db.Column(db.String(255))
+    
+# Setup Logger for non-200 status codes
+log_directory = 'logs'
+if not os.path.exists(log_directory):
+    os.makedirs(log_directory)
+
+error_log_handler = RotatingFileHandler(os.path.join(log_directory, 'errors.log'), maxBytes=10000, backupCount=5)
+error_log_handler.setLevel(logging.WARNING)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+error_log_handler.setFormatter(formatter)
+
+app.logger.addHandler(error_log_handler)
+
+def log_non_200(response):
+    if response.status_code != 200:
+        app.logger.warning(f'Non-200 Response: {request.path} - Method: {request.method} - Status: {response.status_code} - IP: {request.remote_addr}')
+    return response
+
+app.after_request(log_non_200)
+
+@app.route('/logs/errors')
+#@jwt_required()  # Uncomment to enable JWT authentication
+def view_error_logs():
+    log_path = os.path.join('logs', 'errors.log')
+    if os.path.exists(log_path):
+        with open(log_path, 'r') as file:
+            return file.read(), 200
+    else:
+        return jsonify({'message': 'Log file does not exist'}), 404
 
 # Authentication and JWT token endpoint
 @app.route('/login', methods=['POST'])
@@ -56,19 +90,18 @@ def login():
 @app.route('/upload-imagem-produto/<codbar>', methods=['POST'])
 #@jwt_required()
 def upload_imagem_produto(codbar):
-    # Verificar se o post tem o arquivo parte
     if 'file' not in request.files:
-        return jsonify({'message': 'Nenhum arquivo parte do request'}), 400
+        return jsonify({'message': 'No file part in the request'}), 400
     file = request.files['file']
     if file.filename == '':
-        return jsonify({'message': 'Nenhum arquivo selecionado'}), 400
+        return jsonify({'message': 'No file selected'}), 400
     if file and allowed_file(file.filename):
         filename = secure_filename(f'{codbar}.{file.filename.rsplit(".", 1)[1].lower()}')
         file_path = os.path.join(app.static_folder, 'imgs_produtos', filename)
         file.save(file_path)
-        return jsonify({'message': 'Imagem carregada com sucesso', 'path': file_path}), 200
+        return jsonify({'message': 'Image successfully uploaded', 'path': file_path}), 200
     else:
-        return jsonify({'message': 'Formato de arquivo não permitido'}), 400
+        return jsonify({'message': 'File format not allowed'}), 400
 
 @app.route('/upload-imagem-url-produto/<codbar>', methods=['POST'])
 #@jwt_required()
