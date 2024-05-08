@@ -17,6 +17,8 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import logging
 from logging.handlers import RotatingFileHandler
+from datetime import timedelta, datetime
+
 
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'}
 
@@ -31,6 +33,7 @@ app.config['SWAGGER'] = {
 swagger = Swagger(app)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///produtos.db'
 app.config['JWT_SECRET_KEY'] = 'secretpassword'  # Change as needed
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=1)  # 1 hour token expiration
 db = SQLAlchemy(app)
 jwt = JWTManager(app)
 
@@ -66,7 +69,7 @@ def log_non_200(response):
 app.after_request(log_non_200)
 
 @app.route('/logs/errors')
-#@jwt_required()  # Uncomment to enable JWT authentication
+@jwt_required()  # Uncomment to enable JWT authentication
 def view_error_logs():
     log_path = os.path.join('logs', 'errors.log')
     if os.path.exists(log_path):
@@ -78,17 +81,23 @@ def view_error_logs():
 # Authentication and JWT token endpoint
 @app.route('/login', methods=['POST'])
 def login():
-    # Authentication logic here (check username and password against your system)
     username = request.form.get('username')
     password = request.form.get('password')
     if username == 'antunes@mupa.app' and password == '#Mupa04051623$':
-        access_token = create_access_token(identity=username)
-        return jsonify(access_token=access_token), 200
+        # Define the duration for which the token should be valid
+        expires = timedelta(hours=1)  # Set expiration time to 1 hour
+        access_token = create_access_token(identity=username, expires_delta=expires)
+        
+        # Calculate the exact expiration time and convert to milliseconds
+        expires_time = datetime.utcnow() + expires
+        expires_timestamp = int(expires_time.timestamp() * 1000)  # Convert to milliseconds
+        
+        return jsonify(access_token=access_token, expires_at=expires_timestamp), 200
     else:
-        return jsonify({'error': 'Credenciais inválidas'}), 401
+        return jsonify({'error': 'Invalid credentials'}), 401
     
 @app.route('/upload-imagem-produto/<codbar>', methods=['POST'])
-#@jwt_required()
+@jwt_required()
 def upload_imagem_produto(codbar):
     if 'file' not in request.files:
         return jsonify({'message': 'No file part in the request'}), 400
@@ -104,7 +113,7 @@ def upload_imagem_produto(codbar):
         return jsonify({'message': 'File format not allowed'}), 400
 
 @app.route('/upload-imagem-url-produto/<codbar>', methods=['POST'])
-#@jwt_required()
+@jwt_required()
 def upload_imagem_url_produto(codbar):
     # Obter a URL da imagem do corpo da requisição
     image_url = request.json.get('url')
@@ -162,7 +171,7 @@ def importar_produtos():
 
 # Get products based on query parameters with pagination
 @app.route('/produtos', methods=['GET'])
-#@jwt_required()
+@jwt_required()
 def get_produtos():
     codbar = request.args.get('codbar', default=None, type=str)
     descricao = request.args.get('descricao', default=None, type=str)
@@ -244,7 +253,7 @@ import os
 from flask import jsonify
 
 @app.route('/deletar-imagem-produto/<codbar>', methods=['DELETE'])
-#@jwt_required()
+@jwt_required()
 def deletar_imagem_produto(codbar):
     img_dir = os.path.join(app.static_folder, 'imgs_produtos')
     image_extensions = ['png', 'jpg', 'jpeg', 'webp']
@@ -264,7 +273,7 @@ def deletar_imagem_produto(codbar):
         return jsonify({'message': 'Imagem não encontrada'}), 404
 
 @app.route('/produto-imagem/<codbar>', methods=['GET'])
-#@jwt_required()
+@jwt_required()
 def obter_imagem_produto(codbar):
     img_dir = 'imgs_produtos'
     image_extensions = ['png', 'jpg', 'jpeg', 'webp']

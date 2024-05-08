@@ -1,3 +1,9 @@
 2024-05-07 23:35:47,303 - WARNING - Non-200 Response: /produto-imagem/7898939126044 - Method: GET - Status: 500 - IP: 192.168.1.9
 2024-05-07 23:35:53,674 - WARNING - Non-200 Response: /logs/not-found - Method: GET - Status: 404 - IP: 192.168.1.9
 2024-05-07 23:36:22,383 - WARNING - Non-200 Response: /logs/erros - Method: GET - Status: 404 - IP: 192.168.1.9
+2024-05-08 00:29:42,243 - WARNING - Non-200 Response: /login - Method: POST - Status: 401 - IP: 192.168.1.9
+2024-05-08 00:29:54,348 - WARNING - Non-200 Response: /login - Method: POST - Status: 401 - IP: 192.168.1.9
+2024-05-08 00:31:09,327 - WARNING - Non-200 Response: /login - Method: POST - Status: 401 - IP: 192.168.1.13
+2024-05-08 01:05:20,141 - WARNING - Non-200 Response: /produto-imagem/7898939126044 - Method: GET - Status: 500 - IP: 192.168.1.9
+2024-05-08 01:05:51,035 - WARNING - Non-200 Response: /produto-imagem/7896333041314 - Method: GET - Status: 404 - IP: 192.168.1.9
+2024-05-08 01:06:04,111 - WARNING - Non-200 Response: /produto-imagem/7896333041314 - Method: GET - Status: 404 - IP: 192.168.1.9
