@@ -7,3 +7,22 @@
 2024-05-08 01:05:20,141 - WARNING - Non-200 Response: /produto-imagem/7898939126044 - Method: GET - Status: 500 - IP: 192.168.1.9
 2024-05-08 01:05:51,035 - WARNING - Non-200 Response: /produto-imagem/7896333041314 - Method: GET - Status: 404 - IP: 192.168.1.9
 2024-05-08 01:06:04,111 - WARNING - Non-200 Response: /produto-imagem/7896333041314 - Method: GET - Status: 404 - IP: 192.168.1.9
+2024-05-08 02:03:40,506 - WARNING - Non-200 Response: /flasgger_static/lib/jquery.min.js - Method: GET - Status: 304 - IP: 192.168.1.9
+2024-05-08 02:03:40,517 - WARNING - Non-200 Response: /flasgger_static/swagger-ui-standalone-preset.js - Method: GET - Status: 304 - IP: 192.168.1.9
+2024-05-08 02:03:40,522 - WARNING - Non-200 Response: /flasgger_static/swagger-ui.css - Method: GET - Status: 304 - IP: 192.168.1.9
+2024-05-08 02:03:40,526 - WARNING - Non-200 Response: /flasgger_static/swagger-ui-bundle.js - Method: GET - Status: 304 - IP: 192.168.1.9
+2024-05-08 02:03:41,272 - WARNING - Non-200 Response: /flasgger_static/favicon-32x32.png - Method: GET - Status: 304 - IP: 192.168.1.9
+2024-05-08 02:05:13,863 - WARNING - Non-200 Response: /flasgger_static/swagger-ui.css - Method: GET - Status: 304 - IP: 192.168.1.9
+2024-05-08 02:05:13,866 - WARNING - Non-200 Response: /flasgger_static/swagger-ui-bundle.js - Method: GET - Status: 304 - IP: 192.168.1.9
+2024-05-08 02:05:13,879 - WARNING - Non-200 Response: /flasgger_static/swagger-ui-standalone-preset.js - Method: GET - Status: 304 - IP: 192.168.1.9
+2024-05-08 02:05:13,880 - WARNING - Non-200 Response: /flasgger_static/lib/jquery.min.js - Method: GET - Status: 304 - IP: 192.168.1.9
+2024-05-08 02:05:14,130 - WARNING - Non-200 Response: /flasgger_static/favicon-32x32.png - Method: GET - Status: 304 - IP: 192.168.1.9
+2024-05-08 02:05:29,690 - WARNING - Non-200 Response: /apidocs/produtos - Method: GET - Status: 404 - IP: 192.168.1.9
+2024-05-08 02:05:37,446 - WARNING - Non-200 Response: /flasgger_static/swagger-ui.css - Method: GET - Status: 304 - IP: 192.168.1.9
+2024-05-08 02:05:37,452 - WARNING - Non-200 Response: /flasgger_static/swagger-ui-bundle.js - Method: GET - Status: 304 - IP: 192.168.1.9
+2024-05-08 02:05:37,458 - WARNING - Non-200 Response: /flasgger_static/swagger-ui-standalone-preset.js - Method: GET - Status: 304 - IP: 192.168.1.9
+2024-05-08 02:05:37,460 - WARNING - Non-200 Response: /flasgger_static/lib/jquery.min.js - Method: GET - Status: 304 - IP: 192.168.1.9
+2024-05-08 02:05:37,621 - WARNING - Non-200 Response: /flasgger_static/favicon-32x32.png - Method: GET - Status: 304 - IP: 192.168.1.9
+2024-05-08 02:05:41,234 - WARNING - Non-200 Response: /favicon.ico - Method: GET - Status: 404 - IP: 192.168.1.9
+2024-05-08 02:30:30,226 - ERROR - Error fetching or saving image from Bing for barcode 7898939126044: 403 Client Error: Server failed to authenticate the request. Make sure the value of Authorization header is formed correctly including the signature. for url: https://sabancoimagenspng.blob.core.windows.net/png1000x1000/7898939126044_1.png?sv=2021-06-08&ss=b&srt=sco&sp=rltf&se=2024-01-17T02:23:03Z&st=2023-01-16T18:23:03Z&spr=https&sig=dGlkUqVLHO9FdFZ9MouWqCKVfmBHecUDBIdKrLcQ3F8%3D
+2024-05-08 02:30:30,240 - WARNING - Non-200 Response: /produto-imagem/7898939126044 - Method: GET - Status: 500 - IP: 192.168.1.9

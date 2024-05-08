@@ -37,6 +37,10 @@ app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=1)  # 1 hour token expi
 db = SQLAlchemy(app)
 jwt = JWTManager(app)
 
+images_folder = os.path.join(app.static_folder, 'imgs_produtos')
+if not os.path.exists(images_folder):
+    os.makedirs(images_folder)
+
 # Define the Product model
 class Produto(db.Model):
     codbar = db.Column(db.String(255), primary_key=True)
@@ -324,16 +328,18 @@ def buscar_e_salvar_imagem_bing(codbar):
 
     try:
         response = requests.get(search_url, headers=headers)
-        response.raise_for_status()
+        response.raise_for_status()  # This will raise an error for non-200 responses
         results = response.json()
-        if results['value']:
+        if results.get('value'):
             image_url = results['value'][0]['contentUrl']
             response = requests.get(image_url)
             response.raise_for_status()
             return save_image_from_response(response.content, codbar)
         else:
+            app.logger.warning(f"Bing found no images for barcode {codbar}: {response.json()}")
             return jsonify({'message': 'No image found from Bing'}), 404
-    except Exception as e:
+    except requests.RequestException as e:
+        app.logger.error(f"Error fetching or saving image from Bing for barcode {codbar}: {str(e)}")
         return jsonify({'message': f'Error fetching or saving image from Bing: {str(e)}'}), 500
 
 if __name__ == '__main__':
