@@ -19,10 +19,10 @@ IMAGES_FOLDER = 'static/imgs_produtos'
 AUDIO_FOLDER = 'static/audios'
 BING_API_KEY = os.getenv('BING_API_KEY', 'fd94e4427d7c4622919f8ac561818e94')
 COSMOS_TOKEN = os.getenv('COSMOS_TOKEN', 'Cb35rSvWdEpyN8-Su3o3wg')
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', 'your-openai-api-key')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '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')
 JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY', 'your-jwt-secret-key')
-AZURE_SUBSCRIPTION_KEY = os.getenv('AZURE_SUBSCRIPTION_KEY', 'your-azure-subscription-key')
-AZURE_REGION = os.getenv('AZURE_REGION', 'your-azure-region')
+AZURE_SUBSCRIPTION_KEY = os.getenv('AZURE_SUBSCRIPTION_KEY', '9beaf866156a478a9bfac946c05cddde')
+AZURE_REGION = os.getenv('AZURE_REGION', 'brazilsouth')
 
 # Flask app setup
 app = Flask(__name__)
@@ -63,15 +63,15 @@ def generate_product_suggestions(description):
         response = openai.ChatCompletion.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "Você é uma IA treinada para sugerir produtos para venda cruzada com base na descrição de um produto em um supermercado. As sugestões devem ser em português do Brasil."},
-                {"role": "user", "content": f"Com base na descrição do produto '{description}' em um supermercado, sugira dois produtos relacionados para venda cruzada."}
+                {"role": "system", "content": "Você é uma inteligência artificial desenvolvida para fornecer uma única resposta resumida e conversacional, indicando até dois produtos relacionados com base na descrição de um produto, em português do Brasil"},
+                {"role": "user", "content": f"Sugira 2 produtos (Produto 1 e Produto 2) da mesma marca, mas vamos usar uma inteligência neural mais profunda, tentando entender se uma pessoa vai comprar o produto, vai querer comprar esses 2 produtos sugeridos. Somente a descrição do produto e se possível o EAN em um formato json '{description}'."}
             ]
         )
-        suggestions = response['choices'][0]['message']['content'].strip().split(", ")
-        return suggestions
+        suggestion = response.choices[0].message['content'].strip()
+        return suggestion
     except Exception as e:
-        log_error('Erro ao gerar sugestões de produtos', '', str(e))
-        return []
+        logging.error(f"Error generating product suggestions: {str(e)}")
+        return "Desculpe, não consegui encontrar uma sugestão adequada."
 
 def log_non_200(response):
     if response.status_code != 200:
@@ -422,6 +422,34 @@ def fetch_product_from_cosmos(ean):
     else:
         return None
 
+def serialize_produto_with_image(produto):
+    # Find the image URL using the same logic as the /produto-imagem/<codbar> route
+    img_url = None
+    img_path = find_existing_image(produto.codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+    if img_path:
+        img_url = request.host_url.rstrip('/') + '/' + img_path
+    else:
+        cosmos_image_url = f"https://cdn-cosmos.bluesoft.com.br/products/{produto.codbar}.jpg"
+        response = requests.get(cosmos_image_url)
+        if response.status_code == 200:
+            img_url = save_image_from_response(response.content, produto.codbar)
+        else:
+            bing_result = buscar_e_salvar_imagem_bing(produto.codbar)
+            if bing_result[1] == 200:
+                img_url = bing_result[0]['imagem_url']
+
+    return {
+        'codbar': produto.codbar,
+        'description': produto.description,
+        'ncm': produto.ncm,
+        'cest_codigo': produto.cest_codigo,
+        'embalagem': produto.embalagem,
+        'foto_png': img_url or "No image available",
+        'marca': produto.marca,
+        'preco_medio': produto.preco_medio,
+        'categoriaText': produto.categoriaText
+    }
+    
 @app.route('/produtos', methods=['GET'])
 @jwt_required()
 @swag_from({
@@ -478,17 +506,38 @@ def get_produtos():
     categoria = request.args.get('categoria', default=None, type=str)
     page = request.args.get('page', default=1, type=int)
     per_page = request.args.get('per_page', default=100, type=int)
+    
     produtos_query = Produto.query
+    
     if codbar:
         produtos_query = produtos_query.filter_by(codbar=codbar)
     if descricao:
         produtos_query = produtos_query.filter(Produto.description.like(f'%{descricao}%'))
     if categoria:
         produtos_query = produtos_query.filter(Produto.categoriaText.like(f'%{categoria}%'))
+    
     produtos_paginados = produtos_query.paginate(page=page, per_page=per_page, error_out=False)
+    produtos = produtos_paginados.items
     total_items = produtos_paginados.total
     total_pages = produtos_paginados.pages
-    if not produtos_paginados.items:
+
+    # Check for images and sort products with images first
+    produtos_com_imagem = []
+    produtos_sem_imagem = []
+
+    for produto in produtos:
+        img_path = find_existing_image(produto.codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+        if img_path:
+            produto.foto_png = img_path
+            produtos_com_imagem.append(produto)
+        else:
+            produtos_sem_imagem.append(produto)
+
+    # Combine lists with products having images first
+    produtos_ordenados = produtos_com_imagem + produtos_sem_imagem
+    result = [serialize_produto_with_image(produto) for produto in produtos_ordenados]
+
+    if not result:
         cosmos_data = fetch_product_from_cosmos(codbar)
         if cosmos_data:
             registered_product = register_product_in_database(cosmos_data)
@@ -496,26 +545,10 @@ def get_produtos():
             return jsonify({'produtos': result, 'total_pages': 1, 'total_items': 1}), 201
         else:
             return jsonify({'message': 'No products found'}), 404
-    result = [serialize_produto_with_image(produto) for produto in produtos_paginados.items]
+
     return jsonify({'produtos': result, 'total_pages': total_pages, 'total_items': total_items}), 200
 
-def serialize_produto_with_image(produto):
-    img_url = None
-    if produto.foto_png:
-        img_url = url_for('static', filename='imgs_produtos/' + produto.foto_png, _external=True)
-
-    return {
-        'codbar': produto.codbar,
-        'description': produto.description,
-        'ncm': produto.ncm,
-        'cest_codigo': produto.cest_codigo,
-        'embalagem': produto.embalagem,
-        'foto_png': img_url or "No image available",
-        'marca': produto.marca,
-        'preco_medio': produto.preco_medio,
-        'categoriaText': produto.categoriaText
-    }
-
+    
 def register_product_in_database(product_data):
     try:
         ncm_description = product_data.get('ncm', {}).get('description', 'Não disponível') if isinstance(product_data.get('ncm'), dict) else 'Não disponível'
@@ -639,6 +672,83 @@ def text_to_speech(text, filename):
         app.logger.error(f"Error generating audio: {response.status_code}, {response.text}")
         log_error('Erro ao gerar áudio', '', f"Status: {response.status_code}, Texto: {response.text}")
         return None
+    
+# Route to delete a log entry
+@app.route('/logs/errors/<int:log_id>', methods=['DELETE'])
+@jwt_required()
+@swag_from({
+    'tags': ['Logs'],
+    'parameters': [
+        {
+            'name': 'log_id',
+            'in': 'path',
+            'type': 'integer',
+            'required': True,
+            'description': 'ID do log a ser deletado'
+        }
+    ],
+    'responses': {
+        '200': {
+            'description': 'Log deletado com sucesso'
+        },
+        '404': {
+            'description': 'Log não encontrado'
+        }
+    }
+})
+def delete_error_log(log_id):
+    erro_log = ErroLog.query.get(log_id)
+    if erro_log:
+        db.session.delete(erro_log)
+        db.session.commit()
+        return jsonify({'message': 'Log deletado com sucesso'}), 200
+    else:
+        return jsonify({'message': 'Log não encontrado'}), 404
+
+# Route to update the average price of a product
+@app.route('/produto/preco/<string:codbar>', methods=['PUT'])
+@jwt_required()
+@swag_from({
+    'tags': ['Produtos'],
+    'parameters': [
+        {
+            'name': 'codbar',
+            'in': 'path',
+            'type': 'string',
+            'required': True,
+            'description': 'Código de barras do produto'
+        },
+        {
+            'name': 'preco_medio',
+            'in': 'formData',
+            'type': 'float',
+            'required': True,
+            'description': 'Novo preço médio do produto'
+        }
+    ],
+    'responses': {
+        '200': {
+            'description': 'Preço médio atualizado com sucesso'
+        },
+        '404': {
+            'description': 'Produto não encontrado'
+        }
+    }
+})
+def update_preco_medio(codbar):
+    data = request.get_json()
+    new_preco_medio = data.get('preco_medio')
+    
+    if new_preco_medio is None:
+        return jsonify({'message': 'Preço médio é obrigatório'}), 400
+
+    produto = Produto.query.filter_by(codbar=codbar).first()
+    if produto:
+        produto.preco_medio = new_preco_medio
+        db.session.commit()
+        return jsonify({'message': 'Preço médio atualizado com sucesso'}), 200
+    else:
+        return jsonify({'message': 'Produto não encontrado'}), 404
 
 if __name__ == '__main__':
     with app.app_context():
