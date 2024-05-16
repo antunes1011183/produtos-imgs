@@ -359,10 +359,11 @@ def deletar_imagem_produto(codbar):
         }
     }
 })
+
 def obter_imagem_produto(codbar):
     img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
     if img_path:
-        img_url = request.host_url.rstrip('/') + url_for('static', filename=os.path.join(IMAGES_FOLDER, os.path.basename(img_path)))
+        img_url = request.host_url.rstrip('/') + '/' + img_path
         return jsonify({'imagem_url': img_url}), 200
     
     cosmos_image_url = f"https://cdn-cosmos.bluesoft.com.br/products/{codbar}.jpg"
@@ -385,7 +386,7 @@ def save_image_from_response(image_data, codbar):
     try:
         with open(file_path, 'wb') as f:
             f.write(image_data)
-        img_url = request.host_url.rstrip('/') + url_for('static', filename=f'{IMAGES_FOLDER}/{codbar}.jpg')
+        img_url = request.host_url.rstrip('/') + '/' + file_path
         return jsonify({'imagem_url': img_url}), 200
     except Exception as e:
         log_error('Erro ao salvar imagem', codbar, str(e))
