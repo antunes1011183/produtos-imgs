@@ -64,7 +64,7 @@ def generate_product_suggestions(description):
             model="gpt-4",
             messages=[
                 {"role": "system", "content": "Você é uma inteligência artificial desenvolvida para fornecer uma única resposta resumida e conversacional, indicando até dois produtos relacionados com base na descrição de um produto, em português do Brasil"},
-                {"role": "user", "content": f"Sugira 2 produtos (Produto 1 e Produto 2) da mesma marca, mas vamos usar uma inteligência neural mais profunda, tentando entender se uma pessoa vai comprar o produto, vai querer comprar esses 2 produtos sugeridos. Somente a descrição do produto e se possível o EAN em um formato json '{description}'."}
+                {"role": "user", "content": f"Resumindo, O que eu posso combinar com '{description}' e que eu possa comprar"}
             ]
         )
         suggestion = response.choices[0].message['content'].strip()
