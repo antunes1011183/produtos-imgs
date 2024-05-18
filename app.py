@@ -1,16 +1,17 @@
+import os
+import csv
+import logging
 import requests
+from io import StringIO
+from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, url_for
 from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required
-import csv
-from io import StringIO
-from flasgger import Swagger, swag_from
-import os
 from werkzeug.utils import secure_filename
-import logging
 from logging.handlers import RotatingFileHandler
-from datetime import timedelta, datetime
+from flasgger import Swagger, swag_from
 import openai
+import pytz
 
 # Constants
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'}
@@ -23,6 +24,7 @@ OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', 'sk-fUDJmNYHk5GDP36jBau8T3BlbkFJZro
 JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY', 'your-jwt-secret-key')
 AZURE_SUBSCRIPTION_KEY = os.getenv('AZURE_SUBSCRIPTION_KEY', '9beaf866156a478a9bfac946c05cddde')
 AZURE_REGION = os.getenv('AZURE_REGION', 'brazilsouth')
+TIMEZONE = os.getenv('TIMEZONE', 'UTC')
 
 # Flask app setup
 app = Flask(__name__)
@@ -108,7 +110,7 @@ class ErroLog(db.Model):
     erro = db.Column(db.String(255))
     barcode = db.Column(db.String(255))
     descricao_erro = db.Column(db.String(255))
-    data_hora = db.Column(db.DateTime, default=datetime.utcnow)
+    data_hora = db.Column(db.DateTime, default=lambda: datetime.now(pytz.timezone(TIMEZONE)))
 
 # Routes
 @app.route('/logs/errors', methods=['GET'])
@@ -155,9 +157,9 @@ def view_error_logs():
     query = ErroLog.query
     
     if data_inicio:
-        query = query.filter(ErroLog.data_hora >= datetime.strptime(data_inicio, '%Y-%m-%d'))
+        query = query.filter(ErroLog.data_hora >= datetime.strptime(data_inicio, '%Y-%m-%d').replace(tzinfo=pytz.timezone(TIMEZONE)))
     if data_fim:
-        query = query.filter(ErroLog.data_hora <= datetime.strptime(data_fim, '%Y-%m-%d'))
+        query = query.filter(ErroLog.data_hora <= datetime.strptime(data_fim, '%Y-%m-%d').replace(tzinfo=pytz.timezone(TIMEZONE)))
 
     erros = query.all()
     erros_json = [
@@ -210,7 +212,7 @@ def login():
     if username == 'antunes@mupa.app' and password == '#Mupa04051623$':
         expires = timedelta(hours=1)
         access_token = create_access_token(identity=username, expires_delta=expires)
-        expires_time = datetime.utcnow() + expires
+        expires_time = datetime.now(pytz.timezone(TIMEZONE)) + expires
         expires_timestamp = int(expires_time.timestamp() * 1000)
         return jsonify(access_token=access_token, expires_at=expires_timestamp), 200
     else:
@@ -257,6 +259,60 @@ def upload_imagem_produto(codbar):
         return jsonify({'message': 'Image successfully uploaded', 'path': file_path}), 200
     else:
         return jsonify({'message': 'File format not allowed'}), 400
+
+@app.route('/upload-multiplas-imagens', methods=['POST'])
+@jwt_required()
+@swag_from({
+    'tags': ['Produtos'],
+    'parameters': [
+        {
+            'name': 'files',
+            'in': 'formData',
+            'type': 'array',
+            'items': {'type': 'file'},
+            'required': True,
+            'description': 'Arquivos de imagem para upload'
+        }
+    ],
+    'responses': {
+        '200': {
+            'description': 'Imagens enviadas com sucesso'
+        },
+        '400': {
+            'description': 'Erro no upload das imagens'
+        }
+    }
+})
+def upload_multiplas_imagens():
+    if 'files' not in request.files:
+        return jsonify({'message': 'No files part in the request'}), 400
+
+    files = request.files.getlist('files')
+    if not files:
+        return jsonify({'message': 'No files selected'}), 400
+
+    saved_files = []
+    for file in files:
+        if file and allowed_file(file.filename):
+            filename = secure_filename(file.filename)
+            file_path = os.path.join(IMAGES_FOLDER, filename)
+            file.save(file_path)
+
+            # Salvar o caminho da imagem no banco de dados
+            nova_imagem = ImagemProduto(caminho=file_path)
+            db.session.add(nova_imagem)
+            db.session.commit()
+
+            saved_files.append(file_path)
+        else:
+            return jsonify({'message': 'File format not allowed'}), 400
+
+    return jsonify({'message': 'Images successfully uploaded', 'paths': saved_files}), 200
+
+# Modelo para Imagens de Produtos
+class ImagemProduto(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    caminho = db.Column(db.String(255), nullable=False)
 
 @app.route('/importar-produtos', methods=['POST'])
 @jwt_required()
@@ -359,19 +415,20 @@ def deletar_imagem_produto(codbar):
         }
     }
 })
-
 def obter_imagem_produto(codbar):
     img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
     if img_path:
         img_url = request.host_url.rstrip('/') + '/' + img_path
         return jsonify({'imagem_url': img_url}), 200
     
+    # Try to download from Cosmos
     cosmos_image_url = f"https://cdn-cosmos.bluesoft.com.br/products/{codbar}.jpg"
     response = requests.get(cosmos_image_url)
     
     if response.status_code == 200:
         return save_image_from_response(response.content, codbar)
     
+    # If Cosmos fails, try to download from Bing
     return buscar_e_salvar_imagem_bing(codbar)
 
 def find_existing_image(codbar, img_dir, image_extensions):
@@ -409,8 +466,12 @@ def buscar_e_salvar_imagem_bing(codbar):
             log_error('Imagem não encontrada no Bing', codbar, 'Nenhuma imagem encontrada')
             return jsonify({'message': 'No image found from Bing'}), 404
     except requests.RequestException as e:
-        app.logger.error(f"Error fetching or saving image from Bing for barcode {codbar}: {str(e)}")
-        log_error('Erro ao buscar ou salvar imagem no Bing', codbar, str(e))
+        if response.status_code == 403:
+            app.logger.error(f"Bing quota exceeded for barcode {codbar}: {str(e)}")
+            log_error('Cota do Bing excedida', codbar, str(e))
+        else:
+            app.logger.error(f"Error fetching or saving image from Bing for barcode {codbar}: {str(e)}")
+            log_error('Erro ao buscar ou salvar imagem no Bing', codbar, str(e))
         return jsonify({'message': f'Error fetching or saving image from Bing: {str(e)}'}), 500
 
 def fetch_product_from_cosmos(ean):
