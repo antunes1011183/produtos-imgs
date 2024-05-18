@@ -1,7 +1,7 @@
 import os
 import csv
-import logging
 import requests
+import logging
 from io import StringIO
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, url_for
@@ -72,15 +72,7 @@ def generate_product_suggestions(description):
         suggestion = response.choices[0].message['content'].strip()
         return suggestion
     except Exception as e:
-        logging.error(f"Error generating product suggestions: {str(e)}")
         return "Desculpe, não consegui encontrar uma sugestão adequada."
-
-def log_non_200(response):
-    if response.status_code != 200:
-        app.logger.warning(f'Non-200 Response: {request.path} - Method: {request.method} - Status: {response.status_code} - IP: {request.remote_addr}')
-    return response
-
-app.after_request(log_non_200)
 
 def log_error(erro, barcode, descricao_erro):
     new_error = ErroLog(erro=erro, barcode=barcode, descricao_erro=descricao_erro)
@@ -462,17 +454,11 @@ def buscar_e_salvar_imagem_bing(codbar):
             response.raise_for_status()
             return save_image_from_response(response.content, codbar)
         else:
-            app.logger.warning(f"Bing found no images for barcode {codbar}: {response.json()}")
             log_error('Imagem não encontrada no Bing', codbar, 'Nenhuma imagem encontrada')
             return jsonify({'message': 'No image found from Bing'}), 404
     except requests.RequestException as e:
-        if response.status_code == 403:
-            app.logger.error(f"Bing quota exceeded for barcode {codbar}: {str(e)}")
-            log_error('Cota do Bing excedida', codbar, str(e))
-        else:
-            app.logger.error(f"Error fetching or saving image from Bing for barcode {codbar}: {str(e)}")
-            log_error('Erro ao buscar ou salvar imagem no Bing', codbar, str(e))
-        return jsonify({'message': f'Error fetching or saving image from Bing: {str(e)}'}), 500
+        log_error('Erro ao buscar ou salvar imagem no Bing', codbar, str(e))
+        return jsonify({'message': f'Error fetching or saving image from Bing: {str(e)}')}), 500
 
 def fetch_product_from_cosmos(ean):
     url = f"https://api.cosmos.bluesoft.com.br/gtins/{ean}"
@@ -638,8 +624,6 @@ def register_product_in_database(product_data):
         db.session.commit()
         return new_product
     except Exception as e:
-        app.logger.error(f"Error registering product in database: {str(e)}")
-        log_error('Erro ao registrar produto no banco de dados', product_data.get('gtin', ''), str(e))
         return None
 
 @app.route('/produto-sugestoes', methods=['GET'])
@@ -698,8 +682,6 @@ def produto_sugestoes():
         db.session.commit()
         return jsonify({'suggestion': suggestion, 'audio_url': audio_url}), 200
     except Exception as e:
-        app.logger.error(f"Error in /produto-sugestoes route: {str(e)}")
-        log_error('Erro na rota /produto-sugestoes', ean, str(e))
         return jsonify({'message': 'Internal server error'}), 500
 
 def get_azure_tts_token(subscription_key):
@@ -726,12 +708,10 @@ def text_to_speech(text, filename):
     response = requests.post(tts_url, headers=headers, data=ssml.encode('utf-8'))
     if response.status_code == 200:
         file_path = os.path.join(AUDIO_FOLDER, filename)
-        with open(file_path, 'wb') as audio_file:
+        with open(file_path, 'wb') as audio_file):
             audio_file.write(response.content)
         return file_path
     else:
-        app.logger.error(f"Error generating audio: {response.status_code}, {response.text}")
-        log_error('Erro ao gerar áudio', '', f"Status: {response.status_code}, Texto: {response.text}")
         return None
     
 # Route to delete a log entry
