@@ -457,8 +457,9 @@ def buscar_e_salvar_imagem_bing(codbar):
             log_error('Imagem não encontrada no Bing', codbar, 'Nenhuma imagem encontrada')
             return jsonify({'message': 'No image found from Bing'}), 404
     except requests.RequestException as e:
-        log_error('Erro ao buscar ou salvar imagem no Bing', codbar, str(e))
-        return jsonify({'message': f'Error fetching or saving image from Bing: {str(e)}')}), 500
+     log_error('Erro ao buscar ou salvar imagem no Bing', codbar, str(e))
+     return jsonify({'message': f'Error fetching or saving image from Bing: {str(e)}'}), 500
+
 
 def fetch_product_from_cosmos(ean):
     url = f"https://api.cosmos.bluesoft.com.br/gtins/{ean}"
@@ -708,7 +709,7 @@ def text_to_speech(text, filename):
     response = requests.post(tts_url, headers=headers, data=ssml.encode('utf-8'))
     if response.status_code == 200:
         file_path = os.path.join(AUDIO_FOLDER, filename)
-        with open(file_path, 'wb') as audio_file):
+        with open(file_path, 'wb') as audio_file:
             audio_file.write(response.content)
         return file_path
     else:
