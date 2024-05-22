@@ -58,9 +58,11 @@ app.logger.addHandler(error_log_handler)
 
 # Helper functions
 def allowed_file(filename):
+    """Verifica se o arquivo tem uma extensão permitida"""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def generate_product_suggestions(description):
+    """Gera sugestões de produtos usando OpenAI GPT-4"""
     try:
         response = openai.ChatCompletion.create(
             model="gpt-4",
@@ -75,12 +77,14 @@ def generate_product_suggestions(description):
         return "Desculpe, não consegui encontrar uma sugestão adequada."
 
 def log_error(erro, barcode, descricao_erro):
+    """Log de erros na base de dados"""
     new_error = ErroLog(erro=erro, barcode=barcode, descricao_erro=descricao_erro)
     db.session.add(new_error)
     db.session.commit()
 
 # Database models
 class Produto(db.Model):
+    """Modelo de Produto"""
     codbar = db.Column(db.String(255), primary_key=True)
     description = db.Column(db.String(255))
     ncm = db.Column(db.String(255))
@@ -92,12 +96,14 @@ class Produto(db.Model):
     categoriaText = db.Column(db.String(255))
 
 class SugestaoProduto(db.Model):
+    """Modelo de Sugestão de Produto"""
     id = db.Column(db.Integer, primary_key=True)
     codbar = db.Column(db.String(255))
     sugestao = db.Column(db.String(255))
     audio_url = db.Column(db.String(255))
 
 class ErroLog(db.Model):
+    """Modelo de Log de Erros"""
     id = db.Column(db.Integer, primary_key=True)
     erro = db.Column(db.String(255))
     barcode = db.Column(db.String(255))
@@ -143,6 +149,7 @@ class ErroLog(db.Model):
     }
 })
 def view_error_logs():
+    """Visualiza logs de erro"""
     data_inicio = request.args.get('data_inicio')
     data_fim = request.args.get('data_fim')
     
@@ -199,6 +206,7 @@ def view_error_logs():
     }
 })
 def login():
+    """Realiza login"""
     username = request.form.get('username')
     password = request.form.get('password')
     if username == 'antunes@mupa.app' and password == '#Mupa04051623$':
@@ -239,6 +247,7 @@ def login():
     }
 })
 def upload_imagem_produto(codbar):
+    """Faz o upload da imagem de um produto"""
     if 'file' not in request.files:
         return jsonify({'message': 'No file part in the request'}), 400
     file = request.files['file']
@@ -276,6 +285,7 @@ def upload_imagem_produto(codbar):
     }
 })
 def upload_multiplas_imagens():
+    """Faz o upload de múltiplas imagens de produtos"""
     if 'files' not in request.files:
         return jsonify({'message': 'No files part in the request'}), 400
 
@@ -303,6 +313,7 @@ def upload_multiplas_imagens():
 
 # Modelo para Imagens de Produtos
 class ImagemProduto(db.Model):
+    """Modelo de Imagem de Produto"""
     id = db.Column(db.Integer, primary_key=True)
     caminho = db.Column(db.String(255), nullable=False)
 
@@ -328,6 +339,7 @@ class ImagemProduto(db.Model):
     }
 })
 def importar_produtos():
+    """Importa produtos de um arquivo CSV"""
     if 'file' not in request.files:
         return jsonify({'error': 'Nenhum arquivo CSV enviado'}), 400
     file = request.files['file']
@@ -374,6 +386,7 @@ def importar_produtos():
     }
 })
 def deletar_imagem_produto(codbar):
+    """Deleta a imagem de um produto"""
     image_found = False
     for ext in ALLOWED_EXTENSIONS:
         img_path = os.path.join(IMAGES_FOLDER, f'{codbar}.{ext}')
@@ -408,6 +421,7 @@ def deletar_imagem_produto(codbar):
     }
 })
 def obter_imagem_produto(codbar):
+    """Obtém a imagem de um produto"""
     img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
     if img_path:
         img_url = request.host_url.rstrip('/') + '/' + img_path
@@ -424,6 +438,7 @@ def obter_imagem_produto(codbar):
     return buscar_e_salvar_imagem_bing(codbar)
 
 def find_existing_image(codbar, img_dir, image_extensions):
+    """Procura a imagem existente em um diretório"""
     for ext in image_extensions:
         temp_path = os.path.join(img_dir, f'{codbar}.{ext}')
         if os.path.exists(temp_path):
@@ -431,6 +446,7 @@ def find_existing_image(codbar, img_dir, image_extensions):
     return None
 
 def save_image_from_response(image_data, codbar):
+    """Salva a imagem a partir da resposta de uma requisição"""
     file_path = os.path.join(IMAGES_FOLDER, f'{codbar}.jpg')
     try:
         with open(file_path, 'wb') as f:
@@ -442,6 +458,7 @@ def save_image_from_response(image_data, codbar):
         return jsonify({'message': 'Error saving image'}), 500
 
 def buscar_e_salvar_imagem_bing(codbar):
+    """Busca e salva a imagem do produto no Bing"""
     search_url = f"https://api.bing.microsoft.com/v7.0/images/search?q={codbar}&count=1"
     headers = {'Ocp-Apim-Subscription-Key': BING_API_KEY}
     try:
@@ -457,11 +474,11 @@ def buscar_e_salvar_imagem_bing(codbar):
             log_error('Imagem não encontrada no Bing', codbar, 'Nenhuma imagem encontrada')
             return jsonify({'message': 'No image found from Bing'}), 404
     except requests.RequestException as e:
-     log_error('Erro ao buscar ou salvar imagem no Bing', codbar, str(e))
-     return jsonify({'message': f'Error fetching or saving image from Bing: {str(e)}'}), 500
-
+        log_error('Erro ao buscar ou salvar imagem no Bing', codbar, str(e))
+        return jsonify({'message': f'Error fetching or saving image from Bing: {str(e)}'}), 500
 
 def fetch_product_from_cosmos(ean):
+    """Busca informações do produto na API Cosmos"""
     url = f"https://api.cosmos.bluesoft.com.br/gtins/{ean}"
     headers = {'X-Cosmos-Token': COSMOS_TOKEN}
     response = requests.get(url, headers=headers)
@@ -471,7 +488,7 @@ def fetch_product_from_cosmos(ean):
         return None
 
 def serialize_produto_with_image(produto):
-    # Find the image URL using the same logic as the /produto-imagem/<codbar> route
+    """Serializa um produto com a imagem"""
     img_url = None
     img_path = find_existing_image(produto.codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
     if img_path:
@@ -497,7 +514,7 @@ def serialize_produto_with_image(produto):
         'preco_medio': produto.preco_medio,
         'categoriaText': produto.categoriaText
     }
-    
+
 @app.route('/produtos', methods=['GET'])
 @jwt_required()
 @swag_from({
@@ -549,6 +566,7 @@ def serialize_produto_with_image(produto):
     }
 })
 def get_produtos():
+    """Obtém a lista de produtos"""
     codbar = request.args.get('codbar', default=None, type=str)
     descricao = request.args.get('descricao', default=None, type=str)
     categoria = request.args.get('categoria', default=None, type=str)
@@ -569,7 +587,6 @@ def get_produtos():
     total_items = produtos_paginados.total
     total_pages = produtos_paginados.pages
 
-    # Check for images and sort products with images first
     produtos_com_imagem = []
     produtos_sem_imagem = []
 
@@ -581,7 +598,6 @@ def get_produtos():
         else:
             produtos_sem_imagem.append(produto)
 
-    # Combine lists with products having images first
     produtos_ordenados = produtos_com_imagem + produtos_sem_imagem
     result = [serialize_produto_with_image(produto) for produto in produtos_ordenados]
 
@@ -596,8 +612,8 @@ def get_produtos():
 
     return jsonify({'produtos': result, 'total_pages': total_pages, 'total_items': total_items}), 200
 
-    
 def register_product_in_database(product_data):
+    """Registra um produto na base de dados"""
     try:
         ncm_description = product_data.get('ncm', {}).get('description', 'Não disponível') if isinstance(product_data.get('ncm'), dict) else 'Não disponível'
         brand_name = product_data.get('brand', {}).get('name', 'Marca não disponível') if isinstance(product_data.get('brand'), dict) else 'Marca não disponível'
@@ -656,6 +672,7 @@ def register_product_in_database(product_data):
     }
 })
 def produto_sugestoes():
+    """Obtém sugestões de produtos relacionados"""
     try:
         ean = request.args.get('ean')
         if not ean:
@@ -686,12 +703,14 @@ def produto_sugestoes():
         return jsonify({'message': 'Internal server error'}), 500
 
 def get_azure_tts_token(subscription_key):
+    """Obtém o token para Azure TTS"""
     fetch_token_url = f"https://{AZURE_REGION}.api.cognitive.microsoft.com/sts/v1.0/issuetoken"
     headers = {'Ocp-Apim-Subscription-Key': subscription_key}
     response = requests.post(fetch_token_url, headers=headers)
     return response.text
 
 def text_to_speech(text, filename):
+    """Converte texto em fala usando Azure TTS"""
     token = get_azure_tts_token(AZURE_SUBSCRIPTION_KEY)
     tts_url = f"https://{AZURE_REGION}.tts.speech.microsoft.com/cognitiveservices/v1"
     headers = {
@@ -714,7 +733,7 @@ def text_to_speech(text, filename):
         return file_path
     else:
         return None
-    
+
 # Route to delete a log entry
 @app.route('/logs/errors/<int:log_id>', methods=['DELETE'])
 @jwt_required()
@@ -739,6 +758,7 @@ def text_to_speech(text, filename):
     }
 })
 def delete_error_log(log_id):
+    """Deleta um log de erro"""
     erro_log = ErroLog.query.get(log_id)
     if erro_log:
         db.session.delete(erro_log)
@@ -778,6 +798,7 @@ def delete_error_log(log_id):
     }
 })
 def update_preco_medio(codbar):
+    """Atualiza o preço médio de um produto"""
     data = request.get_json()
     new_preco_medio = data.get('preco_medio')
     
