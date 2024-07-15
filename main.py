@@ -1,25 +1,24 @@
 import os
 import csv
 import requests
-import logging
 from io import StringIO
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, url_for
 from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required
 from werkzeug.utils import secure_filename
-from logging.handlers import RotatingFileHandler
 from flasgger import Swagger, swag_from
 import openai
 import pytz
+import logging
 
 # Constants
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'}
-LOG_DIRECTORY = 'logs'
 IMAGES_FOLDER = 'static/imgs_produtos'
 AUDIO_FOLDER = 'static/audios'
 BING_API_KEY = os.getenv('BING_API_KEY', 'fd94e4427d7c4622919f8ac561818e94')
-COSMOS_TOKEN = os.getenv('COSMOS_TOKEN', 'Cb35rSvWdEpyN8-Su3o3wg')
+GOOGLE_API_KEY = 'AIzaSyC3W-xv3bUV9yO8nMx88ZOMdP6siy9ny3U'
+GOOGLE_CX = 'd1f975386e7b5450e'
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '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')
 JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY', 'your-jwt-secret-key')
 AZURE_SUBSCRIPTION_KEY = os.getenv('AZURE_SUBSCRIPTION_KEY', '9beaf866156a478a9bfac946c05cddde')
@@ -44,43 +43,41 @@ jwt = JWTManager(app)
 # OpenAI API setup
 openai.api_key = OPENAI_API_KEY
 
-# Create necessary directories
-for folder in [LOG_DIRECTORY, IMAGES_FOLDER, AUDIO_FOLDER]:
-    if not os.path.exists(folder):
-        os.makedirs(folder)
-
 # Logger setup
-error_log_handler = RotatingFileHandler(os.path.join(LOG_DIRECTORY, 'errors.log'), maxBytes=10000, backupCount=5)
-error_log_handler.setLevel(logging.WARNING)
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-error_log_handler.setFormatter(formatter)
-app.logger.addHandler(error_log_handler)
+logging.basicConfig(level=logging.INFO)
+
+# Create necessary directories
+os.makedirs(IMAGES_FOLDER, exist_ok=True)
+os.makedirs(AUDIO_FOLDER, exist_ok=True)
 
 # Helper functions
 def allowed_file(filename):
     """Verifica se o arquivo tem uma extensão permitida"""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-def generate_product_suggestions(description):
+def generate_product_suggestions(description, tipo_sugestao, marca=None, product_list=None):
     """Gera sugestões de produtos usando OpenAI GPT-4"""
     try:
+        if tipo_sugestao == 'por_marca' and marca:
+            query = f"Produtos da marca {marca} que combinam com '{description}'"
+        elif tipo_sugestao == 'combinar':
+            query = f"O que eu posso combinar com '{description}' e que eu possa comprar"
+        elif tipo_sugestao == 'aleatorio' and product_list:
+            query = f"Escolha dois produtos aleatórios desta lista que combinam com '{description}': {product_list}"
+        else:
+            return "Tipo de sugestão inválido ou informações insuficientes."
+
         response = openai.ChatCompletion.create(
             model="gpt-4",
             messages=[
                 {"role": "system", "content": "Você é uma inteligência artificial desenvolvida para fornecer uma única resposta resumida e conversacional, indicando até dois produtos relacionados com base na descrição de um produto, em português do Brasil"},
-                {"role": "user", "content": f"Resumindo, O que eu posso combinar com '{description}' e que eu possa comprar"}
+                {"role": "user", "content": query}
             ]
         )
         suggestion = response.choices[0].message['content'].strip()
         return suggestion
     except Exception as e:
         return "Desculpe, não consegui encontrar uma sugestão adequada."
-
-def log_error(erro, barcode, descricao_erro):
-    """Log de erros na base de dados"""
-    new_error = ErroLog(erro=erro, barcode=barcode, descricao_erro=descricao_erro)
-    db.session.add(new_error)
-    db.session.commit()
 
 # Database models
 class Produto(db.Model):
@@ -101,77 +98,6 @@ class SugestaoProduto(db.Model):
     codbar = db.Column(db.String(255))
     sugestao = db.Column(db.String(255))
     audio_url = db.Column(db.String(255))
-
-class ErroLog(db.Model):
-    """Modelo de Log de Erros"""
-    id = db.Column(db.Integer, primary_key=True)
-    erro = db.Column(db.String(255))
-    barcode = db.Column(db.String(255))
-    descricao_erro = db.Column(db.String(255))
-    data_hora = db.Column(db.DateTime, default=lambda: datetime.now(pytz.timezone(TIMEZONE)))
-
-# Routes
-@app.route('/logs/errors', methods=['GET'])
-@jwt_required()
-@swag_from({
-    'tags': ['Logs'],
-    'parameters': [
-        {
-            'name': 'data_inicio',
-            'in': 'query',
-            'type': 'string',
-            'required': False,
-            'description': 'Data de início para filtrar os logs (YYYY-MM-DD)'
-        },
-        {
-            'name': 'data_fim',
-            'in': 'query',
-            'type': 'string',
-            'required': False,
-            'description': 'Data de fim para filtrar os logs (YYYY-MM-DD)'
-        }
-    ],
-    'responses': {
-        '200': {
-            'description': 'Lista de erros',
-            'examples': {
-                'application/json': [
-                    {
-                        'id': 1,
-                        'erro': 'Erro exemplo',
-                        'barcode': '123456789',
-                        'descricao_erro': 'Descrição do erro',
-                        'data_hora': '2024-01-01 12:00:00'
-                    }
-                ]
-            }
-        }
-    }
-})
-def view_error_logs():
-    """Visualiza logs de erro"""
-    data_inicio = request.args.get('data_inicio')
-    data_fim = request.args.get('data_fim')
-    
-    query = ErroLog.query
-    
-    if data_inicio:
-        query = query.filter(ErroLog.data_hora >= datetime.strptime(data_inicio, '%Y-%m-%d').replace(tzinfo=pytz.timezone(TIMEZONE)))
-    if data_fim:
-        query = query.filter(ErroLog.data_hora <= datetime.strptime(data_fim, '%Y-%m-%d').replace(tzinfo=pytz.timezone(TIMEZONE)))
-
-    erros = query.all()
-    erros_json = [
-        {
-            'id': erro.id,
-            'erro': erro.erro,
-            'barcode': erro.barcode,
-            'descricao_erro': erro.descricao_erro,
-            'data_hora': erro.data_hora.strftime('%Y-%m-%d %H:%M:%S')
-        }
-        for erro in erros
-    ]
-    return jsonify(erros_json), 200
 
 @app.route('/login', methods=['POST'])
 @swag_from({
@@ -364,7 +290,7 @@ def importar_produtos():
     db.session.commit()
     return jsonify({'message': 'Produtos importados com sucesso'}), 201
 
-@app.route('/deletar-imagem-produto/<codbar>', methods=['DELETE'])
+@app.route('/deletar-imagem-produto/<string:codbar>', methods=['DELETE'])
 @jwt_required()
 @swag_from({
     'tags': ['Produtos'],
@@ -382,22 +308,38 @@ def importar_produtos():
         },
         '404': {
             'description': 'Imagem não encontrada'
+        },
+        '422': {
+            'description': 'Erro no processamento da solicitação'
         }
     }
 })
 def deletar_imagem_produto(codbar):
     """Deleta a imagem de um produto"""
+    logging.info(f"Recebida requisição para deletar imagem do produto com código de barras: {codbar}")
+
+    if not codbar:
+        logging.error("Código de barras não fornecido")
+        return jsonify({'message': 'Código de barras não fornecido'}), 400
+    
     image_found = False
-    for ext in ALLOWED_EXTENSIONS:
-        img_path = os.path.join(IMAGES_FOLDER, f'{codbar}.{ext}')
-        if os.path.exists(img_path):
-            os.remove(img_path)
-            image_found = True
-            break
-    if image_found:
-        return jsonify({'message': 'Imagem deletada com sucesso'}), 200
-    else:
-        return jsonify({'message': 'Imagem não encontrada'}), 404
+    try:
+        for ext in ALLOWED_EXTENSIONS:
+            img_path = os.path.join(IMAGES_FOLDER, f'{codbar}.{ext}')
+            logging.info(f"Verificando a existência do arquivo: {img_path}")
+            if os.path.exists(img_path):
+                os.remove(img_path)
+                image_found = True
+                logging.info(f"Imagem deletada: {img_path}")
+                break
+        if image_found:
+            return jsonify({'message': 'Imagem deletada com sucesso'}), 200
+        else:
+            logging.warning(f"Imagem não encontrada para o código de barras: {codbar}")
+            return jsonify({'message': 'Imagem não encontrada'}), 404
+    except Exception as e:
+        logging.error(f"Erro ao deletar a imagem para o código de barras {codbar}: {e}")
+        return jsonify({'message': f'Erro no processamento da solicitação: {e}'}), 422
 
 @app.route('/produto-imagem/<codbar>', methods=['GET'])
 @jwt_required()
@@ -425,17 +367,16 @@ def obter_imagem_produto(codbar):
     img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
     if img_path:
         img_url = request.host_url.rstrip('/') + '/' + img_path
+        logging.info(f"Imagem encontrada localmente para o produto {codbar}: {img_url}")
         return jsonify({'imagem_url': img_url}), 200
     
-    # Try to download from Cosmos
-    cosmos_image_url = f"https://cdn-cosmos.bluesoft.com.br/products/{codbar}.jpg"
-    response = requests.get(cosmos_image_url)
-    
-    if response.status_code == 200:
-        return save_image_from_response(response.content, codbar)
-    
-    # If Cosmos fails, try to download from Bing
-    return buscar_e_salvar_imagem_bing(codbar)
+    # Tenta baixar da API do Bing
+    bing_result = buscar_e_salvar_imagem_bing(codbar)
+    if bing_result[1] == 200:
+        return bing_result
+
+    # Se Bing falhar, tenta baixar da API do Google
+    return buscar_e_salvar_imagem_google(codbar)
 
 def find_existing_image(codbar, img_dir, image_extensions):
     """Procura a imagem existente em um diretório"""
@@ -452,9 +393,10 @@ def save_image_from_response(image_data, codbar):
         with open(file_path, 'wb') as f:
             f.write(image_data)
         img_url = request.host_url.rstrip('/') + '/' + file_path
+        logging.info(f"Imagem salva para o produto {codbar}: {img_url}")
         return jsonify({'imagem_url': img_url}), 200
     except Exception as e:
-        log_error('Erro ao salvar imagem', codbar, str(e))
+        logging.error(f"Erro ao salvar a imagem do produto {codbar}: {e}")
         return jsonify({'message': 'Error saving image'}), 500
 
 def buscar_e_salvar_imagem_bing(codbar):
@@ -471,21 +413,30 @@ def buscar_e_salvar_imagem_bing(codbar):
             response.raise_for_status()
             return save_image_from_response(response.content, codbar)
         else:
-            log_error('Imagem não encontrada no Bing', codbar, 'Nenhuma imagem encontrada')
+            logging.info(f"Nenhuma imagem encontrada no Bing para o produto {codbar}")
             return jsonify({'message': 'No image found from Bing'}), 404
     except requests.RequestException as e:
-        log_error('Erro ao buscar ou salvar imagem no Bing', codbar, str(e))
+        logging.error(f"Erro ao buscar ou salvar imagem do Bing para o produto {codbar}: {e}")
         return jsonify({'message': f'Error fetching or saving image from Bing: {str(e)}'}), 500
 
-def fetch_product_from_cosmos(ean):
-    """Busca informações do produto na API Cosmos"""
-    url = f"https://api.cosmos.bluesoft.com.br/gtins/{ean}"
-    headers = {'X-Cosmos-Token': COSMOS_TOKEN}
-    response = requests.get(url, headers=headers)
-    if response.status_code == 200:
-        return response.json()
-    else:
-        return None
+def buscar_e_salvar_imagem_google(codbar):
+    """Busca e salva a imagem do produto no Google Images"""
+    search_url = f"https://www.googleapis.com/customsearch/v1?q={codbar}&cx={GOOGLE_CX}&searchType=image&num=1&key={GOOGLE_API_KEY}"
+    try:
+        response = requests.get(search_url)
+        response.raise_for_status()
+        results = response.json()
+        if 'items' in results:
+            image_url = results['items'][0]['link']
+            response = requests.get(image_url)
+            response.raise_for_status()
+            return save_image_from_response(response.content, codbar)
+        else:
+            logging.info(f"Nenhuma imagem encontrada no Google para o produto {codbar}")
+            return jsonify({'message': 'No image found from Google'}), 404
+    except requests.RequestException as e:
+        logging.error(f"Erro ao buscar ou salvar imagem do Google para o produto {codbar}: {e}")
+        return jsonify({'message': f'Error fetching or saving image from Google: {str(e)}'}), 500
 
 def serialize_produto_with_image(produto):
     """Serializa um produto com a imagem"""
@@ -494,14 +445,13 @@ def serialize_produto_with_image(produto):
     if img_path:
         img_url = request.host_url.rstrip('/') + '/' + img_path
     else:
-        cosmos_image_url = f"https://cdn-cosmos.bluesoft.com.br/products/{produto.codbar}.jpg"
-        response = requests.get(cosmos_image_url)
-        if response.status_code == 200:
-            img_url = save_image_from_response(response.content, produto.codbar)
+        bing_result = buscar_e_salvar_imagem_bing(produto.codbar)
+        if bing_result[1] == 200:
+            img_url = bing_result[0]['imagem_url']
         else:
-            bing_result = buscar_e_salvar_imagem_bing(produto.codbar)
-            if bing_result[1] == 200:
-                img_url = bing_result[0]['imagem_url']
+            google_result = buscar_e_salvar_imagem_google(produto.codbar)
+            if google_result[1] == 200:
+                img_url = google_result[0]['imagem_url']
 
     return {
         'codbar': produto.codbar,
@@ -602,9 +552,9 @@ def get_produtos():
     result = [serialize_produto_with_image(produto) for produto in produtos_ordenados]
 
     if not result:
-        cosmos_data = fetch_product_from_cosmos(codbar)
-        if cosmos_data:
-            registered_product = register_product_in_database(cosmos_data)
+        google_data = fetch_product_from_google(codbar)
+        if google_data:
+            registered_product = register_product_in_database(google_data)
             result = [serialize_produto_with_image(registered_product)]
             return jsonify({'produtos': result, 'total_pages': 1, 'total_items': 1}), 201
         else:
@@ -654,6 +604,13 @@ def register_product_in_database(product_data):
             'type': 'string',
             'required': True,
             'description': 'Código de barras do produto'
+        },
+        {
+            'name': 'tipo_sugestao',
+            'in': 'query',
+            'type': 'string',
+            'required': True,
+            'description': 'Tipo de sugestão: por_marca, combinar, aleatorio'
         }
     ],
     'responses': {
@@ -675,22 +632,38 @@ def produto_sugestoes():
     """Obtém sugestões de produtos relacionados"""
     try:
         ean = request.args.get('ean')
+        tipo_sugestao = request.args.get('tipo_sugestao')
         if not ean:
             return jsonify({'error': 'EAN is required'}), 400
+        if not tipo_sugestao:
+            return jsonify({'error': 'Tipo de sugestão é obrigatório'}), 400
+
         produto = Produto.query.filter_by(codbar=ean).first()
         if not produto:
-            cosmos_data = fetch_product_from_cosmos(ean)
-            if cosmos_data:
-                produto = register_product_in_database(cosmos_data)
+            google_data = fetch_product_from_google(ean)
+            if google_data:
+                produto = register_product_in_database(google_data)
                 if not produto:
                     return jsonify({'message': 'Failed to register product in database'}), 500
             else:
-                return jsonify({'message': 'Product not found locally or in Cosmos API'}), 404
+                return jsonify({'message': 'Product not found locally or in Google API'}), 404
+
         suggestion_record = SugestaoProduto.query.filter_by(codbar=ean).first()
         if suggestion_record:
             audio_url = suggestion_record.audio_url
             return jsonify({'suggestion': suggestion_record.sugestao, 'audio_url': audio_url}), 200
-        suggestion = generate_product_suggestions(produto.description)
+
+        if tipo_sugestao == 'por_marca':
+            suggestion = generate_product_suggestions(produto.description, tipo_sugestao, marca=produto.marca)
+        elif tipo_sugestao == 'combinar':
+            suggestion = generate_product_suggestions(produto.description, tipo_sugestao)
+        elif tipo_sugestao == 'aleatorio':
+            # You can define your list of products here
+            product_list = ["Produto1", "Produto2", "Produto3", "Produto4", "Produto5"]
+            suggestion = generate_product_suggestions(produto.description, tipo_sugestao, product_list=product_list)
+        else:
+            return jsonify({'error': 'Tipo de sugestão inválido'}), 400
+
         audio_file_path = text_to_speech(suggestion, f"{ean}.wav")
         if not audio_file_path:
             return jsonify({'message': 'Failed to generate audio'}), 500
@@ -733,39 +706,6 @@ def text_to_speech(text, filename):
         return file_path
     else:
         return None
-
-# Route to delete a log entry
-@app.route('/logs/errors/<int:log_id>', methods=['DELETE'])
-@jwt_required()
-@swag_from({
-    'tags': ['Logs'],
-    'parameters': [
-        {
-            'name': 'log_id',
-            'in': 'path',
-            'type': 'integer',
-            'required': True,
-            'description': 'ID do log a ser deletado'
-        }
-    ],
-    'responses': {
-        '200': {
-            'description': 'Log deletado com sucesso'
-        },
-        '404': {
-            'description': 'Log não encontrado'
-        }
-    }
-})
-def delete_error_log(log_id):
-    """Deleta um log de erro"""
-    erro_log = ErroLog.query.get(log_id)
-    if erro_log:
-        db.session.delete(erro_log)
-        db.session.commit()
-        return jsonify({'message': 'Log deletado com sucesso'}), 200
-    else:
-        return jsonify({'message': 'Log não encontrado'}), 404
 
 # Route to update the average price of a product
 @app.route('/produto/preco/<string:codbar>', methods=['PUT'])
