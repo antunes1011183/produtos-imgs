@@ -16,15 +16,13 @@ import logging
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'}
 IMAGES_FOLDER = 'static/imgs_produtos'
 AUDIO_FOLDER = 'static/audios'
-<<<<<<< HEAD:main.py
 BING_API_KEY = os.getenv('BING_API_KEY', 'fd94e4427d7c4622919f8ac561818e94')
 GOOGLE_API_KEY = 'AIzaSyC3W-xv3bUV9yO8nMx88ZOMdP6siy9ny3U'
 GOOGLE_CX = 'd1f975386e7b5450e'
-=======
 BING_API_KEY = 'fd94e4427d7c4622919f8ac561818e94'
 GOOGLE_API_KEY = 'AIzaSyAdGesz-7yJzbNKytK2iCIBTKbHWd7RRZU'
 GOOGLE_CX = '053e66708840f4936'
->>>>>>> c4203452512fb0c1cb66c3e6c5e3ba20d343b10b:app.py
+
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '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')
 JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY', 'your-jwt-secret-key')
 AZURE_SUBSCRIPTION_KEY = os.getenv('AZURE_SUBSCRIPTION_KEY', '9beaf866156a478a9bfac946c05cddde')
@@ -713,8 +711,6 @@ def text_to_speech(text, filename):
     else:
         return None
 
-<<<<<<< HEAD:main.py
-=======
 # Rota para Listar Imagens
 @app.route('/listar-imagens', methods=['GET'])
 @jwt_required()
@@ -727,7 +723,6 @@ def listar_imagens():
     except Exception as e:
         return jsonify({'message': 'Error listing images', 'error': str(e)}), 500
 
->>>>>>> c4203452512fb0c1cb66c3e6c5e3ba20d343b10b:app.py
 # Route to update the average price of a product
 @app.route('/produto/preco/<string:codbar>', methods=['PUT'])
 @jwt_required()
