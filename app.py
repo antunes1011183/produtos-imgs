@@ -411,11 +411,19 @@ def buscar_e_salvar_imagem_bing(codbar):
         response = requests.get(search_url, headers=headers)
         response.raise_for_status()
         results = response.json()
+        
         if results.get('value'):
-            image_url = results['value'][0]['contentUrl']
-            response = requests.get(image_url)
-            response.raise_for_status()
-            return save_image_from_response(response.content, codbar)
+            for item in results['value']:
+                image_url = item['contentUrl']
+                if "https://cdn-cosmos.bluesoft.com.br/products/" in image_url:
+                    continue
+                try:
+                    img_response = requests.get(image_url)
+                    img_response.raise_for_status()
+                    return save_image_from_response(img_response.content, codbar)
+                except requests.RequestException as e:
+                    logging.warning(f"Erro ao baixar a imagem do URL {image_url}: {e}")
+            return jsonify({'message': 'No valid image found from Bing'}), 404
         else:
             logging.info(f"Nenhuma imagem encontrada no Bing para o produto {codbar}")
             return jsonify({'message': 'No image found from Bing'}), 404
@@ -424,23 +432,30 @@ def buscar_e_salvar_imagem_bing(codbar):
         return jsonify({'message': f'Error fetching or saving image from Bing: {str(e)}'}), 500
 
 def buscar_e_salvar_imagem_google(codbar):
-    """Busca e salva a imagem do produto no Google Images"""
-    search_url = f"https://www.googleapis.com/customsearch/v1?q={codbar}&cx={GOOGLE_CX}&searchType=image&num=1&key={GOOGLE_API_KEY}"
+    search_url = f"https://www.googleapis.com/customsearch/v1?q={codbar}&cx={GOOGLE_CX}&searchType=image&num=2&key={GOOGLE_API_KEY}"
     try:
         response = requests.get(search_url)
         response.raise_for_status()
         results = response.json()
         if 'items' in results:
-            image_url = results['items'][0]['link']
-            response = requests.get(image_url)
-            response.raise_for_status()
-            return save_image_from_response(response.content, codbar)
+            for item in results['items']:
+                image_url = item['link']
+                if "https://cdn-cosmos.bluesoft.com.br/products/" in image_url:
+                    continue
+                try:
+                    img_response = requests.get(image_url)
+                    img_response.raise_for_status()
+                    return save_image_from_response(img_response.content, codbar)
+                except requests.RequestException as e:
+                    logging.warning(f"Erro ao baixar a imagem do URL {image_url}: {e}")
+            return jsonify({'message': 'No valid image found from Google'}), 404
         else:
             logging.info(f"Nenhuma imagem encontrada no Google para o produto {codbar}")
             return jsonify({'message': 'No image found from Google'}), 404
     except requests.RequestException as e:
         logging.error(f"Erro ao buscar ou salvar imagem do Google para o produto {codbar}: {e}")
         return jsonify({'message': f'Error fetching or saving image from Google: {str(e)}'}), 500
+
 
 def serialize_produto_with_image(produto):
     """Serializa um produto com a imagem"""
@@ -451,11 +466,11 @@ def serialize_produto_with_image(produto):
     else:
         bing_result = buscar_e_salvar_imagem_bing(produto.codbar)
         if bing_result[1] == 200:
-            img_url = bing_result[0]['imagem_url']
+            img_url = bing_result[0].get_json().get('imagem_url')
         else:
             google_result = buscar_e_salvar_imagem_google(produto.codbar)
             if google_result[1] == 200:
-                img_url = google_result[0]['imagem_url']
+                img_url = google_result[0].get_json().get('imagem_url')
 
     return {
         'codbar': produto.codbar,
