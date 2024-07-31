@@ -8,3 +8,4 @@ pytz==2024.1
 rembg==2.0.57
 Requests==2.32.3
 Werkzeug==3.0.3
+gunicorn==22.0.0
