@@ -11,14 +11,14 @@ from flasgger import Swagger, swag_from
 import openai
 import pytz
 import logging
+from rembg import remove
+from PIL import Image
 
 # Constants
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'}
 IMAGES_FOLDER = 'static/imgs_produtos'
+PROCESSED_IMAGES_FOLDER = 'static/processed_images'
 AUDIO_FOLDER = 'static/audios'
-BING_API_KEY = os.getenv('BING_API_KEY', 'fd94e4427d7c4622919f8ac561818e94')
-GOOGLE_API_KEY = 'AIzaSyC3W-xv3bUV9yO8nMx88ZOMdP6siy9ny3U'
-GOOGLE_CX = 'd1f975386e7b5450e'
 BING_API_KEY = 'fd94e4427d7c4622919f8ac561818e94'
 GOOGLE_API_KEY = 'AIzaSyAdGesz-7yJzbNKytK2iCIBTKbHWd7RRZU'
 GOOGLE_CX = '053e66708840f4936'
@@ -40,6 +40,7 @@ app.config['SWAGGER'] = {
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///produtos.db'
 app.config['JWT_SECRET_KEY'] = JWT_SECRET_KEY
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=1)
+app.config['UPLOAD_FOLDER'] = PROCESSED_IMAGES_FOLDER
 swagger = Swagger(app)
 db = SQLAlchemy(app)
 jwt = JWTManager(app)
@@ -52,6 +53,7 @@ logging.basicConfig(level=logging.INFO)
 
 # Create necessary directories
 os.makedirs(IMAGES_FOLDER, exist_ok=True)
+os.makedirs(PROCESSED_IMAGES_FOLDER, exist_ok=True)
 os.makedirs(AUDIO_FOLDER, exist_ok=True)
 
 # Helper functions
@@ -59,29 +61,14 @@ def allowed_file(filename):
     """Verifica se o arquivo tem uma extensão permitida"""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-def generate_product_suggestions(description, tipo_sugestao, marca=None, product_list=None):
-    """Gera sugestões de produtos usando OpenAI GPT-4"""
-    try:
-        if tipo_sugestao == 'por_marca' and marca:
-            query = f"Produtos da marca {marca} que combinam com '{description}'"
-        elif tipo_sugestao == 'combinar':
-            query = f"O que eu posso combinar com '{description}' e que eu possa comprar"
-        elif tipo_sugestao == 'aleatorio' and product_list:
-            query = f"Escolha dois produtos aleatórios desta lista que combinam com '{description}': {product_list}"
-        else:
-            return "Tipo de sugestão inválido ou informações insuficientes."
-
-        response = openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "Você é uma inteligência artificial desenvolvida para fornecer uma única resposta resumida e conversacional, indicando até dois produtos relacionados com base na descrição de um produto, em português do Brasil"},
-                {"role": "user", "content": query}
-            ]
-        )
-        suggestion = response.choices[0].message['content'].strip()
-        return suggestion
-    except Exception as e:
-        return "Desculpe, não consegui encontrar uma sugestão adequada."
+def save_image_with_background_removal(image, file_path):
+    """Remove o fundo da imagem e salva no caminho especificado"""
+    # Converte para RGBA se necessário
+    image = image.convert("RGBA") if image.mode != "RGBA" else image
+    # Remove o fundo
+    output_image = remove(image)
+    # Salva a imagem processada
+    output_image.save(file_path)
 
 # Database models
 class Produto(db.Model):
@@ -392,12 +379,20 @@ def find_existing_image(codbar, img_dir, image_extensions):
 
 def save_image_from_response(image_data, codbar):
     """Salva a imagem a partir da resposta de uma requisição"""
-    file_path = os.path.join(IMAGES_FOLDER, f'{codbar}.jpg')
+    original_file_path = os.path.join(IMAGES_FOLDER, f'{codbar}.jpg')
+    processed_file_path = os.path.join(PROCESSED_IMAGES_FOLDER, f'{codbar}.png')  # Mudamos para .png para suportar transparência
+
     try:
-        with open(file_path, 'wb') as f:
+        # Salva a imagem original
+        with open(original_file_path, 'wb') as f:
             f.write(image_data)
-        img_url = request.host_url.rstrip('/') + '/' + file_path
-        logging.info(f"Imagem salva para o produto {codbar}: {img_url}")
+
+        # Processa a imagem para remover o fundo
+        input_image = Image.open(original_file_path)
+        save_image_with_background_removal(input_image, processed_file_path)
+
+        img_url = request.host_url.rstrip('/') + '/' + processed_file_path
+        logging.info(f"Imagem salva e processada para o produto {codbar}: {img_url}")
         return jsonify({'imagem_url': img_url}), 200
     except Exception as e:
         logging.error(f"Erro ao salvar a imagem do produto {codbar}: {e}")
@@ -455,7 +450,6 @@ def buscar_e_salvar_imagem_google(codbar):
     except requests.RequestException as e:
         logging.error(f"Erro ao buscar ou salvar imagem do Google para o produto {codbar}: {e}")
         return jsonify({'message': f'Error fetching or saving image from Google: {str(e)}'}), 500
-
 
 def serialize_produto_with_image(produto):
     """Serializa um produto com a imagem"""

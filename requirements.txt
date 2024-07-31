@@ -1,11 +1,10 @@
-alembic==1.13.1
 flasgger==0.9.7.1
 Flask==3.0.3
 Flask_JWT_Extended==4.6.0
 flask_sqlalchemy==3.1.1
 openai==0.27.0
+Pillow==10.4.0
 pytz==2024.1
+rembg==2.0.57
 Requests==2.32.3
-SQLAlchemy==2.0.26
 Werkzeug==3.0.3
-gunicorn==22.0.0
