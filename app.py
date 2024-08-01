@@ -3,7 +3,7 @@ import csv
 import requests
 from io import StringIO
 from datetime import datetime, timedelta
-from flask import Flask, request, jsonify, url_for
+from flask import Flask, request, jsonify, url_for, render_template
 from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required
 from werkzeug.utils import secure_filename
@@ -13,6 +13,7 @@ import pytz
 import logging
 from rembg import remove
 from PIL import Image
+from io import BytesIO
 
 # Constants
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'}
@@ -40,7 +41,7 @@ app.config['SWAGGER'] = {
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///produtos.db'
 app.config['JWT_SECRET_KEY'] = JWT_SECRET_KEY
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=1)
-app.config['UPLOAD_FOLDER'] = PROCESSED_IMAGES_FOLDER
+app.config['PROCESSED_IMAGES_FOLDER'] = PROCESSED_IMAGES_FOLDER
 swagger = Swagger(app)
 db = SQLAlchemy(app)
 jwt = JWTManager(app)
@@ -89,6 +90,61 @@ class SugestaoProduto(db.Model):
     codbar = db.Column(db.String(255))
     sugestao = db.Column(db.String(255))
     audio_url = db.Column(db.String(255))
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/remove_background_url', methods=['POST'])
+def remove_background_url():
+    data = request.json
+    image_url = data.get('image_url')
+    if not image_url:
+        return jsonify({'message': 'No image URL provided'}), 400
+
+    try:
+        response = requests.get(image_url)
+        response.raise_for_status()
+        input_image = Image.open(BytesIO(response.content)).convert("RGBA")
+
+        output_image = remove(input_image)
+
+        filename = os.path.basename(image_url)
+        safe_filename = secure_filename(filename).rsplit('.', 1)[0] + '.png'
+        processed_image_path = os.path.join(app.config['PROCESSED_IMAGES_FOLDER'], safe_filename)
+
+        output_image.save(processed_image_path, format="PNG")
+
+        download_url = url_for('static', filename=f'processed_images/{safe_filename}', _external=True)
+
+        return jsonify({'url': download_url}), 200
+
+    except requests.RequestException as e:
+        return jsonify({'message': f'Error downloading image: {str(e)}'}), 500
+    except Exception as e:
+        return jsonify({'message': f'Error processing image: {str(e)}'}), 500
+
+@app.route('/remove_background_upload', methods=['POST'])
+def remove_background_upload():
+    if 'file' not in request.files:
+        return jsonify({'message': 'No file uploaded'}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'message': 'No file selected'}), 400
+    try:
+        input_image = Image.open(file.stream).convert("RGBA")
+        output_image = remove(input_image)
+
+        safe_filename = secure_filename(file.filename).rsplit('.', 1)[0] + '.png'
+        processed_image_path = os.path.join(app.config['PROCESSED_IMAGES_FOLDER'], safe_filename)
+
+        output_image.save(processed_image_path, format="PNG")
+
+        download_url = url_for('static', filename=f'processed_images/{safe_filename}', _external=True)
+
+        return jsonify({'url': download_url}), 200
+    except Exception as e:
+        return jsonify({'message': f'Error processing image: {str(e)}'}), 500
 
 @app.route('/login', methods=['POST'])
 @swag_from({
@@ -379,20 +435,14 @@ def find_existing_image(codbar, img_dir, image_extensions):
 
 def save_image_from_response(image_data, codbar):
     """Salva a imagem a partir da resposta de uma requisição"""
-    original_file_path = os.path.join(IMAGES_FOLDER, f'{codbar}.jpg')
-    processed_file_path = os.path.join(PROCESSED_IMAGES_FOLDER, f'{codbar}.png')  # Mudamos para .png para suportar transparência
-
+    file_path = os.path.join(IMAGES_FOLDER, f'{codbar}.jpg')
     try:
         # Salva a imagem original
-        with open(original_file_path, 'wb') as f:
+        with open(file_path, 'wb') as f:
             f.write(image_data)
 
-        # Processa a imagem para remover o fundo
-        input_image = Image.open(original_file_path)
-        save_image_with_background_removal(input_image, processed_file_path)
-
-        img_url = request.host_url.rstrip('/') + '/' + processed_file_path
-        logging.info(f"Imagem salva e processada para o produto {codbar}: {img_url}")
+        img_url = request.host_url.rstrip('/') + '/' + file_path
+        logging.info(f"Imagem salva para o produto {codbar}: {img_url}")
         return jsonify({'imagem_url': img_url}), 200
     except Exception as e:
         logging.error(f"Erro ao salvar a imagem do produto {codbar}: {e}")
