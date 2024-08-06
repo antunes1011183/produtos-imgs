@@ -71,6 +71,32 @@ def save_image_with_background_removal(image, file_path):
     # Salva a imagem processada
     output_image.save(file_path)
 
+def fetch_product_from_google(ean):
+    search_url = f"https://www.googleapis.com/customsearch/v1?q={ean}&cx={GOOGLE_CX}&searchType=image&num=2&key={GOOGLE_API_KEY}"
+    try:
+        response = requests.get(search_url)
+        response.raise_for_status()
+        results = response.json()
+        if 'items' in results:
+            for item in results['items']:
+                if 'product' in item:
+                    return {
+                        'gtin': ean,
+                        'description': item['title'],
+                        'ncm': 'NCM não disponível',
+                        'marca': 'Marca não disponível',
+                        'thumbnail': item['link'],
+                        'cest_codigo': 'CEST não disponível',
+                        'embalagem': 'Embalagem não disponível',
+                        'preco_medio': 0.0,
+                        'categoriaText': 'Categoria não disponível'
+                    }
+        return None
+    except requests.RequestException as e:
+        logging.error(f"Erro ao buscar produto no Google: {e}")
+        return None
+
+
 # Database models
 class Produto(db.Model):
     """Modelo de Produto"""
@@ -88,6 +114,7 @@ class SugestaoProduto(db.Model):
     """Modelo de Sugestão de Produto"""
     id = db.Column(db.Integer, primary_key=True)
     codbar = db.Column(db.String(255))
+    tipo_sugestao = db.Column(db.String(255))  # Novo campo para tipo de sugestão
     sugestao = db.Column(db.String(255))
     audio_url = db.Column(db.String(255))
 
@@ -435,14 +462,20 @@ def find_existing_image(codbar, img_dir, image_extensions):
 
 def save_image_from_response(image_data, codbar):
     """Salva a imagem a partir da resposta de uma requisição"""
-    file_path = os.path.join(IMAGES_FOLDER, f'{codbar}.jpg')
+    original_file_path = os.path.join(IMAGES_FOLDER, f'{codbar}.jpg')
+    processed_file_path = os.path.join(PROCESSED_IMAGES_FOLDER, f'{codbar}.png')  # Mudamos para .png para suportar transparência
+
     try:
         # Salva a imagem original
-        with open(file_path, 'wb') as f:
+        with open(original_file_path, 'wb') as f:
             f.write(image_data)
 
-        img_url = request.host_url.rstrip('/') + '/' + file_path
-        logging.info(f"Imagem salva para o produto {codbar}: {img_url}")
+        # Processa a imagem para remover o fundo
+        input_image = Image.open(original_file_path)
+        save_image_with_background_removal(input_image, processed_file_path)
+
+        img_url = request.host_url.rstrip('/') + '/' + processed_file_path
+        logging.info(f"Imagem salva e processada para o produto {codbar}: {img_url}")
         return jsonify({'imagem_url': img_url}), 200
     except Exception as e:
         logging.error(f"Erro ao salvar a imagem do produto {codbar}: {e}")
@@ -656,6 +689,40 @@ def register_product_in_database(product_data):
     except Exception as e:
         return None
 
+def generate_product_suggestions(produto, tipo_sugestao):
+    """Gera sugestões de produtos usando OpenAI GPT-4 e retorna os EANs dos produtos sugeridos"""
+    try:
+        description = produto.description
+        marca = produto.marca
+        query = ""
+        
+        if tipo_sugestao == 'por_marca' and marca:
+            query = f"Produtos da marca {marca} que combinam com '{description}'"
+        elif tipo_sugestao == 'combinar':
+            query = f"O que eu posso combinar com '{description}' e que eu possa comprar"
+        else:
+            return "Tipo de sugestão inválido ou informações insuficientes.", []
+
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "Você é uma inteligência artificial desenvolvida para fornecer uma única resposta resumida e conversacional, indicando até dois produtos relacionados com base na descrição de um produto, em português do Brasil"},
+                {"role": "user", "content": query}
+            ]
+        )
+        suggestion = response.choices[0].message['content'].strip()
+
+        # Vamos simular a recuperação de EANs para produtos sugeridos
+        # Em um cenário real, você precisaria de uma lógica para mapear esses nomes para EANs reais
+        suggested_eans = ['7896504300646', '7896026305133']  # Substitua com lógica real
+
+        return suggestion, suggested_eans
+    except Exception as e:
+        logging.error(f"Erro ao gerar sugestões de produtos: {e}")
+        return "Desculpe, não consegui encontrar uma sugestão adequada.", []
+
+
+
 @app.route('/produto-sugestoes', methods=['GET'])
 @jwt_required()
 @swag_from({
@@ -673,7 +740,7 @@ def register_product_in_database(product_data):
             'in': 'query',
             'type': 'string',
             'required': True,
-            'description': 'Tipo de sugestão: por_marca, combinar, aleatorio'
+            'description': 'Tipo de sugestão: por_marca, combinar'
         }
     ],
     'responses': {
@@ -703,40 +770,36 @@ def produto_sugestoes():
 
         produto = Produto.query.filter_by(codbar=ean).first()
         if not produto:
+            # Tenta buscar o produto na API do Google
             google_data = fetch_product_from_google(ean)
             if google_data:
                 produto = register_product_in_database(google_data)
-                if not produto:
-                    return jsonify({'message': 'Failed to register product in database'}), 500
-            else:
-                return jsonify({'message': 'Product not found locally or in Google API'}), 404
+            if not produto:
+                return jsonify({'message': 'Product not found'}), 404
 
-        suggestion_record = SugestaoProduto.query.filter_by(codbar=ean).first()
-        if suggestion_record:
-            audio_url = suggestion_record.audio_url
-            return jsonify({'suggestion': suggestion_record.sugestao, 'audio_url': audio_url}), 200
+        suggestion, eans_sugeridos = generate_product_suggestions(produto, tipo_sugestao)
 
-        if tipo_sugestao == 'por_marca':
-            suggestion = generate_product_suggestions(produto.description, tipo_sugestao, marca=produto.marca)
-        elif tipo_sugestao == 'combinar':
-            suggestion = generate_product_suggestions(produto.description, tipo_sugestao)
-        elif tipo_sugestao == 'aleatorio':
-            # You can define your list of products here
-            product_list = ["Produto1", "Produto2", "Produto3", "Produto4", "Produto5"]
-            suggestion = generate_product_suggestions(produto.description, tipo_sugestao, product_list=product_list)
-        else:
-            return jsonify({'error': 'Tipo de sugestão inválido'}), 400
-
-        audio_file_path = text_to_speech(suggestion, f"{ean}.wav")
+        audio_file_path = text_to_speech(suggestion, f"{ean}_{tipo_sugestao}.wav")
         if not audio_file_path:
             return jsonify({'message': 'Failed to generate audio'}), 500
-        audio_url = url_for('static', filename='audios/' + f"{ean}.wav", _external=True)
-        new_suggestion = SugestaoProduto(codbar=ean, sugestao=suggestion, audio_url=audio_url)
+        audio_url = url_for('static', filename='audios/' + f"{ean}_{tipo_sugestao}.wav", _external=True)
+
+        # Salva a sugestão no banco de dados
+        new_suggestion = SugestaoProduto(codbar=ean, tipo_sugestao=tipo_sugestao, sugestao=suggestion, audio_url=audio_url)
         db.session.add(new_suggestion)
         db.session.commit()
-        return jsonify({'suggestion': suggestion, 'audio_url': audio_url}), 200
+
+        return jsonify({'suggestion': suggestion, 'audio_url': audio_url, 'eans_sugeridos': eans_sugeridos}), 200
     except Exception as e:
+        logging.error(f"Erro interno do servidor: {e}")
         return jsonify({'message': 'Internal server error'}), 500
+
+
+
+def fetch_related_products(description, max_results=2):
+    """Busca produtos relacionados no banco de dados"""
+    related_products = Produto.query.filter(Produto.description.like(f'%{description}%')).limit(max_results).all()
+    return related_products
 
 def get_azure_tts_token(subscription_key):
     """Obtém o token para Azure TTS"""
@@ -768,6 +831,23 @@ def text_to_speech(text, filename):
             audio_file.write(response.content)
         return file_path
     else:
+        return None
+def fetch_description_from_ean(ean):
+    """Busca a descrição do produto a partir do EAN"""
+    try:
+        produto = Produto.query.filter_by(codbar=ean).first()
+        if produto:
+            return produto.description
+        else:
+            google_data = fetch_product_from_google(ean)
+            if google_data:
+                description = google_data.get('description')
+                if description:
+                    register_product_in_database(google_data)
+                    return description
+        return None
+    except Exception as e:
+        logging.error(f"Erro ao buscar descrição do produto: {e}")
         return None
 
 # Rota para Listar Imagens
