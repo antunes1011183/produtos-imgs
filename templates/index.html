@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Remover fundo</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <style>
+        body {
+            padding: 20px;
+            background-color: #f8f9fa;
+        }
+        .container {
+            max-width: 600px;
+            margin: auto;
+        }
+        .card {
+            margin-top: 20px;
+            padding: 20px;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h3 class="text-center">Remover fundo da imagem</h3>
+    <div class="card">
+        <h5 class="card-title">Upload</h5>
+        <form id="uploadForm" enctype="multipart/form-data">
+            <div class="form-group">
+                <label for="fileInput">Selecione uma imagem:</label>
+                <input type="file" class="form-control-file" id="fileInput" name="file" accept="image/*">
+            </div>
+            <button type="submit" class="btn btn-primary">Remover fundo da imagem</button>
+        </form>
+    </div>
+
+    <div class="card">
+        <h5 class="card-title">Cole a url da imagem</h5>
+        <form id="urlForm">
+            <div class="form-group">
+                <label for="imageUrl">Image URL:</label>
+                <input type="url" class="form-control" id="imageUrl" placeholder="Url da imagem">
+            </div>
+            <button type="submit" class="btn btn-primary">Remover fundo da imagem</button>
+        </form>
+    </div>
+
+    <div id="result" class="card" style="display: none;">
+        <h5 class="card-title">Imagem processada</h5>
+        <img id="resultImage" src="" alt="Processed Image" class="img-fluid">
+    </div>
+</div>
+
+<script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
+<script>
+    $(document).ready(function() {
+        $('#uploadForm').on('submit', function(e) {
+            e.preventDefault();
+            let formData = new FormData(this);
+            $.ajax({
+                url: '/remove_background_upload',
+                type: 'POST',
+                data: formData,
+                processData: false,
+                contentType: false,
+                success: function(data) {
+                    $('#resultImage').attr('src', data.url);
+                    $('#result').show();
+                },
+                error: function(err) {
+                    alert('Error processing image: ' + err.responseJSON.message);
+                }
+            });
+        });
+
+        $('#urlForm').on('submit', function(e) {
+            e.preventDefault();
+            let imageUrl = $('#imageUrl').val();
+            $.ajax({
+                url: '/remove_background_url',
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({ image_url: imageUrl }),
+                success: function(data) {
+                    $('#resultImage').attr('src', data.url);
+                    $('#result').show();
+                },
+                error: function(err) {
+                    alert('Error processing image: ' + err.responseJSON.message);
+                }
+            });
+        });
+    });
+</script>
+</body>
+</html>
