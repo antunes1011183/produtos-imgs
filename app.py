@@ -1,11 +1,8 @@
 import os
 import csv
 import requests
-<<<<<<< HEAD
 from io import StringIO, BytesIO
-=======
 from io import StringIO
->>>>>>> ae52e37a50c623492cea475c86d2ba729f257ca7
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, url_for, render_template
 from flask_sqlalchemy import SQLAlchemy
@@ -17,12 +14,9 @@ import pytz
 import logging
 from rembg import remove
 from PIL import Image
-<<<<<<< HEAD
 from flask_migrate import Migrate  # Adicionado
 import re
-=======
 from io import BytesIO
->>>>>>> ae52e37a50c623492cea475c86d2ba729f257ca7
 
 # Constants
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'}
@@ -48,19 +42,15 @@ app.config['SWAGGER'] = {
     'description': 'API para gerenciar produtos e imagens de produtos'
 }
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///produtos.db'
-<<<<<<< HEAD
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False  # Adicionado para evitar warnings
-=======
->>>>>>> ae52e37a50c623492cea475c86d2ba729f257ca7
 app.config['JWT_SECRET_KEY'] = JWT_SECRET_KEY
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=1)
 app.config['PROCESSED_IMAGES_FOLDER'] = PROCESSED_IMAGES_FOLDER
 swagger = Swagger(app)
 db = SQLAlchemy(app)
-<<<<<<< HEAD
+
 migrate = Migrate(app, db)  # Inicializado o Flask-Migrate
-=======
->>>>>>> ae52e37a50c623492cea475c86d2ba729f257ca7
+
 jwt = JWTManager(app)
 
 # OpenAI API setup
@@ -113,10 +103,6 @@ def fetch_product_from_google(ean):
         logging.error(f"Erro ao buscar produto no Google: {e}")
         return None
 
-<<<<<<< HEAD
-=======
-
->>>>>>> ae52e37a50c623492cea475c86d2ba729f257ca7
 # Database models
 class Produto(db.Model):
     """Modelo de Produto"""
@@ -490,17 +476,16 @@ def save_image_from_response(image_data, codbar):
         with open(original_file_path, 'wb') as f:
             f.write(image_data)
 
-<<<<<<< HEAD
         img_url = request.host_url.rstrip('/') + '/' + original_file_path
         logging.info(f"Imagem salva para o produto {codbar}: {img_url}")
-=======
+
         # Processa a imagem para remover o fundo
         input_image = Image.open(original_file_path)
         save_image_with_background_removal(input_image, processed_file_path)
 
         img_url = request.host_url.rstrip('/') + '/' + processed_file_path
         logging.info(f"Imagem salva e processada para o produto {codbar}: {img_url}")
->>>>>>> ae52e37a50c623492cea475c86d2ba729f257ca7
+
         return jsonify({'imagem_url': img_url}), 200
     except Exception as e:
         logging.error(f"Erro ao salvar a imagem do produto {codbar}: {e}")
@@ -714,8 +699,6 @@ def register_product_in_database(product_data):
     except Exception as e:
         return None
 
-<<<<<<< HEAD
-=======
 def generate_product_suggestions(produto, tipo_sugestao):
     """Gera sugestões de produtos usando OpenAI GPT-4 e retorna os EANs dos produtos sugeridos"""
     try:
@@ -748,9 +731,6 @@ def generate_product_suggestions(produto, tipo_sugestao):
         logging.error(f"Erro ao gerar sugestões de produtos: {e}")
         return "Desculpe, não consegui encontrar uma sugestão adequada.", []
 
-
-
->>>>>>> ae52e37a50c623492cea475c86d2ba729f257ca7
 @app.route('/produto-sugestoes', methods=['GET'])
 @jwt_required()
 @swag_from({
@@ -822,7 +802,6 @@ def produto_sugestoes():
         logging.error(f"Erro interno do servidor: {e}")
         return jsonify({'message': 'Internal server error'}), 500
 
-<<<<<<< HEAD
 def generate_product_suggestions(produto, tipo_sugestao):
     """Gera sugestões de produtos usando OpenAI GPT-4 e retorna os EANs dos produtos sugeridos"""
     try:
@@ -862,14 +841,11 @@ def find_ean_from_text(text):
         # Se nenhum EAN for encontrado, adicione EANs simulados para teste
         eans = ['7896504300646', '7896026305133']
     return eans
-=======
-
 
 def fetch_related_products(description, max_results=2):
     """Busca produtos relacionados no banco de dados"""
     related_products = Produto.query.filter(Produto.description.like(f'%{description}%')).limit(max_results).all()
     return related_products
->>>>>>> ae52e37a50c623492cea475c86d2ba729f257ca7
 
 def get_azure_tts_token(subscription_key):
     """Obtém o token para Azure TTS"""
@@ -902,10 +878,7 @@ def text_to_speech(text, filename):
         return file_path
     else:
         return None
-<<<<<<< HEAD
 
-=======
->>>>>>> ae52e37a50c623492cea475c86d2ba729f257ca7
 def fetch_description_from_ean(ean):
     """Busca a descrição do produto a partir do EAN"""
     try:
