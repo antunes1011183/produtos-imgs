@@ -783,7 +783,12 @@ def produto_sugestoes():
             if google_data:
                 produto = register_product_in_database(google_data)
             if not produto:
-                return jsonify({'message': 'Product not found'}), 404
+                # Tenta buscar o produto no Cosmos
+                cosmos_data = fetch_product_from_cosmos(ean)
+                if cosmos_data:
+                    produto = register_product_in_database(cosmos_data)
+                else:
+                    return jsonify({'message': 'Product not found'}), 404
 
         suggestion, eans_sugeridos = generate_product_suggestions(produto, tipo_sugestao)
 
@@ -952,6 +957,91 @@ def update_preco_medio(codbar):
         produto.preco_medio = new_preco_medio
         db.session.commit()
         return jsonify({'message': 'Preço médio atualizado com sucesso'}), 200
+    else:
+        return jsonify({'message': 'Produto não encontrado'}), 404
+
+def fetch_product_from_cosmos(ean):
+    """Busca o produto na API do Cosmos usando o código de barras (EAN)"""
+    cosmos_url = f"https://api.cosmos.bluesoft.com.br/gtins/{ean}.json"
+    headers = {
+        'Authorization': 'Bearer KZSEuMgGjPb8d9gFztQHiw'  # Seu token do Cosmos
+    }
+    try:
+        response = requests.get(cosmos_url, headers=headers)
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        logging.error(f"Erro ao buscar produto no Cosmos: {e}")
+        return None
+
+@app.route('/produto/<string:codbar>', methods=['GET'])
+@jwt_required()
+@swag_from({
+    'tags': ['Produtos'],
+    'parameters': [
+        {
+            'name': 'codbar',
+            'in': 'path',
+            'type': 'string',
+            'required': True,
+            'description': 'Código de barras do produto'
+        }
+    ],
+    'responses': {
+        '200': {
+            'description': 'Produto encontrado',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'codbar': {'type': 'string'},
+                    'description': {'type': 'string'},
+                    'ncm': {'type': 'string'},
+                    'marca': {'type': 'string'},
+                    'preco_medio': {'type': 'float'},
+                    'categoriaText': {'type': 'string'}
+                }
+            }
+        },
+        '201': {
+            'description': 'Produto cadastrado com sucesso'
+        },
+        '404': {
+            'description': 'Produto não encontrado'
+        }
+    }
+})
+def consultar_ou_cadastrar_produto(codbar):
+    """Consulta o produto no banco de dados e, se não encontrado, busca e cadastra via API do Cosmos"""
+    # Busca o produto no banco de dados
+    produto = Produto.query.filter_by(codbar=codbar).first()
+
+    if produto:
+        # Retorna o produto encontrado no banco de dados
+        return jsonify({
+            'codbar': produto.codbar,
+            'description': produto.description,
+            'ncm': produto.ncm,
+            'marca': produto.marca,
+            'preco_medio': produto.preco_medio,
+            'categoriaText': produto.categoriaText
+        }), 200
+
+    # Se o produto não for encontrado, tenta buscar na API do Cosmos
+    cosmos_data = fetch_product_from_cosmos(codbar)
+    if cosmos_data:
+        # Registra o produto no banco de dados
+        novo_produto = register_product_in_database(cosmos_data)
+        if novo_produto:
+            return jsonify({
+                'codbar': novo_produto.codbar,
+                'description': novo_produto.description,
+                'ncm': novo_produto.ncm,
+                'marca': novo_produto.marca,
+                'preco_medio': novo_produto.preco_medio,
+                'categoriaText': novo_produto.categoriaText
+            }), 201
+        else:
+            return jsonify({'message': 'Erro ao cadastrar produto no banco de dados'}), 500
     else:
         return jsonify({'message': 'Produto não encontrado'}), 404
 

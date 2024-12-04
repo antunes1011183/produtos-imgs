@@ -1,0 +1,53 @@
+# Login (obter token de acesso)
+curl -X POST http://localhost:5000/login \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=antunes@mupa.app&password=#Mupa04051623$"
+
+# Upload de imagem de produto
+curl -X POST http://localhost:5000/upload-imagem-produto/1234567890123 \
+  -H "Authorization: Bearer <ACCESS_TOKEN>" \
+  -F "file=@caminho/para/imagem.jpg"
+
+# Upload de múltiplas imagens
+curl -X POST http://localhost:5000/upload-multiplas-imagens \
+  -H "Authorization: Bearer <ACCESS_TOKEN>" \
+  -F "files=@caminho/para/imagem1.jpg" \
+  -F "files=@caminho/para/imagem2.jpg"
+
+# Importar produtos (arquivo CSV)
+curl -X POST http://localhost:5000/importar-produtos \
+  -H "Authorization: Bearer <ACCESS_TOKEN>" \
+  -F "file=@caminho/para/produtos.csv"
+
+# Atualizar preço médio do produto
+curl -X PUT http://localhost:5000/produto/preco/1234567890123 \
+  -H "Authorization: Bearer <ACCESS_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"preco_medio": 25.99}'
+
+# Consultar produto pelo código de barras
+curl -X GET http://localhost:5000/produto-imagem/1234567890123 \
+  -H "Authorization: Bearer <ACCESS_TOKEN>"
+
+# Remover fundo de imagem via URL
+curl -X POST http://localhost:5000/remove_background_url \
+  -H "Authorization: Bearer <ACCESS_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"image_url": "https://exemplo.com/imagem.jpg"}'
+
+# Remover fundo de imagem via upload
+curl -X POST http://localhost:5000/remove_background_upload \
+  -H "Authorization: Bearer <ACCESS_TOKEN>" \
+  -F "file=@caminho/para/imagem.jpg"
+
+# Deletar imagem do produto
+curl -X DELETE http://localhost:5000/deletar-imagem-produto/1234567890123 \
+  -H "Authorization: Bearer <ACCESS_TOKEN>"
+
+# Listar imagens de produtos
+curl -X GET http://localhost:5000/listar-imagens \
+  -H "Authorization: Bearer <ACCESS_TOKEN>"
+
+# Obter sugestões de produtos
+curl -X GET "http://localhost:5000/produto-sugestoes?ean=1234567890123&tipo_sugestao=combinar" \
+  -H "Authorization: Bearer <ACCESS_TOKEN>"
