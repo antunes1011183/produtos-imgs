@@ -1,13 +1,13 @@
 alembic==1.13.1
 flasgger==0.9.7.1
-Flask==3.0.3
+Flask==3.1.0
 Flask_JWT_Extended==4.6.0
 Flask_Migrate==4.0.5
 flask_sqlalchemy==3.1.1
 openai==0.27.0
-Pillow==10.4.0
+Pillow==11.0.0
 pytz==2024.1
-rembg==2.0.59
+rembg==2.0.60
 Requests==2.32.3
 SQLAlchemy==2.0.26
-Werkzeug==3.0.4
+Werkzeug==3.1.3

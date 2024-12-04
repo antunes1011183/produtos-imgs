@@ -348,14 +348,30 @@ def importar_produtos():
     """Importa produtos de um arquivo CSV"""
     if 'file' not in request.files:
         return jsonify({'error': 'Nenhum arquivo CSV enviado'}), 400
+
     file = request.files['file']
     if file.filename == '' or not file.filename.endswith('.csv'):
         return jsonify({'error': 'O arquivo enviado não é um CSV válido'}), 400
-    csv_data = file.read().decode('utf-8')
-    csv_file = StringIO(csv_data)
-    csv_reader = csv.DictReader(csv_file)
-    for row in csv_reader:
-        novo_produto = Produto(
+
+    try:
+        # Tenta decodificar como UTF-8, mas cai para ISO-8859-1 se falhar
+        try:
+            csv_data = file.read().decode('utf-8-sig')
+        except UnicodeDecodeError:
+            csv_data = file.read().decode('ISO-8859-1')
+
+        csv_file = StringIO(csv_data)
+        
+        # Define explicitamente o delimitador como ponto e vírgula (;)
+        csv_reader = csv.DictReader(csv_file, delimiter=';')
+
+        # Valida se as colunas esperadas estão presentes
+        required_columns = {'codbar', 'description', 'ncm', 'cest_codigo', 'embalagem', 'foto_png', 'marca', 'preco_medio', 'categoriaText'}
+        if not required_columns.issubset(csv_reader.fieldnames):
+            return jsonify({'error': 'Colunas obrigatórias ausentes no arquivo CSV'}), 400
+
+        for row in csv_reader:
+            novo_produto = Produto(
             codbar=row['codbar'],
             description=row['description'],
             ncm=row['ncm'],
@@ -363,12 +379,20 @@ def importar_produtos():
             embalagem=row['embalagem'],
             foto_png=row['foto_png'],
             marca=row['marca'],
-            preco_medio=float(row['preco_medio']),
+            preco_medio=float(row['preco_medio'].replace(',', '.')) if row['preco_medio'] else 0.0,
             categoriaText=row['categoriaText']
-        )
-        db.session.add(novo_produto)
-    db.session.commit()
-    return jsonify({'message': 'Produtos importados com sucesso'}), 201
+            )
+            db.session.add(novo_produto)
+        db.session.commit()
+
+        return jsonify({'message': 'Produtos importados com sucesso'}), 201
+
+    except KeyError as e:
+        logging.error(f"Chave ausente no CSV: {e}")
+        return jsonify({'error': f"Coluna ausente no CSV: {e}"}), 400
+    except Exception as e:
+        logging.error(f"Erro ao importar produtos: {e}")
+        return jsonify({'error': 'Erro interno ao importar produtos'}), 500
 
 @app.route('/deletar-imagem-produto/<string:codbar>', methods=['DELETE'])
 @jwt_required()
