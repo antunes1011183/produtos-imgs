@@ -1,0 +1,834 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Painel de Configurações — Mupa Brain</title>
+    <style>
+        :root {
+            --bg: #f8fafc;
+            --card: #ffffff;
+            --border: #e2e8f0;
+            --text: #1e293b;
+            --muted: #64748b;
+            --accent: #3b82f6;
+            --accent-hover: #2563eb;
+            --danger: #ef4444;
+            --success: #10b981;
+            --warn: #f59e0b;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 2rem 1rem;
+            line-height: 1.6;
+        }
+        .container { max-width: 900px; margin: 0 auto; }
+        h1 { font-size: 1.75rem; margin-bottom: 0.25rem; }
+        .subtitle { color: var(--muted); margin-bottom: 1.5rem; font-size: 0.95rem; }
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 1.25rem;
+            margin-bottom: 1rem;
+        }
+        .card h2 {
+            font-size: 1.1rem;
+            margin-top: 0;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .card h2 .badge {
+            font-size: 0.7rem;
+            background: var(--accent);
+            color: white;
+            padding: 0.15rem 0.5rem;
+            border-radius: 999px;
+            font-weight: 600;
+        }
+        .form-row {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            margin-bottom: 0.75rem;
+        }
+        label {
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: var(--muted);
+        }
+        input[type="text"], input[type="password"], input[type="number"], select {
+            padding: 0.5rem 0.75rem;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 0.9rem;
+            font-family: inherit;
+            background: #fff;
+            transition: border-color 0.15s;
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(59,130,246,0.15);
+        }
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.15s, transform 0.1s;
+        }
+        .btn:active { transform: scale(0.98); }
+        .btn-primary { background: var(--accent); color: white; }
+        .btn-primary:hover { background: var(--accent-hover); }
+        .btn-secondary { background: var(--border); color: var(--text); }
+        .btn-secondary:hover { background: #cbd5e1; }
+        .btn-danger { background: var(--danger); color: white; }
+        .btn-danger:hover { background: #dc2626; }
+        .btn-success { background: var(--success); color: white; }
+        .btn-success:hover { background: #059669; }
+        .btn-sm { padding: 0.3rem 0.65rem; font-size: 0.8rem; }
+        .toggle-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.6rem 0;
+            border-bottom: 1px solid var(--border);
+        }
+        .toggle-row:last-child { border-bottom: none; }
+        .toggle-label { display: flex; flex-direction: column; gap: 0.1rem; }
+        .toggle-label .name { font-weight: 500; font-size: 0.95rem; }
+        .toggle-label .desc { font-size: 0.78rem; color: var(--muted); }
+        .toggle {
+            position: relative;
+            width: 44px;
+            height: 24px;
+            background: #cbd5e1;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: background 0.2s;
+            flex-shrink: 0;
+        }
+        .toggle.active { background: var(--success); }
+        .toggle::after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 20px;
+            height: 20px;
+            background: white;
+            border-radius: 50%;
+            transition: transform 0.2s;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }
+        .toggle.active::after { transform: translateX(20px); }
+        .status-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 0.4rem;
+        }
+        .status-dot.on { background: var(--success); }
+        .status-dot.off { background: var(--danger); }
+        .status-dot.unknown { background: var(--warn); }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.88rem;
+        }
+        th, td {
+            text-align: left;
+            padding: 0.5rem 0.65rem;
+            border-bottom: 1px solid var(--border);
+        }
+        th { font-weight: 600; color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; }
+        td .ean { font-family: "SF Mono", "Cascadia Code", Consolas, monospace; font-size: 0.82rem; }
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--muted);
+        }
+        .alert {
+            padding: 0.6rem 0.9rem;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            margin-bottom: 0.75rem;
+        }
+        .alert-success { background: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; }
+        .alert-error { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+        .alert-info { background: #dbeafe; color: #1e40af; border: 1px solid #bfdbfe; }
+        .nav-tabs {
+            display: flex;
+            gap: 0.25rem;
+            margin-bottom: 1rem;
+            border-bottom: 2px solid var(--border);
+            padding-bottom: 0.25rem;
+        }
+        .nav-tab {
+            padding: 0.5rem 1rem;
+            border: none;
+            background: none;
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: var(--muted);
+            cursor: pointer;
+            border-radius: 6px 6px 0 0;
+            transition: color 0.15s, background 0.15s;
+        }
+        .nav-tab:hover { color: var(--text); background: #f1f5f9; }
+        .nav-tab.active { color: var(--accent); background: #eff6ff; font-weight: 600; }
+        .nav-tab.active::after {
+            content: '';
+            display: block;
+            height: 2px;
+            background: var(--accent);
+            margin-top: -2px;
+        }
+        .copy-btn {
+            cursor: pointer;
+            background: none;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 0.2rem 0.4rem;
+            font-size: 0.75rem;
+            color: var(--muted);
+        }
+        .copy-btn:hover { background: #f1f5f9; color: var(--text); }
+        .toast {
+            position: fixed;
+            bottom: 1.5rem;
+            right: 1.5rem;
+            background: var(--text);
+            color: white;
+            padding: 0.75rem 1.25rem;
+            border-radius: 8px;
+            font-size: 0.88rem;
+            opacity: 0;
+            transform: translateY(10px);
+            transition: opacity 0.3s, transform 0.3s;
+            pointer-events: none;
+            z-index: 1000;
+        }
+        .toast.show { opacity: 1; transform: translateY(0); }
+        .toast.error { background: var(--danger); }
+        .toast.success { background: var(--success); }
+        .key-display {
+            font-family: "SF Mono", "Cascadia Code", Consolas, monospace;
+            font-size: 0.78rem;
+            background: #f1f5f9;
+            padding: 0.4rem 0.6rem;
+            border-radius: 4px;
+            word-break: break-all;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>⚙️ Painel de Configurações</h1>
+    <p class="subtitle">Gerencie tokens, flags e consulte o catálogo de produtos</p>
+
+    <div class="nav-tabs">
+        <button class="nav-tab active" data-tab="config">Configurações</button>
+        <button class="nav-tab" data-tab="consulta">Consulta Rápida</button>
+        <button class="nav-tab" data-tab="fotos">Produtos com Foto</button>
+        <button class="nav-tab" data-tab="estats">Estatísticas</button>
+    </div>
+
+    <!-- ===== TAB: CONFIGURAÇÕES ===== -->
+    <div id="tab-config" class="tab-content">
+        <div class="card">
+            <h2>🔑 Token OpenAI <span class="badge">OPENAI_API_KEY</span></h2>
+            <div id="alert-openai"></div>
+            <div class="form-row">
+                <label for="openai-key">Chave de API da OpenAI</label>
+                <input type="password" id="openai-key" placeholder="sk-..." autocomplete="off"
+                       value="{{ openai_key_full or '' }}">
+            </div>
+            <div class="form-row" style="flex-direction:row; gap:0.5rem; align-items:center;">
+                <button class="btn btn-primary" id="btn-save-openai">💾 Salvar Token</button>
+                <button class="btn btn-secondary" id="btn-test-openai">🧪 Testar Conexão</button>
+                <span id="openid-status-wrap" style="font-size:0.85rem; color:var(--muted); margin-left:0.5rem;">
+                    Status: <span class="status-dot unknown" id="dot-openai"></span>
+                    <span id="status-text">Verificando...</span>
+                </span>
+            </div>
+            <p style="font-size:0.78rem; color:var(--muted); margin-top:0.5rem;">
+                A chave é salva no banco de dados. Ao reiniciar o Flask, ele carrega automaticamente a chave salva.
+            </p>
+        </div>
+
+        <div class="card">
+            <h2>🚩 Flags de Funcionamento</h2>
+            <div class="toggle-row">
+                <div class="toggle-label">
+                    <span class="name">Usar OpenAI para Sugestões</span>
+                    <span class="desc">Quando ativo, as sugestões usam GPT-4. Quando desativado, usa busca fuzzy local.</span>
+                </div>
+                <div class="toggle" id="toggle-use-openai" data-key="USE_OPENAI_SUGESTIONS"></div>
+            </div>
+            <div class="toggle-row">
+                <div class="toggle-label">
+                    <span class="name">Remoção de Fundo (rembg)</span>
+                    <span class="desc">Remove o fundo das imagens enviadas. Requer onnxruntime + VC++ runtime.</span>
+                </div>
+                <div class="toggle" id="toggle-rembg" data-key="REMBG_ENABLED"></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>ℹ️ Sobre</h2>
+            <table style="font-size:0.85rem;">
+                <tr><td style="width:180px; color:var(--muted);">Versão</td><td>Mupa Brain — v2 (integrado com CSV de 945k produtos)</td></tr>
+                <tr><td style="width:180px; color:var(--muted);">Banco de dados</td><td>instance/produtos.db (SQLite)</td></tr>
+                <tr><td style="width:180px; color:var(--muted);">Produtos importados</td><td id="stat-total">—</td></tr>
+                <tr><td style="width:180px; color:var(--muted);">Com foto</td><td id="stat-foto">—</td></tr>
+            </table>
+        </div>
+    </div>
+
+    <!-- ===== TAB: CONSULTA RÁPIDA ===== -->
+    <div id="tab-consulta" class="tab-content" style="display:none;">
+        <div class="card">
+            <h2>🔍 Consulta Simples</h2>
+            <div id="alert-consulta"></div>
+            <div class="form-row">
+                <label for="consulta-q">Buscar por EAN, descrição ou marca</label>
+                <div style="display:flex; gap:0.5rem;">
+                    <input type="text" id="consulta-q" placeholder="Ex: 7896116900050, KICALDO, FEIJÃO..." autocomplete="off">
+                    <button class="btn btn-primary" id="btn-consulta">Buscar</button>
+                </div>
+            </div>
+            <div id="resultado-consulta">
+                <div class="empty-state">Digite um termo e clique em Buscar.</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== TAB: PRODUTOS COM FOTO ===== -->
+    <div id="tab-fotos" class="tab-content" style="display:none;">
+        <div class="card">
+            <h2>📸 Produtos com Foto <span class="badge" id="foto-count-badge">carregando...</span></h2>
+            <div class="form-row" style="margin-bottom:0.75rem;">
+                <label for="foto-search">Filtrar por EAN, descrição ou marca</label>
+                <div style="display:flex; gap:0.5rem;">
+                    <input type="text" id="foto-search" placeholder="Filtrar..." autocomplete="off">
+                    <button class="btn btn-secondary btn-sm" id="btn-foto-search">Filtrar</button>
+                    <button class="btn btn-secondary btn-sm" id="btn-foto-limpar">Limpar</button>
+                </div>
+            </div>
+            <div id="alert-fotos"></div>
+            <div id="foto-list">
+                <div class="empty-state">Carregando produtos com foto...</div>
+            </div>
+            <div id="foto-pagination" style="display:flex; justify-content:space-between; margin-top:0.75rem; font-size:0.85rem; color:var(--muted);">
+                <span id="foto-info">—</span>
+                <span>
+                    <button class="btn btn-secondary btn-sm" id="btn-foto-prev">← Anterior</button>
+                    <button class="btn btn-secondary btn-sm" id="btn-foto-next">Próximo →</button>
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== TAB: ESTATÍSTICAS ===== -->
+    <div id="tab-estats" class="tab-content" style="display:none;">
+        <div class="card">
+            <h2>📊 Estatísticas do Catálogo</h2>
+            <div id="alert-estats"></div>
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:0.75rem; margin-bottom:1rem;">
+                <div class="card" style="margin:0; padding:1rem; text-align:center;">
+                    <div style="font-size:2rem; font-weight:700; color:var(--accent);" id="estat-total">—</div>
+                    <div style="font-size:0.78rem; color:var(--muted);">Total de produtos</div>
+                </div>
+                <div class="card" style="margin:0; padding:1rem; text-align:center;">
+                    <div style="font-size:2rem; font-weight:700; color:var(--success);" id="estat-foto">—</div>
+                    <div style="font-size:0.78rem; color:var(--muted);">Com foto cadastrada</div>
+                </div>
+                <div class="card" style="margin:0; padding:1rem; text-align:center;">
+                    <div style="font-size:2rem; font-weight:700; color:var(--danger);" id="estat-sem-foto">—</div>
+                    <div style="font-size:0.78rem; color:var(--muted);">Sem foto</div>
+                </div>
+                <div class="card" style="margin:0; padding:1rem; text-align:center;">
+                    <div style="font-size:2rem; font-weight:700; color:var(--warn);" id="estat-marcas">—</div>
+                    <div style="font-size:0.78rem; color:var(--muted);">Marcas distintas</div>
+                </div>
+            </div>
+            <h3>🏆 Top 10 Marcas</h3>
+            <table id="table-top-marcas">
+                <thead><tr><th>#</th><th>Marca</th><th>Produtos</th></tr></thead>
+                <tbody><tr><td colspan="3" class="empty-state">Carregando...</td></tr></tbody>
+            </table>
+            <h3 style="margin-top:1rem;">📁 Top 10 Categorias</h3>
+            <table id="table-top-cats">
+                <thead><tr><th>#</th><th>Categoria</th><th>Produtos</th></tr></thead>
+                <tbody><tr><td colspan="3" class="empty-state">Carregando...</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ===== Utilidades =====
+const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => document.querySelectorAll(sel);
+
+const toast = (msg, type='info') => {
+    const el = $('#toast');
+    el.textContent = msg;
+    el.className = 'toast show ' + (type === 'error' ? 'error' : type === 'success' ? 'success' : '');
+    setTimeout(() => { el.classList.remove('show'); }, 3000);
+};
+
+function showAlert(id, msg, type) {
+    const el = $(`#${id}`);
+    if (!el) return;
+    el.innerHTML = `<div class="alert alert-${type}">${escHtml(msg)}</div>`;
+    setTimeout(() => { el.innerHTML = ''; }, 5000);
+}
+
+function escHtml(s) {
+    if (!s) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ===== Login =====
+let token = null;
+
+async function login() {
+    // Tenta usar endpoint público de login do painel primeiro
+    try {
+        const res = await fetch('/painel/login');
+        if (res.ok) {
+            const data = await res.json();
+            token = data.token;
+            return token;
+        }
+    } catch (e) {}
+    
+    // Fallback: login com credenciais
+    try {
+        const res = await fetch('/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+                username: 'antunes@mupa.app',
+                password: '#Mupa04051623$'
+            })
+        });
+        if (!res.ok) {
+            const errBody = await res.json().catch(() => ({}));
+            throw new Error(errBody.message || errBody.error || `HTTP ${res.status}: falha no login`);
+        }
+        const data = await res.json();
+        if (!data.access_token && !data.token) {
+            throw new Error('Resposta de login inesperada: ' + JSON.stringify(data));
+        }
+        token = data.access_token || data.token;
+        return token;
+    } catch (e) {
+        const loginBox = $('#div-login-erro');
+        if (loginBox) {
+            loginBox.innerHTML = `<div class="alert alert-error" style="margin-bottom:1rem;">❌ ${escHtml(e.message)}</div>`;
+        }
+        throw e;
+    }
+}
+
+async function ensureToken() {
+    if (token) {
+        try {
+            const res = await fetch('/configuracoes', {
+                headers: { 'Authorization': 'Bearer ' + token }
+            });
+            if (res.ok) return token;
+        } catch (e) {}
+        token = null;
+    }
+    return await login();
+}
+
+const authHeaders = () => {
+    if (!token) throw new Error('Não há token de autenticação. Efetue login novamente.');
+    return { 'Authorization': 'Bearer ' + token };
+};
+
+// ===== Tab navigation =====
+$$('.nav-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+        $$('.nav-tab').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const tab = btn.dataset.tab;
+        $$('.tab-content').forEach(tc => tc.style.display = 'none');
+        $(`#tab-${tab}`).style.display = 'block';
+        if (tab === 'estats') loadEstats();
+        if (tab === 'fotos') loadFotos(1);
+        if (tab === 'config') loadConfig();
+    });
+});
+
+// ===== TAB: CONFIGURAÇÕES =====
+async function loadConfig() {
+    try {
+        const res = await fetch('/configuracoes', { method: 'GET', headers: { ...authHeaders(), 'Accept': 'application/json' } });
+        if (!res.ok) {
+            const errBody = await res.json().catch(() => ({}));
+            throw new Error(errBody.msg || errBody.error || `HTTP ${res.status}: não foi possível carregar configurações`);
+        }
+        const cfg = await res.json();
+
+        $('#openai-key').value = cfg.openai_key_full || '';
+
+        setToggle('toggle-use-openai', cfg.use_openai);
+        setToggle('toggle-rembg', cfg.rembg_enabled);
+
+        updateOpenAIStatus(cfg.openai_key_full || '');
+    } catch (e) {
+        showAlert('alert-openai', `Erro: ${e.message}`, 'error');
+        if (e.message.includes('401') || e.message.includes('Missing Authorization') || e.message.includes('não há token')) {
+            toast('Sessão expirada. Atualizando...', 'error');
+            try {
+                token = await login();
+                loadConfig();
+            } catch (e2) {
+                showAlert('alert-openai', `Falha ao reconectar: ${e2.message}`, 'error');
+            }
+        }
+    }
+}
+
+function setToggle(id, active) {
+    const el = $(`#${id}`);
+    if (!el) return;
+    if (active) el.classList.add('active');
+    else el.classList.remove('active');
+}
+
+function updateOpenAIStatus(keyVal) {
+    const dot = $('#dot-openai');
+    const text = $('#status-text');
+    if (!dot || !text) return;
+    if (!keyVal || keyVal === '') {
+        dot.className = 'status-dot off';
+        text.textContent = 'Sem chave configurada';
+        return;
+    }
+    if (keyVal.startsWith('sk-')) {
+        dot.className = 'status-dot on';
+        text.textContent = 'Chave configurada';
+    } else {
+        dot.className = 'status-dot unknown';
+        text.textContent = 'Formato inesperado';
+    }
+}
+
+$('#btn-save-openai').addEventListener('click', async () => {
+    const key = $('#openai-key').value.trim();
+    if (!key) {
+        showAlert('alert-openai', 'Por favor, insira uma chave OpenAI.', 'error');
+        return;
+    }
+    try {
+        const res = await fetch('/configuracoes', {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ action: 'save_openai_key', openai_key: key })
+        });
+        if (!res.ok) {
+            const errBody = await res.json().catch(() => ({}));
+            throw new Error(errBody.msg || errBody.error || `HTTP ${res.status}: falha ao salvar`);
+        }
+        const data = await res.json();
+        if (data.saved) {
+            showAlert('alert-openai', '✅ Token OpenAI salvo com sucesso!', 'success');
+            updateOpenAIStatus(key);
+            toast('Token salvo — reinicie o Flask para aplicar', 'info');
+        } else {
+            showAlert('alert-openai', '❌ ' + (data.message || 'Falha ao salvar'), 'error');
+        }
+    } catch (e) {
+        showAlert('alert-openai', `Erro: ${e.message}`, 'error');
+    }
+});
+
+$('#btn-test-openai').addEventListener('click', async () => {
+    $('#btn-test-openai').textContent = '⏳ Verificando...';
+    $('#btn-test-openai').disabled = true;
+    try {
+        const res = await fetch('/api/teste-openai', { headers: authHeaders() });
+        if (!res.ok) {
+            const errBody = await res.json().catch(() => ({}));
+            throw new Error(errBody.msg || errBody.error || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        showAlert('alert-openai', `🧪 ${data.message}`, data.ok ? 'success' : 'error');
+        const dot = $('#dot-openai');
+        const text = $('#status-text');
+        if (dot && text) {
+            dot.className = 'status-dot ' + (data.ok ? 'on' : 'off');
+            text.textContent = data.message;
+        }
+    } catch (e) {
+        showAlert('alert-openai', `Erro: ${e.message}`, 'error');
+    }
+    $('#btn-test-openai').textContent = '🧪 Testar Conexão';
+    $('#btn-test-openai').disabled = false;
+});
+
+$$('.toggle').forEach(tog => {
+    tog.addEventListener('click', async () => {
+        const key = tog.dataset.key;
+        const novoEstado = !tog.classList.contains('active');
+        tog.classList.toggle('active', novoEstado);
+
+        const actionMap = {
+            'USE_OPENAI_SUGESTIONS': 'toggle_use_openai',
+            'REMBG_ENABLED': 'toggle_rembg',
+        };
+        const action = actionMap[key] || `toggle_${key.toLowerCase().replace(/_/g, '_')}`;
+
+        try {
+            const res = await fetch('/configuracoes', {
+                method: 'POST',
+                headers: { ...authHeaders(), 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({ action, [key]: novoEstado ? 'true' : 'false' })
+            });
+            if (!res.ok) {
+                const errBody = await res.json().catch(() => ({}));
+                throw new Error(errBody.msg || errBody.error || `HTTP ${res.status}`);
+            }
+            const data = await res.json();
+            toast(data.message || 'Configuração atualizada', data.saved ? 'success' : 'error');
+        } catch (e) {
+            toast('Erro ao atualizar: ' + e.message, 'error');
+            tog.classList.toggle('active', !novoEstado);
+        }
+    });
+});
+
+// ===== TAB: CONSULTA RÁPIDA =====
+$('#btn-consulta').addEventListener('click', async () => {
+    const q = $('#consulta-q').value.trim();
+    if (!q) { toast('Digite um termo de busca', 'error'); return; }
+    try {
+        const res = await fetch(`/admin/consulta-simples?q=${encodeURIComponent(q)}`, { headers: authHeaders() });
+        if (!res.ok) {
+            const errBody = await res.json().catch(() => ({}));
+            throw new Error(errBody.msg || errBody.error || `HTTP ${res.status}: consulta falhou`);
+        }
+        const data = await res.json();
+        renderConsulta(data);
+    } catch (e) {
+        showAlert('alert-consulta', `Erro: ${e.message}`, 'error');
+    }
+});
+
+$('#consulta-q').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') $('#btn-consulta').click();
+});
+
+function renderConsulta(data) {
+    const container = $('#resultado-consulta');
+    if (!container) return;
+    if (data.results && data.results.length > 0) {
+        let html = `<div class="alert alert-info">Encontrados ${data.count} resultado(s) por "${escHtml(data.tipo_busca || 'busca')}".</div>`;
+        data.results.forEach((p) => {
+            const hasFoto = p.foto_png && p.foto_png !== 'No image available';
+            html += `
+            <div style="border:1px solid var(--border); border-radius:8px; padding:0.65rem; margin-bottom:0.4rem; display:flex; gap:0.6rem; align-items:flex-start;">
+                <div style="width:40px; height:40px; background:#f1f5f9; border-radius:6px; overflow:hidden; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:1.1rem;">
+                    ${hasFoto
+                        ? `<img src="${escHtml(p.foto_png)}" style="width:100%; height:100%; object-fit:cover;" alt="foto">`
+                        : '📷'}
+                </div>
+                <div style="flex:1; min-width:0;">
+                    <div style="font-weight:600; font-size:0.88rem;">${escHtml(p.descricao)}</div>
+                    <div style="font-size:0.75rem; color:var(--muted);">
+                        Marca: ${escHtml(p.marca || '—')} · Categoria: ${escHtml(p.categoria || '—')}
+                    </div>
+                    <div style="margin-top:0.2rem;">
+                        <span class="ean">${escHtml(p.ean)}</span>
+                        ${p.preco_medio && p.preco_medio > 0 ? `<span style="margin-left:0.6rem; color:var(--success); font-weight:600; font-size:0.85rem;">R$ ${p.preco_medio.toFixed(2)}</span>` : ''}
+                    </div>
+                </div>
+            </div>`;
+        });
+        container.innerHTML = html;
+    } else if (data.message) {
+        container.innerHTML = `<div class="empty-state">${escHtml(data.message)}</div>`;
+    } else {
+        container.innerHTML = `<div class="empty-state">Nenhum resultado encontrado.</div>`;
+    }
+}
+
+// ===== TAB: PRODUTOS COM FOTO =====
+let fotoPage = 1;
+
+async function loadFotos(page = 1) {
+    fotoPage = page;
+    const search = ($('#foto-search').value || '').trim();
+    try {
+        const params = new URLSearchParams({ page, per_page: 15 });
+        if (search) params.append('search', search);
+        const res = await fetch('/admin/produtos-com-foto?' + params.toString(), { headers: authHeaders() });
+        if (!res.ok) {
+            const errBody = await res.json().catch(() => ({}));
+            throw new Error(errBody.msg || errBody.error || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        renderFotos(data);
+    } catch (e) {
+        showAlert('alert-fotos', `Erro: ${e.message}`, 'error');
+    }
+}
+
+function renderFotos(data) {
+    const badge = $('#foto-count-badge');
+    const list = $('#foto-list');
+    const info = $('#foto-info');
+    const prevBtn = $('#btn-foto-prev');
+    const nextBtn = $('#btn-foto-next');
+    if (!badge || !list) return;
+
+    badge.textContent = `${data.total || 0} produtos`;
+    if (!data.produtos || data.produtos.length === 0) {
+        const search = ($('#foto-search').value || '').trim();
+        list.innerHTML = `<div class="empty-state">Nenhum produto com foto encontrado${search ? ' para "' + escHtml(search) + '"' : ''}.</div>`;
+        info.textContent = 'Página 0 de 0';
+        if (prevBtn) prevBtn.disabled = true;
+        if (nextBtn) nextBtn.disabled = true;
+        return;
+    }
+    let html = `<table style="margin-top:0.4rem; font-size:0.82rem;">
+        <thead><tr>
+            <th style="width:85px;">EAN</th>
+            <th>Descrição</th>
+            <th style="width:90px;">Marca</th>
+            <th style="width:70px;">Preço</th>
+            <th style="width:40px;"></th>
+        </tr></thead><tbody>`;
+    data.produtos.forEach(p => {
+        const hasFoto = p.foto_png && p.foto_png !== 'No image available';
+        html += `
+        <tr>
+            <td><span class="ean">${escHtml(p.ean)}</span></td>
+            <td>${escHtml(p.descricao)}</td>
+            <td style="color:var(--muted);">${escHtml(p.marca || '—')}</td>
+            <td style="color:var(--success); font-weight:600;">${p.preco_medio && p.preco_medio > 0 ? 'R$ ' + p.preco_medio.toFixed(2) : '—'}</td>
+            <td>${hasFoto
+                ? `<img src="${p.foto_png}" style="width:32px; height:32px; object-fit:cover; border-radius:3px; border:1px solid var(--border);" alt="foto">`
+                : '<span style="color:var(--muted); font-size:0.9rem;">📷</span>'}</td>
+        </tr>`;
+    });
+    html += '</tbody></table>';
+    list.innerHTML = html;
+    const pages = data.pages || 1;
+    if (info) info.textContent = `Página ${data.page} de ${pages} (${data.total} produtos)`;
+    if (prevBtn) prevBtn.disabled = data.page <= 1;
+    if (nextBtn) nextBtn.disabled = data.page >= pages;
+}
+
+$('#btn-foto-search').addEventListener('click', () => loadFotos(1));
+$('#btn-foto-limpar').addEventListener('click', () => {
+    $('#foto-search').value = '';
+    loadFotos(1);
+});
+$('#btn-foto-prev').addEventListener('click', () => loadFotos(fotoPage - 1));
+$('#btn-foto-next').addEventListener('click', () => loadFotos(fotoPage + 1));
+
+// ===== TAB: ESTATÍSTICAS =====
+async function loadEstats() {
+    try {
+        const res = await fetch('/admin/estatisticas', { headers: authHeaders() });
+        if (!res.ok) {
+            const errBody = await res.json().catch(() => ({}));
+            throw new Error(errBody.msg || errBody.error || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+
+        const estTotal = $('#estat-total');
+        const estFoto = $('#estat-foto');
+        const estSemFoto = $('#estat-sem-foto');
+        const estMarcas = $('#estat-marcas');
+
+        if (estTotal) estTotal.textContent = data.total_produtos ? data.total_produtos.toLocaleString('pt-BR') : '—';
+        if (estFoto) estFoto.textContent = data.com_foto ? data.com_foto.toLocaleString('pt-BR') : '—';
+        if (estSemFoto) estSemFoto.textContent = (data.sem_foto != null) ? data.sem_foto.toLocaleString('pt-BR') : '—';
+        if (estMarcas) estMarcas.textContent = data.top_marcas ? data.top_marcas.length : '—';
+
+        const tbodyMarcas = $('#table-top-marcas tbody');
+        if (tbodyMarcas) {
+            if (!data.top_marcas || data.top_marcas.length === 0) {
+                tbodyMarcas.innerHTML = '<tr><td colspan="3" class="empty-state">Nenhuma marca encontrada.</td></tr>';
+            } else {
+                tbodyMarcas.innerHTML = data.top_marcas.map((m, i) =>
+                    `<tr><td>${i+1}</td><td>${escHtml(m.marca)}</td><td>${m.count.toLocaleString('pt-BR')}</td></tr>`
+                ).join('');
+            }
+        }
+
+        const tbodyCats = $('#table-top-cats tbody');
+        if (tbodyCats) {
+            if (!data.top_categorias || data.top_categorias.length === 0) {
+                tbodyCats.innerHTML = '<tr><td colspan="3" class="empty-state">Nenhuma categoria encontrada.</td></tr>';
+            } else {
+                tbodyCats.innerHTML = data.top_categorias.map((c, i) =>
+                    `<tr><td>${i+1}</td><td>${escHtml(c.categoria)}</td><td>${c.count.toLocaleString('pt-BR')}</td></tr>`
+                ).join('');
+            }
+        }
+
+        const statTotal = $('#stat-total');
+        const statFoto = $('#stat-foto');
+        if (statTotal) statTotal.textContent = data.total_produtos ? data.total_produtos.toLocaleString('pt-BR') : '—';
+        if (statFoto) statFoto.textContent = data.com_foto ? data.com_foto.toLocaleString('pt-BR') : '—';
+    } catch (e) {
+        showAlert('alert-estats', `Erro: ${e.message}`, 'error');
+    }
+}
+
+// ===== Inicialização =====
+(async () => {
+    try {
+        token = await login();
+        loadConfig();
+        loadEstats();
+        loadFotos(1);
+    } catch (e) {
+        const container = document.querySelector('.container');
+        if (container) {
+            const errBox = document.createElement('div');
+            errBox.className = 'card';
+            errBox.style.borderColor = 'var(--danger)';
+            errBox.style.background = '#fef2f2';
+            errBox.innerHTML = `
+                <h2 style="color:var(--danger); margin-top:0;">🔐 Erro de Autenticação</h2>
+                <p style="margin-bottom:1rem;">Não foi possível conectar ao servidor:</p>
+                <div class="alert alert-error" style="font-family:monospace; word-break:break-all;">${escHtml(e.message)}</div>
+                <p style="font-size:0.85rem; color:var(--muted); margin-top:0.5rem;">
+                    Verifique se o servidor Flask está rodando em <code>http://localhost:5000</code>
+                    e se as credenciais no código estão corretas.
+                </p>
+            `;
+            container.prepend(errBox);
+        }
+        console.error('Falha na inicialização do painel:', e);
+    }
+})();
+</script>
+</body>
+</html>

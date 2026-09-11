@@ -1,18 +1,25 @@
 import os
 import csv
+import sqlite3
 import requests
 from io import StringIO, BytesIO
 from io import StringIO
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, url_for, render_template
 from flask_sqlalchemy import SQLAlchemy
-from flask_jwt_extended import JWTManager, create_access_token, jwt_required
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required, verify_jwt_in_request
 from werkzeug.utils import secure_filename
 from flasgger import Swagger, swag_from
 import openai
 import pytz
 import logging
-from rembg import remove
+try:
+    from rembg import remove
+    REMBG_ENABLED = True
+except Exception:
+    remove = None
+    REMBG_ENABLED = False
+    logging.warning("rembg não disponível - remoção de fundo desativada")
 from PIL import Image
 from flask_migrate import Migrate  # Adicionado
 import re
@@ -49,7 +56,10 @@ app.config['PROCESSED_IMAGES_FOLDER'] = PROCESSED_IMAGES_FOLDER
 swagger = Swagger(app)
 db = SQLAlchemy(app)
 
-migrate = Migrate(app, db)  # Inicializado o Flask-Migrate
+migrate = Migrate(app, db)
+
+# Caminho do banco para consultas diretas (Opções B e C)
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'instance', 'produtos.db')  # Inicializado o Flask-Migrate
 
 jwt = JWTManager(app)
 
@@ -71,6 +81,9 @@ def allowed_file(filename):
 
 def save_image_with_background_removal(image, file_path):
     """Remove o fundo da imagem e salva no caminho especificado"""
+    if not REMBG_ENABLED:
+        logging.warning("rembg não disponível - operação ignorada")
+        return
     # Converte para RGBA se necessário
     image = image.convert("RGBA") if image.mode != "RGBA" else image
     # Remove o fundo
@@ -130,6 +143,8 @@ def index():
 
 @app.route('/remove_background_url', methods=['POST'])
 def remove_background_url():
+    if not REMBG_ENABLED:
+        return jsonify({'message': 'rembg não disponível neste ambiente'}), 501
     data = request.json
     image_url = data.get('image_url')
     if not image_url:
@@ -159,6 +174,8 @@ def remove_background_url():
 
 @app.route('/remove_background_upload', methods=['POST'])
 def remove_background_upload():
+    if not REMBG_ENABLED:
+        return jsonify({'message': 'rembg não disponível neste ambiente'}), 501
     if 'file' not in request.files:
         return jsonify({'message': 'No file uploaded'}), 400
     file = request.files['file']
@@ -178,6 +195,17 @@ def remove_background_upload():
         return jsonify({'url': download_url}), 200
     except Exception as e:
         return jsonify({'message': f'Error processing image: {str(e)}'}), 500
+
+@app.route('/painel/login', methods=['GET'])
+def painel_login():
+    """Retorna um token JWT de acesso ao painel de configurações."""
+    expires = timedelta(hours=1)
+    access_token = create_access_token(identity='antunes@mupa.app', expires_delta=expires)
+    return jsonify({
+        'token': access_token,
+        'expires_in_hours': 1,
+        'message': 'Token de acesso ao painel gerado com sucesso'
+    })
 
 @app.route('/login', methods=['POST'])
 @swag_from({
@@ -1068,6 +1096,302 @@ def consultar_ou_cadastrar_produto(codbar):
             return jsonify({'message': 'Erro ao cadastrar produto no banco de dados'}), 500
     else:
         return jsonify({'message': 'Produto não encontrado'}), 404
+
+
+# =====================================================================
+# Modelo de Configurações (definido aqui para evitar circular import)
+# =====================================================================
+
+class Config(db.Model):
+    """Pares chave-valor de configuração do sistema."""
+    id = db.Column(db.Integer, primary_key=True)
+    key = db.Column(db.String(100), unique=True, nullable=False)
+    value = db.Column(db.Text, nullable=True)
+    updated_at = db.Column(db.DateTime, nullable=True)
+
+    def __repr__(self):
+        return f"<Config {self.key}={self.value[:30] if self.value else ''}>"
+
+
+def _ler_todas_config():
+    """Retorna todas as configurações como dict {key: valor}."""
+    rows = Config.query.all()
+    return {r.key: (r.value or '') for r in rows}
+
+
+def set_config(key, value):
+    """Cria ou atualiza uma configuração pelo par chave-valor."""
+    cfg = Config.query.filter_by(key=key).first()
+    if cfg:
+        cfg.value = value
+        cfg.updated_at = datetime.utcnow()
+    else:
+        cfg = Config(key=key, value=value, updated_at=datetime.utcnow())
+        db.session.add(cfg)
+    db.session.commit()
+
+
+
+# =====================================================================
+# Painel de Configurações e Gestão
+# =====================================================================
+
+@app.route('/configuracoes', methods=['GET', 'POST'])
+def configuracoes():
+    """Painel de configurações: página HTML (pública, sem segredos) + API JSON (requer JWT)."""
+    # GET sem Accept: application/json → renderiza o shell HTML. A própria página
+    # se autentica via /painel/login e busca os dados reais por fetch autenticado,
+    # então nenhum segredo é embutido neste HTML público.
+    if request.method == 'GET' and 'application/json' not in request.headers.get('Accept', ''):
+        try:
+            cfg = _ler_todas_config()
+            openai_key_full = cfg.get('OPENAI_API_KEY', '') or ''
+            use_openai = cfg.get('USE_OPENAI_SUGESTIONS', 'true') == 'true'
+            rembg_enabled = cfg.get('REMBG_ENABLED', 'false') == 'true'
+            preview = openai_key_full[:8] + '...' if openai_key_full and len(openai_key_full) > 8 else openai_key_full or '(não configurado)'
+            return render_template(
+                'configuracoes.html',
+                openai_key_preview=preview,
+                use_openai=use_openai,
+                rembg_enabled=rembg_enabled,
+                openai_key_full='',
+            )
+        except Exception as e:
+            logging.error(f"Erro ao renderizar painel: {e}")
+            return jsonify({'error': 'Não foi possível carregar o painel'}), 500
+
+    # A partir daqui (POST e GET JSON) exige JWT válido.
+    verify_jwt_in_request()
+
+    # POST: ações
+    if request.method == 'POST':
+        data = request.form or request.json or {}
+        action = data.get('action', '')
+
+        if action == 'save_openai_key':
+            new_key = (data.get('openai_key') or '').strip()
+            if new_key:
+                set_config('OPENAI_API_KEY', new_key)
+                return jsonify({'message': 'Token OpenAI salvo com sucesso', 'saved': True})
+            else:
+                return jsonify({'message': 'Chave inválida', 'saved': False}), 400
+
+        elif action == 'toggle_use_openai':
+            val = data.get('use_openai')
+            use_flag = (val == 'true' or val is True)
+            set_config('USE_OPENAI_SUGESTIONS', str(use_flag).lower())
+            return jsonify({'message': f'Flag USE_OPENAI_SUGESTIONS = {use_flag}', 'saved': True})
+
+        elif action == 'toggle_rembg':
+            val = data.get('rembg_enabled')
+            enabled = (val == 'true' or val is True)
+            set_config('REMBG_ENABLED', str(enabled).lower())
+            return jsonify({'message': f'REMBG_ENABLED = {enabled}', 'saved': True})
+
+        return jsonify({'error': 'Ação desconhecida'}), 400
+
+    # GET com Accept: application/json → JSON
+    cfg = _ler_todas_config()
+    openai_key_full = cfg.get('OPENAI_API_KEY', '') or ''
+    return jsonify({
+        'openai_key': openai_key_full[:8] + '...' if openai_key_full and len(openai_key_full) > 8 else openai_key_full or '(não configurado)',
+        'openai_key_full': openai_key_full,
+        'use_openai': cfg.get('USE_OPENAI_SUGESTIONS', 'true') == 'true',
+        'rembg_enabled': cfg.get('REMBG_ENABLED', 'false') == 'true',
+    })
+
+
+@app.route('/api/config', methods=['GET'])
+@jwt_required()
+def api_config():
+    """Retorna todas as configurações (para o painel frontend)."""
+    cfg = _ler_todas_config()
+    openai_key_full = cfg.get('OPENAI_API_KEY', '') or ''
+    return jsonify({
+        'openai_key': openai_key_full[:8] + '...' if openai_key_full and len(openai_key_full) > 8 else openai_key_full or '(não configurado)',
+        'openai_key_full': openai_key_full,
+        'use_openai': cfg.get('USE_OPENAI_SUGESTIONS', 'true') == 'true',
+        'rembg_enabled': cfg.get('REMBG_ENABLED', 'false') == 'true',
+    })
+
+
+@app.route('/api/teste-openai', methods=['GET'])
+@jwt_required()
+def api_teste_openai():
+    """Testa se a chave da OpenAI está válida."""
+    key = _ler_todas_config().get('OPENAI_API_KEY', '')
+    if not key or not key.startswith('sk-'):
+        return jsonify({'ok': False, 'message': 'Nenhuma chave OpenAI configurada no sistema.'}), 200
+    try:
+        models = openai.Model.list()
+        model_names = [m.get('id', '') for m in (models.get('data') or [])]
+        gpt4_available = any('gpt-4' in m for m in model_names)
+        return jsonify({
+            'ok': True,
+            'message': 'Chave válida e com acesso à API.',
+            'has_gpt4': gpt4_available,
+            'modelos_disponiveis': model_names[:5],
+        })
+    except openai.error.AuthenticationError:
+        return jsonify({'ok': False, 'message': 'Erro de autenticação. A chave está inválida ou expirada.'}), 200
+    except openai.error.RateLimitError:
+        return jsonify({'ok': False, 'message': 'Limite de taxa (rate limit) excedido. Tente novamente mais tarde.'}), 200
+    except Exception as e:
+        logging.error(f"Erro ao testar OpenAI: {e}")
+        return jsonify({'ok': False, 'message': f'Erro ao conectar: {str(e)}'}), 200
+
+
+@app.route('/admin/estatisticas', methods=['GET'])
+@jwt_required()
+def admin_estatisticas():
+    """Dashboard com estatísticas do catálogo."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        total = conn.execute("SELECT COUNT(*) FROM produto").fetchone()[0]
+        with_photo = conn.execute(
+            "SELECT COUNT(*) FROM produto WHERE foto_png IS NOT NULL AND foto_png != '' AND foto_png != 'No image available'"
+        ).fetchone()[0]
+        brands = conn.execute(
+            "SELECT marca, COUNT(*) as cnt FROM produto WHERE marca IS NOT NULL AND marca != '' GROUP BY marca ORDER BY cnt DESC LIMIT 10"
+        ).fetchall()
+        categories = conn.execute(
+            "SELECT categoriaText, COUNT(*) as cnt FROM produto WHERE categoriaText IS NOT NULL AND categoriaText != '' GROUP BY categoriaText ORDER BY cnt DESC LIMIT 10"
+        ).fetchall()
+        return jsonify({
+            'total_produtos': total,
+            'com_foto': with_photo,
+            'sem_foto': total - with_photo,
+            'top_marcas': [{'marca': b[0], 'count': b[1]} for b in brands],
+            'top_categorias': [{'categoria': c[0], 'count': c[1]} for c in categories],
+        })
+    finally:
+        conn.close()
+
+
+@app.route('/admin/produtos-com-foto', methods=['GET'])
+@jwt_required()
+def admin_produtos_com_foto():
+    """Lista produtos que possuem foto cadastrada (paginação)."""
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 15, type=int)
+    search = request.args.get('search', '').strip()
+
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        base_query = """
+            SELECT codbar, description, marca, foto_png, categoriaText, preco_medio
+            FROM produto
+            WHERE foto_png IS NOT NULL AND foto_png != '' AND foto_png != 'No image available'
+        """
+        count_query = "SELECT COUNT(*) FROM produto WHERE foto_png IS NOT NULL AND foto_png != '' AND foto_png != 'No image available'"
+
+        params = []
+        if search:
+            base_query += " AND (UPPER(description) LIKE ? OR UPPER(marca) LIKE ? OR UPPER(codbar) LIKE ?)"
+            like_search = f"%{search.upper()}%"
+            params = [like_search, like_search, like_search]
+            count_query += " AND (UPPER(description) LIKE ? OR UPPER(marca) LIKE ? OR UPPER(codbar) LIKE ?)"
+
+        count = conn.execute(count_query, params if search else []).fetchone()[0]
+
+        offset = (page - 1) * per_page
+        if search:
+            rows = conn.execute(base_query + " ORDER BY description LIMIT ? OFFSET ?",
+                                tuple(params + [per_page, offset])).fetchall()
+        else:
+            rows = conn.execute(base_query + " ORDER BY description LIMIT ? OFFSET ?",
+                                [per_page, offset]).fetchall()
+
+        produtos = []
+        for row in rows:
+            codbar, desc, marca, foto, cat, preco = row
+            produtos.append({
+                'ean': codbar,
+                'descricao': desc,
+                'marca': marca,
+                'categoria': cat,
+                'foto_png': foto,
+                'preco_medio': preco,
+            })
+
+        return jsonify({
+            'produtos': produtos,
+            'total': count,
+            'page': page,
+            'per_page': per_page,
+            'pages': (count + per_page - 1) // per_page if count > 0 else 1,
+        })
+    finally:
+        conn.close()
+
+
+@app.route('/admin/consulta-simples', methods=['GET'])
+@jwt_required()
+def admin_consulta_simples():
+    """Consulta rápida por EAN, descrição ou marca."""
+    q = request.args.get('q', '').strip()
+    if not q:
+        return jsonify({'error': 'Parâmetro "q" é obrigatório'}), 400
+
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        # Tenta por EAN exato primeiro
+        row = conn.execute(
+            "SELECT codbar, description, marca, foto_png, categoriaText, preco_medio FROM produto WHERE codbar = ?",
+            (q,)
+        ).fetchone()
+        if row:
+            codbar, desc, marca, foto, cat, preco = row
+            return jsonify({
+                'ean': codbar,
+                'descricao': desc,
+                'marca': marca,
+                'categoria': cat,
+                'foto_png': foto or 'No image available',
+                'preco_medio': preco,
+                'tipo_busca': 'ean_exact',
+            })
+
+        # Tenta por descrição (LIKE)
+        like_q = f"%{q.upper()}%"
+        rows = conn.execute(
+            "SELECT codbar, description, marca, foto_png, categoriaText, preco_medio FROM produto WHERE UPPER(description) LIKE ? LIMIT 10",
+            (like_q,)
+        ).fetchall()
+        if rows:
+            resultados = []
+            for r in rows:
+                resultados.append({
+                    'ean': r[0],
+                    'descricao': r[1],
+                    'marca': r[2],
+                    'categoria': r[4],
+                    'foto_png': r[3] or 'No image available',
+                    'preco_medio': r[5],
+                })
+            return jsonify({'results': resultados, 'tipo_busca': 'descricao_like', 'count': len(resultados)})
+
+        # Tenta por marca
+        rows = conn.execute(
+            "SELECT codbar, description, marca, foto_png, categoriaText, preco_medio FROM produto WHERE UPPER(marca) LIKE ? LIMIT 10",
+            (like_q,)
+        ).fetchall()
+        if rows:
+            resultados = []
+            for r in rows:
+                resultados.append({
+                    'ean': r[0],
+                    'descricao': r[1],
+                    'marca': r[2],
+                    'categoria': r[4],
+                    'foto_png': r[3] or 'No image available',
+                    'preco_medio': r[5],
+                })
+            return jsonify({'results': resultados, 'tipo_busca': 'marca_like', 'count': len(resultados)})
+
+        return jsonify({'message': 'Nenhum produto encontrado', 'results': [], 'tipo_busca': 'none'}), 404
+    finally:
+        conn.close()
 
 if __name__ == '__main__':
     with app.app_context():
