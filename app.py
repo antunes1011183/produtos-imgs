@@ -1,6 +1,7 @@
 import os
 import csv
 import sqlite3
+import base64
 import requests
 from io import StringIO, BytesIO
 from io import StringIO
@@ -11,6 +12,8 @@ from flask_jwt_extended import JWTManager, create_access_token, jwt_required, ve
 from werkzeug.utils import secure_filename
 from flasgger import Swagger, swag_from
 import openai
+from google import genai
+from google.genai import types as genai_types
 import pytz
 import logging
 try:
@@ -30,9 +33,11 @@ ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'}
 IMAGES_FOLDER = 'static/imgs_produtos'
 PROCESSED_IMAGES_FOLDER = 'static/processed_images'
 AUDIO_FOLDER = 'static/audios'
+ARTES_FOLDER = 'static/artes_geradas'
 BING_API_KEY = 'fd94e4427d7c4622919f8ac561818e94'
-GOOGLE_API_KEY = 'AIzaSyAdGesz-7yJzbNKytK2iCIBTKbHWd7RRZU'
+GOOGLE_API_KEY = 'AIzaSyDcgpSF9cRmzLwGqIk44x-3_GZjTfUChtM'
 GOOGLE_CX = '053e66708840f4936'
+ZAFFARI_SEARCH_URL = 'https://zaffari.vtexcommercestable.com.br/api/catalog_system/pub/products/search'
 
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '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')
 JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY', 'your-jwt-secret-key')
@@ -73,6 +78,7 @@ logging.basicConfig(level=logging.INFO)
 os.makedirs(IMAGES_FOLDER, exist_ok=True)
 os.makedirs(PROCESSED_IMAGES_FOLDER, exist_ok=True)
 os.makedirs(AUDIO_FOLDER, exist_ok=True)
+os.makedirs(ARTES_FOLDER, exist_ok=True)
 
 # Helper functions
 def allowed_file(filename):
@@ -508,7 +514,12 @@ def obter_imagem_produto(codbar):
         return bing_result
 
     # Se Bing falhar, tenta baixar da API do Google
-    return buscar_e_salvar_imagem_google(codbar)
+    google_result = buscar_e_salvar_imagem_google(codbar)
+    if google_result[1] == 200:
+        return google_result
+
+    # Se Google falhar, tenta baixar da API da Zaffari
+    return buscar_e_salvar_imagem_zaffari(codbar)
 
 def find_existing_image(codbar, img_dir, image_extensions):
     """Procura a imagem existente em um diretório"""
@@ -596,6 +607,39 @@ def buscar_e_salvar_imagem_google(codbar):
         logging.error(f"Erro ao buscar ou salvar imagem do Google para o produto {codbar}: {e}")
         return jsonify({'message': f'Error fetching or saving image from Google: {str(e)}'}), 500
 
+def buscar_e_salvar_imagem_zaffari(codbar):
+    """Busca e salva a imagem crua (fundo branco) do produto na API pública da Zaffari (VTEX)."""
+    try:
+        response = requests.get(
+            ZAFFARI_SEARCH_URL,
+            params={'fq': f'alternateIds_Ean:{codbar}'},
+            timeout=15,
+        )
+        response.raise_for_status()
+        resultados = response.json()
+
+        if resultados:
+            for produto_zaffari in resultados:
+                for item in produto_zaffari.get('items', []):
+                    for imagem in item.get('images', []):
+                        image_url = imagem.get('imageUrl')
+                        if not image_url:
+                            continue
+                        try:
+                            img_response = requests.get(image_url, timeout=15)
+                            img_response.raise_for_status()
+                            return save_image_from_response(img_response.content, codbar)
+                        except requests.RequestException as e:
+                            logging.warning(f"Erro ao baixar a imagem do URL {image_url}: {e}")
+            return jsonify({'message': 'No valid image found from Zaffari'}), 404
+        else:
+            logging.info(f"Nenhuma imagem encontrada na Zaffari para o produto {codbar}")
+            return jsonify({'message': 'No image found from Zaffari'}), 404
+    except requests.RequestException as e:
+        logging.error(f"Erro ao buscar ou salvar imagem da Zaffari para o produto {codbar}: {e}")
+        return jsonify({'message': f'Error fetching or saving image from Zaffari: {str(e)}'}), 500
+
+
 def serialize_produto_with_image(produto):
     """Serializa um produto com a imagem"""
     img_url = None
@@ -610,6 +654,10 @@ def serialize_produto_with_image(produto):
             google_result = buscar_e_salvar_imagem_google(produto.codbar)
             if google_result[1] == 200:
                 img_url = google_result[0].get_json().get('imagem_url')
+            else:
+                zaffari_result = buscar_e_salvar_imagem_zaffari(produto.codbar)
+                if zaffari_result[1] == 200:
+                    img_url = zaffari_result[0].get_json().get('imagem_url')
 
     return {
         'codbar': produto.codbar,
@@ -751,38 +799,6 @@ def register_product_in_database(product_data):
     except Exception as e:
         return None
 
-def generate_product_suggestions(produto, tipo_sugestao):
-    """Gera sugestões de produtos usando OpenAI GPT-4 e retorna os EANs dos produtos sugeridos"""
-    try:
-        description = produto.description
-        marca = produto.marca
-        query = ""
-        
-        if tipo_sugestao == 'por_marca' and marca:
-            query = f"Produtos da marca {marca} que combinam com '{description}'"
-        elif tipo_sugestao == 'combinar':
-            query = f"O que eu posso combinar com '{description}' e que eu possa comprar"
-        else:
-            return "Tipo de sugestão inválido ou informações insuficientes.", []
-
-        response = openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "Você é uma inteligência artificial desenvolvida para fornecer uma única resposta resumida e conversacional, indicando até dois produtos relacionados com base na descrição de um produto, em português do Brasil"},
-                {"role": "user", "content": query}
-            ]
-        )
-        suggestion = response.choices[0].message['content'].strip()
-
-        # Vamos simular a recuperação de EANs para produtos sugeridos
-        # Em um cenário real, você precisaria de uma lógica para mapear esses nomes para EANs reais
-        suggested_eans = ['7896504300646', '7896026305133']  # Substitua com lógica real
-
-        return suggestion, suggested_eans
-    except Exception as e:
-        logging.error(f"Erro ao gerar sugestões de produtos: {e}")
-        return "Desculpe, não consegui encontrar uma sugestão adequada.", []
-
 @app.route('/produto-sugestoes', methods=['GET'])
 @jwt_required()
 @swag_from({
@@ -842,7 +858,14 @@ def produto_sugestoes():
                 else:
                     return jsonify({'message': 'Product not found'}), 404
 
-        suggestion, eans_sugeridos = generate_product_suggestions(produto, tipo_sugestao)
+        use_openai_flag = _ler_todas_config().get('USE_OPENAI_SUGESTIONS', 'true') == 'true'
+        if use_openai_flag:
+            suggestion, eans_sugeridos = generate_product_suggestions(produto, tipo_sugestao)
+            if suggestion.startswith('Desculpe, não consegui') or suggestion.startswith('Nenhuma chave OpenAI'):
+                # IA indisponível (sem chave ou sem crédito) -> usa busca gratuita no catálogo
+                suggestion, eans_sugeridos = generate_local_suggestion(produto, tipo_sugestao)
+        else:
+            suggestion, eans_sugeridos = generate_local_suggestion(produto, tipo_sugestao)
 
         audio_file_path = text_to_speech(suggestion, f"{ean}_{tipo_sugestao}.wav")
         if not audio_file_path:
@@ -872,6 +895,11 @@ def generate_product_suggestions(produto, tipo_sugestao):
             query = f"O que eu posso combinar com '{description}' e que eu possa comprar"
         else:
             return "Tipo de sugestão inválido ou informações insuficientes.", []
+
+        api_key = _ler_todas_config().get('OPENAI_API_KEY', '').strip()
+        if not api_key or not api_key.startswith('sk-'):
+            return "Nenhuma chave OpenAI configurada no painel de Configurações.", []
+        openai.api_key = api_key
 
         response = openai.ChatCompletion.create(
             model="gpt-4",
@@ -903,6 +931,43 @@ def fetch_related_products(description, max_results=2):
     """Busca produtos relacionados no banco de dados"""
     related_products = Produto.query.filter(Produto.description.like(f'%{description}%')).limit(max_results).all()
     return related_products
+
+
+def generate_local_suggestion(produto, tipo_sugestao):
+    """Gera uma sugestão de produtos relacionados sem usar IA, buscando direto no
+    catálogo (marca ou categoria). Gratuito e retorna EANs reais do banco."""
+    if tipo_sugestao == 'por_marca' and produto.marca:
+        relacionados = (
+            Produto.query
+            .filter(Produto.marca == produto.marca, Produto.codbar != produto.codbar)
+            .filter(Produto.description.isnot(None), Produto.description != '')
+            .order_by(db.func.random())
+            .limit(2)
+            .all()
+        )
+        intro = f"Quem leva {produto.description} também costuma gostar de"
+    elif tipo_sugestao == 'combinar' and produto.categoriaText:
+        relacionados = (
+            Produto.query
+            .filter(Produto.categoriaText == produto.categoriaText, Produto.codbar != produto.codbar)
+            .filter(Produto.description.isnot(None), Produto.description != '')
+            .order_by(db.func.random())
+            .limit(2)
+            .all()
+        )
+        intro = "Combina muito bem com"
+    else:
+        return "Tipo de sugestão inválido ou informações insuficientes.", []
+
+    if not relacionados:
+        return "Não encontramos sugestões relacionadas no catálogo para este produto.", []
+
+    nomes = [p.description.title() for p in relacionados]
+    texto_produtos = nomes[0] if len(nomes) == 1 else f"{nomes[0]} e {nomes[1]}"
+
+    suggestion = f"{intro} {texto_produtos}."
+    eans_sugeridos = [p.codbar for p in relacionados]
+    return suggestion, eans_sugeridos
 
 def get_azure_tts_token(subscription_key):
     """Obtém o token para Azure TTS"""
@@ -1019,11 +1084,82 @@ def fetch_product_from_cosmos(ean):
         'Authorization': 'Bearer KZSEuMgGjPb8d9gFztQHiw'  # Seu token do Cosmos
     }
     try:
-        response = requests.get(cosmos_url, headers=headers)
+        response = requests.get(cosmos_url, headers=headers, timeout=15)
         response.raise_for_status()
         return response.json()
     except requests.RequestException as e:
         logging.error(f"Erro ao buscar produto no Cosmos: {e}")
+        return None
+
+
+def fetch_product_from_openfoodfacts(ean):
+    """Busca o produto na API pública e gratuita do Open Food Facts (sem necessidade de chave)."""
+    url = f"https://world.openfoodfacts.org/api/v2/product/{ean}.json"
+    try:
+        response = requests.get(url, headers={'User-Agent': 'MupaBrain-ProdutosImgs/1.0'}, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        if data.get('status') != 1 or not data.get('product'):
+            return None
+
+        p = data['product']
+        description = p.get('product_name') or p.get('product_name_pt') or p.get('generic_name')
+        if not description:
+            return None
+
+        return {
+            'gtin': ean,
+            'description': description,
+            'ncm': {'description': 'Não disponível'},
+            'brand': {'name': p.get('brands') or 'Marca não disponível'},
+            'thumbnail': p.get('image_url') or 'Imagem não disponível',
+            'cest': {'code': 'Não disponível'},
+            'package': {'type': p.get('quantity') or 'Não disponível'},
+            'price': {},
+            'category': {'name': p.get('categories') or 'Não disponível'},
+        }
+    except requests.RequestException as e:
+        logging.error(f"Erro ao buscar produto no Open Food Facts: {e}")
+        return None
+
+
+def fetch_product_from_zaffari(ean):
+    """Busca dados estruturados do produto na API pública da Zaffari (VTEX), gratuita."""
+    try:
+        response = requests.get(
+            ZAFFARI_SEARCH_URL,
+            params={'fq': f'alternateIds_Ean:{ean}'},
+            timeout=15,
+        )
+        response.raise_for_status()
+        resultados = response.json()
+        if not resultados:
+            return None
+
+        produto_zaffari = resultados[0]
+        description = produto_zaffari.get('productName') or produto_zaffari.get('productTitle')
+        if not description:
+            return None
+
+        item = (produto_zaffari.get('items') or [{}])[0]
+        imagens = item.get('images') or []
+        thumbnail = imagens[0].get('imageUrl') if imagens else 'Imagem não disponível'
+        categorias = produto_zaffari.get('categories') or []
+        categoria_nome = categorias[0].strip('/').split('/')[-1] if categorias else 'Não disponível'
+
+        return {
+            'gtin': ean,
+            'description': description,
+            'ncm': {'description': 'Não disponível'},
+            'brand': {'name': produto_zaffari.get('brand') or 'Marca não disponível'},
+            'thumbnail': thumbnail,
+            'cest': {'code': 'Não disponível'},
+            'package': {'type': 'Não disponível'},
+            'price': {},
+            'category': {'name': categoria_nome},
+        }
+    except requests.RequestException as e:
+        logging.error(f"Erro ao buscar produto na Zaffari: {e}")
         return None
 
 @app.route('/produto/<string:codbar>', methods=['GET'])
@@ -1078,24 +1214,42 @@ def consultar_ou_cadastrar_produto(codbar):
             'categoriaText': produto.categoriaText
         }), 200
 
-    # Se o produto não for encontrado, tenta buscar na API do Cosmos
-    cosmos_data = fetch_product_from_cosmos(codbar)
-    if cosmos_data:
-        # Registra o produto no banco de dados
-        novo_produto = register_product_in_database(cosmos_data)
-        if novo_produto:
-            return jsonify({
-                'codbar': novo_produto.codbar,
-                'description': novo_produto.description,
-                'ncm': novo_produto.ncm,
-                'marca': novo_produto.marca,
-                'preco_medio': novo_produto.preco_medio,
-                'categoriaText': novo_produto.categoriaText
-            }), 201
-        else:
-            return jsonify({'message': 'Erro ao cadastrar produto no banco de dados'}), 500
-    else:
-        return jsonify({'message': 'Produto não encontrado'}), 404
+    # Se o produto não for encontrado localmente, tenta cadastrar a partir de fontes externas
+    # gratuitas, em ordem de qualidade dos dados: Cosmos -> Open Food Facts -> Zaffari.
+    for fonte, buscar in (
+        ('cosmos', fetch_product_from_cosmos),
+        ('open_food_facts', fetch_product_from_openfoodfacts),
+        ('zaffari', fetch_product_from_zaffari),
+    ):
+        dados = buscar(codbar)
+        if not dados:
+            continue
+
+        novo_produto = register_product_in_database(dados)
+        if not novo_produto:
+            continue
+
+        # Aproveita a imagem da própria fonte para já salvar a foto crua do produto
+        thumbnail = dados.get('thumbnail')
+        if thumbnail and thumbnail.startswith('http') and not find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS):
+            try:
+                img_response = requests.get(thumbnail, timeout=15)
+                img_response.raise_for_status()
+                save_image_from_response(img_response.content, codbar)
+            except requests.RequestException as e:
+                logging.warning(f"Não foi possível salvar a imagem de {fonte} para {codbar}: {e}")
+
+        return jsonify({
+            'codbar': novo_produto.codbar,
+            'description': novo_produto.description,
+            'ncm': novo_produto.ncm,
+            'marca': novo_produto.marca,
+            'preco_medio': novo_produto.preco_medio,
+            'categoriaText': novo_produto.categoriaText,
+            'fonte': fonte,
+        }), 201
+
+    return jsonify({'message': 'Produto não encontrado em nenhuma fonte (Cosmos, Open Food Facts, Zaffari)'}), 404
 
 
 # =====================================================================
@@ -1146,6 +1300,7 @@ def configuracoes():
         try:
             cfg = _ler_todas_config()
             openai_key_full = cfg.get('OPENAI_API_KEY', '') or ''
+            gemini_key_full = cfg.get('GEMINI_API_KEY', '') or ''
             use_openai = cfg.get('USE_OPENAI_SUGESTIONS', 'true') == 'true'
             rembg_enabled = cfg.get('REMBG_ENABLED', 'false') == 'true'
             preview = openai_key_full[:8] + '...' if openai_key_full and len(openai_key_full) > 8 else openai_key_full or '(não configurado)'
@@ -1155,6 +1310,7 @@ def configuracoes():
                 use_openai=use_openai,
                 rembg_enabled=rembg_enabled,
                 openai_key_full='',
+                gemini_key_full='',
             )
         except Exception as e:
             logging.error(f"Erro ao renderizar painel: {e}")
@@ -1176,6 +1332,14 @@ def configuracoes():
             else:
                 return jsonify({'message': 'Chave inválida', 'saved': False}), 400
 
+        elif action == 'save_gemini_key':
+            new_key = (data.get('gemini_key') or '').strip()
+            if new_key:
+                set_config('GEMINI_API_KEY', new_key)
+                return jsonify({'message': 'Token Gemini salvo com sucesso', 'saved': True})
+            else:
+                return jsonify({'message': 'Chave inválida', 'saved': False}), 400
+
         elif action == 'toggle_use_openai':
             val = data.get('use_openai')
             use_flag = (val == 'true' or val is True)
@@ -1193,9 +1357,12 @@ def configuracoes():
     # GET com Accept: application/json → JSON
     cfg = _ler_todas_config()
     openai_key_full = cfg.get('OPENAI_API_KEY', '') or ''
+    gemini_key_full = cfg.get('GEMINI_API_KEY', '') or ''
     return jsonify({
         'openai_key': openai_key_full[:8] + '...' if openai_key_full and len(openai_key_full) > 8 else openai_key_full or '(não configurado)',
         'openai_key_full': openai_key_full,
+        'gemini_key': gemini_key_full[:8] + '...' if gemini_key_full and len(gemini_key_full) > 8 else gemini_key_full or '(não configurado)',
+        'gemini_key_full': gemini_key_full,
         'use_openai': cfg.get('USE_OPENAI_SUGESTIONS', 'true') == 'true',
         'rembg_enabled': cfg.get('REMBG_ENABLED', 'false') == 'true',
     })
@@ -1207,9 +1374,12 @@ def api_config():
     """Retorna todas as configurações (para o painel frontend)."""
     cfg = _ler_todas_config()
     openai_key_full = cfg.get('OPENAI_API_KEY', '') or ''
+    gemini_key_full = cfg.get('GEMINI_API_KEY', '') or ''
     return jsonify({
         'openai_key': openai_key_full[:8] + '...' if openai_key_full and len(openai_key_full) > 8 else openai_key_full or '(não configurado)',
         'openai_key_full': openai_key_full,
+        'gemini_key': gemini_key_full[:8] + '...' if gemini_key_full and len(gemini_key_full) > 8 else gemini_key_full or '(não configurado)',
+        'gemini_key_full': gemini_key_full,
         'use_openai': cfg.get('USE_OPENAI_SUGESTIONS', 'true') == 'true',
         'rembg_enabled': cfg.get('REMBG_ENABLED', 'false') == 'true',
     })
@@ -1223,6 +1393,7 @@ def api_teste_openai():
     if not key or not key.startswith('sk-'):
         return jsonify({'ok': False, 'message': 'Nenhuma chave OpenAI configurada no sistema.'}), 200
     try:
+        openai.api_key = key
         models = openai.Model.list()
         model_names = [m.get('id', '') for m in (models.get('data') or [])]
         gpt4_available = any('gpt-4' in m for m in model_names)
@@ -1241,6 +1412,177 @@ def api_teste_openai():
         return jsonify({'ok': False, 'message': f'Erro ao conectar: {str(e)}'}), 200
 
 
+@app.route('/api/teste-gemini', methods=['GET'])
+@jwt_required()
+def api_teste_gemini():
+    """Testa se a chave do Gemini (Google Cloud / Vertex AI Modo Expresso) está válida."""
+    key = _ler_todas_config().get('GEMINI_API_KEY', '')
+    if not key:
+        return jsonify({'ok': False, 'message': 'Nenhuma chave Gemini configurada no sistema.'}), 200
+    try:
+        client = genai.Client(vertexai=True, api_key=key)
+        response = client.models.generate_content(
+            model='gemini-2.5-flash-lite',
+            contents='responda apenas: ok',
+        )
+        return jsonify({
+            'ok': True,
+            'message': 'Chave válida e com acesso à API (Vertex AI Modo Expresso).',
+            'has_image_model': True,
+        })
+    except Exception as e:
+        logging.error(f"Erro ao testar Gemini: {e}")
+        return jsonify({'ok': False, 'message': f'Erro ao conectar: {str(e)}'}), 200
+
+
+# =====================================================================
+# Geração de Arte Publicitária (imagem crua -> peça de campanha)
+# =====================================================================
+
+ARTE_PROMPT_TEMPLATE = """Transforme a imagem do produto fornecida em uma peça publicitária profissional de varejo, com aparência de campanha de supermercado premium.
+
+REGRAS PRINCIPAIS:
+- Use o produto da imagem original como elemento principal.
+- Preserve fielmente a embalagem, formato, proporções, cores, logotipo, textos e características visuais do produto.
+- NÃO invente informações sobre o produto.
+- NÃO altere a identidade visual da embalagem.
+- NÃO adicione preço ou promoção.
+- NÃO adicione logotipo da Mupa ou de qualquer outra empresa além do fabricante do produto.
+- NÃO adicione QR Code.
+- NÃO adicione informações nutricionais ou benefícios que não estejam claramente presentes na embalagem.
+
+COMPOSIÇÃO:
+- Crie uma arte horizontal, moderna e sofisticada, própria para Digital Signage em supermercado.
+- Crie um cenário fotográfico relacionado ao uso/consumo do produto, com ingredientes, alimentos preparados, utensílios ou contexto de consumo que combinem com o produto.
+- Use profundidade de campo e fundo suavemente desfocado.
+- Iluminação profissional de fotografia publicitária, com sombras e reflexos realistas integrando o produto ao cenário.
+- Aparência de fotografia comercial de alto nível.
+
+LAYOUT (siga exatamente esta divisão em 3 áreas, é uma regra rígida de posicionamento):
+- METADE DIREITA da imagem: o produto, grande, centralizado nessa metade e perfeitamente legível. Esta é a única área onde o produto aparece.
+- METADE ESQUERDA, um quarto SUPERIOR: nome do produto + uma headline comercial curta e apelativa (texto).
+- METADE ESQUERDA, um quarto INFERIOR: deixe esta área COMPLETAMENTE VAZIA — sem texto, sem elementos gráficos, sem decoração, apenas o fundo/cenário liso ou suavemente desfocado. Esse espaço é reservado para o aplicativo inserir o preço do produto dinamicamente por cima depois; qualquer elemento visual aí vai atrapalhar essa inserção.
+- Tipografia grande, elegante e extremamente legível à distância, usada apenas no quarto superior esquerdo.
+- Use as cores da própria embalagem como referência para a identidade visual da arte.
+
+TEXTOS:
+- Escreva apenas no quarto superior esquerdo: o nome do produto e uma frase curta e apelativa relacionada a ele (headline comercial).
+- NÃO escreva nada, em nenhuma hipótese, no quarto inferior esquerdo — esse espaço deve ficar limpo e vazio.
+- Adicione no máximo 2 ou 3 pequenos destaques relacionados ao produto (se houver espaço no quarto superior esquerdo), sem inventar características que não estejam na embalagem.
+
+ESTILO: premium, comercial, moderno, clean, supermercado, digital signage, fotografia publicitária realista, alta qualidade, visual impactante, sem pessoas.
+
+O resultado deve parecer uma campanha publicitária criada por uma agência profissional para uma grande rede de supermercados, e não simplesmente uma foto do produto com texto por cima.
+
+Produto de referência: {descricao}."""
+
+
+def _montar_prompt_arte(produto):
+    """Monta o prompt de geração de arte a partir das regras fixas + dados do produto."""
+    descricao = produto.description or 'produto embalado'
+    if produto.marca:
+        descricao = f"{descricao} (marca {produto.marca})"
+    return ARTE_PROMPT_TEMPLATE.format(descricao=descricao)
+
+
+def gerar_arte_publicitaria(produto, image_path):
+    """Gera uma peça publicitária a partir da foto crua do produto via Gemini 2.5 Flash Image
+    (Vertex AI Modo Expresso, faturado pela conta de Cloud Billing do projeto) e salva o
+    resultado em ARTES_FOLDER. Retorna o caminho do arquivo gerado."""
+    api_key = _ler_todas_config().get('GEMINI_API_KEY', '').strip()
+    if not api_key:
+        raise ValueError('Nenhuma chave Gemini configurada. Configure em Configurações antes de gerar artes.')
+
+    prompt = _montar_prompt_arte(produto)
+
+    ext = image_path.rsplit('.', 1)[-1].lower()
+    mime_type = 'image/png' if ext == 'png' else 'image/jpeg' if ext in ('jpg', 'jpeg') else 'image/webp'
+    with open(image_path, 'rb') as image_file:
+        image_bytes = image_file.read()
+
+    try:
+        client = genai.Client(vertexai=True, api_key=api_key)
+        response = client.models.generate_content(
+            model='gemini-2.5-flash-image',
+            contents=[
+                genai_types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+                prompt,
+            ],
+            config=genai_types.GenerateContentConfig(
+                image_config=genai_types.ImageConfig(aspect_ratio='16:9'),
+            ),
+        )
+    except Exception as e:
+        raise RuntimeError(f'Erro da API Gemini: {e}')
+
+    parts = response.candidates[0].content.parts if response.candidates else []
+    output_bytes = None
+    for part in parts:
+        if part.inline_data and part.inline_data.data:
+            output_bytes = part.inline_data.data
+            break
+
+    if not output_bytes:
+        raise RuntimeError('A API Gemini não retornou uma imagem gerada (verifique se o modelo de imagem está disponível para sua chave).')
+
+    output_path = os.path.join(ARTES_FOLDER, f'{produto.codbar}.png')
+    with open(output_path, 'wb') as out_file:
+        out_file.write(output_bytes)
+
+    return output_path
+
+
+@app.route('/admin/buscar-imagem/<string:codbar>', methods=['POST'])
+@jwt_required()
+def admin_buscar_imagem(codbar):
+    """Busca a imagem crua (fundo branco) do produto: local -> Bing -> Google -> Zaffari,
+    salvando o resultado em IMAGES_FOLDER."""
+    produto = Produto.query.filter_by(codbar=codbar).first()
+    if not produto:
+        return jsonify({'message': 'Produto não encontrado'}), 404
+
+    img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+    if img_path:
+        img_url = url_for('static', filename=f'imgs_produtos/{os.path.basename(img_path)}', _external=True)
+        return jsonify({'message': 'Produto já possui foto', 'imagem_url': img_url, 'fonte': 'local'}), 200
+
+    for fonte, buscar in (
+        ('bing', buscar_e_salvar_imagem_bing),
+        ('google', buscar_e_salvar_imagem_google),
+        ('zaffari', buscar_e_salvar_imagem_zaffari),
+    ):
+        resultado = buscar(codbar)
+        if resultado[1] == 200:
+            imagem_url = resultado[0].get_json().get('imagem_url')
+            return jsonify({'message': f'Imagem encontrada via {fonte}', 'imagem_url': imagem_url, 'fonte': fonte}), 200
+
+    return jsonify({'message': 'Nenhuma imagem encontrada em nenhuma das fontes (Bing, Google, Zaffari)'}), 404
+
+
+@app.route('/admin/gerar-arte/<string:codbar>', methods=['POST'])
+@jwt_required()
+def admin_gerar_arte(codbar):
+    """Gera (ou regenera) a arte publicitária de um produto a partir da sua foto crua."""
+    produto = Produto.query.filter_by(codbar=codbar).first()
+    if not produto:
+        return jsonify({'message': 'Produto não encontrado'}), 404
+
+    img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+    if not img_path:
+        return jsonify({'message': 'Produto não possui foto cadastrada para servir de base'}), 400
+
+    try:
+        gerar_arte_publicitaria(produto, img_path)
+    except ValueError as e:
+        return jsonify({'message': str(e)}), 400
+    except Exception as e:
+        logging.error(f"Erro ao gerar arte publicitária para {codbar}: {e}")
+        return jsonify({'message': f'Erro ao gerar arte: {e}'}), 500
+
+    arte_url = url_for('static', filename=f'artes_geradas/{codbar}.png', _external=True)
+    return jsonify({'message': 'Arte gerada com sucesso', 'arte_url': arte_url}), 200
+
+
 @app.route('/admin/estatisticas', methods=['GET'])
 @jwt_required()
 def admin_estatisticas():
@@ -1248,9 +1590,10 @@ def admin_estatisticas():
     conn = sqlite3.connect(DB_PATH)
     try:
         total = conn.execute("SELECT COUNT(*) FROM produto").fetchone()[0]
-        with_photo = conn.execute(
-            "SELECT COUNT(*) FROM produto WHERE foto_png IS NOT NULL AND foto_png != '' AND foto_png != 'No image available'"
-        ).fetchone()[0]
+        with_photo = len([
+            f for f in os.listdir(IMAGES_FOLDER)
+            if os.path.splitext(f)[1].lstrip('.').lower() in ALLOWED_EXTENSIONS
+        ])
         brands = conn.execute(
             "SELECT marca, COUNT(*) as cnt FROM produto WHERE marca IS NOT NULL AND marca != '' GROUP BY marca ORDER BY cnt DESC LIMIT 10"
         ).fetchall()
@@ -1271,58 +1614,67 @@ def admin_estatisticas():
 @app.route('/admin/produtos-com-foto', methods=['GET'])
 @jwt_required()
 def admin_produtos_com_foto():
-    """Lista produtos que possuem foto cadastrada (paginação)."""
+    """Lista produtos que possuem foto crua salva localmente (paginação).
+
+    A existência de foto é determinada pelos arquivos em IMAGES_FOLDER, não pela
+    coluna foto_png do banco (que fica vazia na importação em massa do CSV).
+    """
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 15, type=int)
     search = request.args.get('search', '').strip()
 
+    arquivo_por_codbar = {}
+    for filename in os.listdir(IMAGES_FOLDER):
+        codbar, ext = os.path.splitext(filename)
+        if ext.lstrip('.').lower() in ALLOWED_EXTENSIONS:
+            arquivo_por_codbar[codbar] = filename
+
+    if not arquivo_por_codbar:
+        return jsonify({'produtos': [], 'total': 0, 'page': page, 'per_page': per_page, 'pages': 1})
+
     conn = sqlite3.connect(DB_PATH)
     try:
-        base_query = """
-            SELECT codbar, description, marca, foto_png, categoriaText, preco_medio
+        placeholders = ','.join('?' for _ in arquivo_por_codbar)
+        query = f"""
+            SELECT codbar, description, marca, categoriaText, preco_medio
             FROM produto
-            WHERE foto_png IS NOT NULL AND foto_png != '' AND foto_png != 'No image available'
+            WHERE codbar IN ({placeholders})
         """
-        count_query = "SELECT COUNT(*) FROM produto WHERE foto_png IS NOT NULL AND foto_png != '' AND foto_png != 'No image available'"
+        params = list(arquivo_por_codbar.keys())
 
-        params = []
         if search:
-            base_query += " AND (UPPER(description) LIKE ? OR UPPER(marca) LIKE ? OR UPPER(codbar) LIKE ?)"
+            query += " AND (UPPER(description) LIKE ? OR UPPER(marca) LIKE ? OR UPPER(codbar) LIKE ?)"
             like_search = f"%{search.upper()}%"
-            params = [like_search, like_search, like_search]
-            count_query += " AND (UPPER(description) LIKE ? OR UPPER(marca) LIKE ? OR UPPER(codbar) LIKE ?)"
+            params += [like_search, like_search, like_search]
 
-        count = conn.execute(count_query, params if search else []).fetchone()[0]
-
-        offset = (page - 1) * per_page
-        if search:
-            rows = conn.execute(base_query + " ORDER BY description LIMIT ? OFFSET ?",
-                                tuple(params + [per_page, offset])).fetchall()
-        else:
-            rows = conn.execute(base_query + " ORDER BY description LIMIT ? OFFSET ?",
-                                [per_page, offset]).fetchall()
-
-        produtos = []
-        for row in rows:
-            codbar, desc, marca, foto, cat, preco = row
-            produtos.append({
-                'ean': codbar,
-                'descricao': desc,
-                'marca': marca,
-                'categoria': cat,
-                'foto_png': foto,
-                'preco_medio': preco,
-            })
-
-        return jsonify({
-            'produtos': produtos,
-            'total': count,
-            'page': page,
-            'per_page': per_page,
-            'pages': (count + per_page - 1) // per_page if count > 0 else 1,
-        })
+        all_rows = conn.execute(query + " ORDER BY description", params).fetchall()
     finally:
         conn.close()
+
+    count = len(all_rows)
+    offset = (page - 1) * per_page
+    page_rows = all_rows[offset:offset + per_page]
+
+    produtos = []
+    for codbar, desc, marca, cat, preco in page_rows:
+        arte_existe = os.path.exists(os.path.join(ARTES_FOLDER, f'{codbar}.png'))
+        produtos.append({
+            'ean': codbar,
+            'descricao': desc,
+            'marca': marca,
+            'categoria': cat,
+            'foto_png': url_for('static', filename=f'imgs_produtos/{arquivo_por_codbar[codbar]}', _external=True),
+            'preco_medio': preco,
+            'arte_url': url_for('static', filename=f'artes_geradas/{codbar}.png', _external=True) if arte_existe else None,
+        })
+
+    return jsonify({
+        'produtos': produtos,
+        'total': count,
+        'page': page,
+        'per_page': per_page,
+        'pages': (count + per_page - 1) // per_page if count > 0 else 1,
+    })
 
 
 @app.route('/admin/consulta-simples', methods=['GET'])
@@ -1342,15 +1694,16 @@ def admin_consulta_simples():
         ).fetchone()
         if row:
             codbar, desc, marca, foto, cat, preco = row
-            return jsonify({
+            img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+            resultado = {
                 'ean': codbar,
                 'descricao': desc,
                 'marca': marca,
                 'categoria': cat,
-                'foto_png': foto or 'No image available',
+                'foto_png': url_for('static', filename=f'imgs_produtos/{os.path.basename(img_path)}', _external=True) if img_path else 'No image available',
                 'preco_medio': preco,
-                'tipo_busca': 'ean_exact',
-            })
+            }
+            return jsonify({'results': [resultado], 'tipo_busca': 'ean_exact', 'count': 1})
 
         # Tenta por descrição (LIKE)
         like_q = f"%{q.upper()}%"
@@ -1361,12 +1714,13 @@ def admin_consulta_simples():
         if rows:
             resultados = []
             for r in rows:
+                img_path = find_existing_image(r[0], IMAGES_FOLDER, ALLOWED_EXTENSIONS)
                 resultados.append({
                     'ean': r[0],
                     'descricao': r[1],
                     'marca': r[2],
                     'categoria': r[4],
-                    'foto_png': r[3] or 'No image available',
+                    'foto_png': url_for('static', filename=f'imgs_produtos/{os.path.basename(img_path)}', _external=True) if img_path else 'No image available',
                     'preco_medio': r[5],
                 })
             return jsonify({'results': resultados, 'tipo_busca': 'descricao_like', 'count': len(resultados)})
@@ -1379,12 +1733,13 @@ def admin_consulta_simples():
         if rows:
             resultados = []
             for r in rows:
+                img_path = find_existing_image(r[0], IMAGES_FOLDER, ALLOWED_EXTENSIONS)
                 resultados.append({
                     'ean': r[0],
                     'descricao': r[1],
                     'marca': r[2],
                     'categoria': r[4],
-                    'foto_png': r[3] or 'No image available',
+                    'foto_png': url_for('static', filename=f'imgs_produtos/{os.path.basename(img_path)}', _external=True) if img_path else 'No image available',
                     'preco_medio': r[5],
                 })
             return jsonify({'results': resultados, 'tipo_busca': 'marca_like', 'count': len(resultados)})
@@ -1396,4 +1751,4 @@ def admin_consulta_simples():
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
-    app.run('0.0.0.0', port=5000, debug=True)
+    app.run('0.0.0.0', port=5000, debug=True, threaded=True)
