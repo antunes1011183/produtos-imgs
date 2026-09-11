@@ -480,7 +480,6 @@ def deletar_imagem_produto(codbar):
         return jsonify({'message': f'Erro no processamento da solicitação: {e}'}), 422
 
 @app.route('/produto-imagem/<codbar>', methods=['GET'])
-@jwt_required()
 @swag_from({
     'tags': ['Produtos'],
     'parameters': [
@@ -501,25 +500,21 @@ def deletar_imagem_produto(codbar):
     }
 })
 def obter_imagem_produto(codbar):
-    """Obtém a imagem de um produto"""
+    """Obtém a imagem crua do produto (local -> Bing -> Google -> Zaffari) e, se já
+    existir, a URL da arte publicitária gerada para ele."""
     img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
     if img_path:
         img_url = request.host_url.rstrip('/') + '/' + img_path
         logging.info(f"Imagem encontrada localmente para o produto {codbar}: {img_url}")
-        return jsonify({'imagem_url': img_url}), 200
-    
-    # Tenta baixar da API do Bing
-    bing_result = buscar_e_salvar_imagem_bing(codbar)
-    if bing_result[1] == 200:
-        return bing_result
+        return jsonify({'imagem_url': img_url, 'imagem_url_arte': _arte_url(codbar)}), 200
 
-    # Se Bing falhar, tenta baixar da API do Google
-    google_result = buscar_e_salvar_imagem_google(codbar)
-    if google_result[1] == 200:
-        return google_result
+    for buscar in (buscar_e_salvar_imagem_bing, buscar_e_salvar_imagem_google, buscar_e_salvar_imagem_zaffari):
+        resultado = buscar(codbar)
+        if resultado[1] == 200:
+            imagem_url = resultado[0].get_json().get('imagem_url')
+            return jsonify({'imagem_url': imagem_url, 'imagem_url_arte': _arte_url(codbar)}), 200
 
-    # Se Google falhar, tenta baixar da API da Zaffari
-    return buscar_e_salvar_imagem_zaffari(codbar)
+    return jsonify({'message': 'Imagem não encontrada em nenhuma fonte (local, Bing, Google, Zaffari)'}), 404
 
 def find_existing_image(codbar, img_dir, image_extensions):
     """Procura a imagem existente em um diretório"""
@@ -527,6 +522,12 @@ def find_existing_image(codbar, img_dir, image_extensions):
         temp_path = os.path.join(img_dir, f'{codbar}.{ext}')
         if os.path.exists(temp_path):
             return temp_path
+    return None
+
+def _arte_url(codbar):
+    """Retorna a URL da arte publicitária já gerada para o produto, ou None se ainda não existir."""
+    if os.path.exists(os.path.join(ARTES_FOLDER, f'{codbar}.png')):
+        return url_for('static', filename=f'artes_geradas/{codbar}.png', _external=True)
     return None
 
 def save_image_from_response(image_data, codbar):
@@ -858,14 +859,7 @@ def produto_sugestoes():
                 else:
                     return jsonify({'message': 'Product not found'}), 404
 
-        use_openai_flag = _ler_todas_config().get('USE_OPENAI_SUGESTIONS', 'true') == 'true'
-        if use_openai_flag:
-            suggestion, eans_sugeridos = generate_product_suggestions(produto, tipo_sugestao)
-            if suggestion.startswith('Desculpe, não consegui') or suggestion.startswith('Nenhuma chave OpenAI'):
-                # IA indisponível (sem chave ou sem crédito) -> usa busca gratuita no catálogo
-                suggestion, eans_sugeridos = generate_local_suggestion(produto, tipo_sugestao)
-        else:
-            suggestion, eans_sugeridos = generate_local_suggestion(produto, tipo_sugestao)
+        suggestion, eans_sugeridos = obter_sugestao(produto, tipo_sugestao)
 
         audio_file_path = text_to_speech(suggestion, f"{ean}_{tipo_sugestao}.wav")
         if not audio_file_path:
@@ -968,6 +962,100 @@ def generate_local_suggestion(produto, tipo_sugestao):
     suggestion = f"{intro} {texto_produtos}."
     eans_sugeridos = [p.codbar for p in relacionados]
     return suggestion, eans_sugeridos
+
+
+def gerar_termos_sugestao_ia(produto, tipo_sugestao):
+    """Usa Gemini (texto, modelo leve e barato) para sugerir termos de produtos
+    genuinamente relevantes/complementares. Retorna None se a IA não estiver disponível."""
+    api_key = _ler_todas_config().get('GEMINI_API_KEY', '').strip()
+    if not api_key:
+        return None
+
+    if tipo_sugestao == 'por_marca' and produto.marca:
+        instrucao = (
+            f"Liste 3 tipos de produtos da marca '{produto.marca}' que combinam com "
+            f"'{produto.description}'."
+        )
+    else:
+        instrucao = (
+            f"Liste 3 tipos de produtos complementares que uma pessoa compraria junto "
+            f"com '{produto.description}' em um supermercado."
+        )
+    instrucao += (
+        " Responda APENAS com uma lista de termos de busca curtos (1-3 palavras cada), "
+        "separados por vírgula, sem explicações, sem numeração."
+    )
+
+    try:
+        client = genai.Client(vertexai=True, api_key=api_key)
+        response = client.models.generate_content(
+            model='gemini-2.5-flash-lite',
+            contents=instrucao,
+        )
+        termos = [t.strip() for t in (response.text or '').split(',') if t.strip()]
+        return termos[:3] or None
+    except Exception as e:
+        logging.error(f"Erro ao gerar termos de sugestão via IA: {e}")
+        return None
+
+
+def buscar_produtos_por_termos(termos, excluir_codbar, max_results=2):
+    """Busca produtos reais no catálogo cujo nome combine com algum dos termos dados."""
+    encontrados = []
+    encontrados_codbars = set()
+    for termo in termos:
+        if len(encontrados) >= max_results:
+            break
+        candidatos = (
+            Produto.query
+            .filter(db.func.upper(Produto.description).like(f'%{termo.upper()}%'))
+            .filter(Produto.codbar != excluir_codbar)
+            .filter(Produto.description.isnot(None), Produto.description != '')
+            .limit(max_results)
+            .all()
+        )
+        for c in candidatos:
+            if c.codbar not in encontrados_codbars and len(encontrados) < max_results:
+                encontrados.append(c)
+                encontrados_codbars.add(c.codbar)
+    return encontrados
+
+
+def generate_smart_suggestion(produto, tipo_sugestao):
+    """Sugestão híbrida: a IA (Gemini) indica termos relevantes, e a busca é feita no
+    próprio catálogo para garantir produtos e EANs reais. Cai para o método local
+    (marca/categoria) se a IA estiver indisponível ou não achar nada no catálogo."""
+    termos = gerar_termos_sugestao_ia(produto, tipo_sugestao)
+    if termos:
+        relacionados = buscar_produtos_por_termos(termos, produto.codbar, max_results=2)
+        if relacionados:
+            nomes = [p.description.title() for p in relacionados]
+            texto_produtos = nomes[0] if len(nomes) == 1 else f"{nomes[0]} e {nomes[1]}"
+            intro = (
+                f"Combina com outros itens da marca {produto.marca}:"
+                if tipo_sugestao == 'por_marca' and produto.marca
+                else "Quem leva este produto também costuma comprar"
+            )
+            suggestion = f"{intro} {texto_produtos}."
+            return suggestion, [p.codbar for p in relacionados]
+
+    return generate_local_suggestion(produto, tipo_sugestao)
+
+
+def obter_sugestao(produto, tipo_sugestao):
+    """Escolhe a melhor fonte disponível para a sugestão: Gemini (híbrido, mais
+    inteligente) -> OpenAI (se habilitado e com chave) -> busca local gratuita."""
+    cfg = _ler_todas_config()
+    if cfg.get('GEMINI_API_KEY', '').strip():
+        return generate_smart_suggestion(produto, tipo_sugestao)
+
+    if cfg.get('USE_OPENAI_SUGESTIONS', 'true') == 'true':
+        suggestion, eans_sugeridos = generate_product_suggestions(produto, tipo_sugestao)
+        if not suggestion.startswith('Desculpe, não consegui') and not suggestion.startswith('Nenhuma chave OpenAI'):
+            return suggestion, eans_sugeridos
+
+    return generate_local_suggestion(produto, tipo_sugestao)
+
 
 def get_azure_tts_token(subscription_key):
     """Obtém o token para Azure TTS"""
@@ -1199,7 +1287,18 @@ def fetch_product_from_zaffari(ean):
     }
 })
 def consultar_ou_cadastrar_produto(codbar):
-    """Consulta o produto no banco de dados e, se não encontrado, busca e cadastra via API do Cosmos"""
+    """Consulta o produto no banco de dados e, se não encontrado, busca e cadastra via
+    fontes externas gratuitas. Inclui uma sugestão de produtos relacionados na resposta."""
+    tipo_sugestao = request.args.get('tipo_sugestao', 'combinar')
+
+    def _sugestao_segura(produto):
+        try:
+            texto, eans = obter_sugestao(produto, tipo_sugestao)
+            return {'texto': texto, 'eans_sugeridos': eans}
+        except Exception as e:
+            logging.error(f"Erro ao gerar sugestão para {produto.codbar}: {e}")
+            return None
+
     # Busca o produto no banco de dados
     produto = Produto.query.filter_by(codbar=codbar).first()
 
@@ -1211,7 +1310,8 @@ def consultar_ou_cadastrar_produto(codbar):
             'ncm': produto.ncm,
             'marca': produto.marca,
             'preco_medio': produto.preco_medio,
-            'categoriaText': produto.categoriaText
+            'categoriaText': produto.categoriaText,
+            'sugestao': _sugestao_segura(produto),
         }), 200
 
     # Se o produto não for encontrado localmente, tenta cadastrar a partir de fontes externas
@@ -1247,6 +1347,7 @@ def consultar_ou_cadastrar_produto(codbar):
             'preco_medio': novo_produto.preco_medio,
             'categoriaText': novo_produto.categoriaText,
             'fonte': fonte,
+            'sugestao': _sugestao_segura(novo_produto),
         }), 201
 
     return jsonify({'message': 'Produto não encontrado em nenhuma fonte (Cosmos, Open Food Facts, Zaffari)'}), 404
@@ -1657,7 +1758,6 @@ def admin_produtos_com_foto():
 
     produtos = []
     for codbar, desc, marca, cat, preco in page_rows:
-        arte_existe = os.path.exists(os.path.join(ARTES_FOLDER, f'{codbar}.png'))
         produtos.append({
             'ean': codbar,
             'descricao': desc,
@@ -1665,7 +1765,7 @@ def admin_produtos_com_foto():
             'categoria': cat,
             'foto_png': url_for('static', filename=f'imgs_produtos/{arquivo_por_codbar[codbar]}', _external=True),
             'preco_medio': preco,
-            'arte_url': url_for('static', filename=f'artes_geradas/{codbar}.png', _external=True) if arte_existe else None,
+            'arte_url': _arte_url(codbar),
         })
 
     return jsonify({
@@ -1751,4 +1851,4 @@ def admin_consulta_simples():
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
-    app.run('0.0.0.0', port=5000, debug=True, threaded=True)
+    app.run('0.0.0.0', port=5050, debug=True, threaded=True)

@@ -431,6 +431,12 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
                 Estatísticas
             </button>
+
+            <span class="nav-section-label">Desenvolvedor</span>
+            <button class="nav-tab" data-tab="apitest" data-title="Testar API" data-subtitle="Envie requisições para qualquer rota da API e veja a resposta">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                Testar API
+            </button>
         </nav>
 
         <div class="sidebar-footer">
@@ -629,6 +635,44 @@
                         <thead><tr><th>#</th><th>Categoria</th><th>Produtos</th></tr></thead>
                         <tbody><tr><td colspan="3" class="empty-state">Carregando...</td></tr></tbody>
                     </table>
+                </div>
+            </div>
+
+            <!-- ===== TAB: TESTAR API ===== -->
+            <div id="tab-apitest" class="tab-content" style="display:none;">
+                <div class="card">
+                    <h2>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                        Requisição
+                    </h2>
+                    <label style="display:block; margin-bottom:0.4rem;">Atalhos</label>
+                    <div id="api-shortcuts" style="display:flex; flex-wrap:wrap; gap:0.4rem; margin-bottom:1.1rem;"></div>
+
+                    <div class="form-row" style="flex-direction:row; gap:0.5rem;">
+                        <select id="api-method" style="width:110px; flex-shrink:0; padding:0.55rem 0.5rem; border:1px solid var(--border); border-radius:8px; font-size:0.88rem; font-family:inherit; background:#fff;">
+                            <option>GET</option>
+                            <option>POST</option>
+                            <option>PUT</option>
+                            <option>DELETE</option>
+                        </select>
+                        <input type="text" id="api-path" placeholder="/produto-sugestoes?ean=7896056401112&tipo_sugestao=combinar" style="flex:1;">
+                    </div>
+                    <div class="form-row">
+                        <label for="api-body">Corpo da requisição (JSON, opcional — usado em POST/PUT)</label>
+                        <textarea id="api-body" rows="4" placeholder='{"action": "save_openai_key", "openai_key": "sk-..."}' style="font-family:&quot;SF Mono&quot;,Consolas,monospace; font-size:0.82rem; padding:0.6rem 0.75rem; border:1px solid var(--border); border-radius:8px; resize:vertical;"></textarea>
+                    </div>
+                    <div class="form-row" style="flex-direction:row; align-items:center; gap:0.75rem;">
+                        <button class="btn btn-primary" id="btn-api-send">Enviar</button>
+                        <span id="api-status-badge" style="font-size:0.82rem; color:var(--muted);"></span>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                        Resposta
+                    </h2>
+                    <pre id="api-response" style="background:#0f172a; color:#e2e8f0; padding:1rem; border-radius:8px; font-size:0.8rem; overflow:auto; max-height:440px; margin:0; font-family:&quot;SF Mono&quot;,Consolas,monospace; white-space:pre-wrap; word-break:break-word;">Envie uma requisição para ver a resposta aqui.</pre>
                 </div>
             </div>
         </div>
@@ -1215,6 +1259,99 @@ async function loadEstats() {
     }
 }
 
+// ===== TAB: TESTAR API =====
+const API_SHORTCUTS = [
+    { label: 'GET /produtos', method: 'GET', path: '/produtos?page=1&per_page=10' },
+    { label: 'GET /produto/:codbar', method: 'GET', path: '/produto/7896056401112' },
+    { label: 'GET /produto-sugestoes', method: 'GET', path: '/produto-sugestoes?ean=7896056401112&tipo_sugestao=combinar' },
+    { label: 'GET /admin/consulta-simples', method: 'GET', path: '/admin/consulta-simples?q=7896056401112' },
+    { label: 'GET /admin/produtos-com-foto', method: 'GET', path: '/admin/produtos-com-foto?page=1&per_page=10' },
+    { label: 'GET /admin/estatisticas', method: 'GET', path: '/admin/estatisticas' },
+    { label: 'POST /admin/buscar-imagem/:codbar', method: 'POST', path: '/admin/buscar-imagem/7896056401112' },
+    { label: 'POST /admin/gerar-arte/:codbar', method: 'POST', path: '/admin/gerar-arte/7896056401112' },
+    { label: 'GET /api/teste-openai', method: 'GET', path: '/api/teste-openai' },
+    { label: 'GET /api/teste-gemini', method: 'GET', path: '/api/teste-gemini' },
+    { label: 'GET /api/config', method: 'GET', path: '/api/config' },
+];
+
+function renderApiShortcuts() {
+    const container = $('#api-shortcuts');
+    if (!container) return;
+    container.innerHTML = API_SHORTCUTS.map((s, i) =>
+        `<button type="button" class="btn btn-secondary btn-sm" data-shortcut="${i}">${escHtml(s.label)}</button>`
+    ).join('');
+    container.querySelectorAll('[data-shortcut]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const s = API_SHORTCUTS[parseInt(btn.dataset.shortcut, 10)];
+            $('#api-method').value = s.method;
+            $('#api-path').value = s.path;
+            $('#api-body').value = '';
+        });
+    });
+}
+renderApiShortcuts();
+
+$('#btn-api-send').addEventListener('click', async () => {
+    const method = $('#api-method').value;
+    let path = $('#api-path').value.trim();
+    if (!path) { toast('Informe o caminho da rota', 'error'); return; }
+    if (!path.startsWith('/')) path = '/' + path;
+    const bodyText = $('#api-body').value.trim();
+
+    const btn = $('#btn-api-send');
+    const originalText = btn.textContent;
+    const statusBadge = $('#api-status-badge');
+    const responseBox = $('#api-response');
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner"></span> Enviando...`;
+    statusBadge.textContent = '';
+
+    let fetchOpts;
+    try {
+        fetchOpts = { method, headers: { ...authHeaders() } };
+    } catch (e) {
+        toast(e.message, 'error');
+        btn.disabled = false;
+        btn.textContent = originalText;
+        return;
+    }
+
+    if (bodyText && (method === 'POST' || method === 'PUT')) {
+        try {
+            JSON.parse(bodyText);
+        } catch (e) {
+            toast('Corpo inválido: não é um JSON válido', 'error');
+            btn.disabled = false;
+            btn.textContent = originalText;
+            return;
+        }
+        fetchOpts.headers['Content-Type'] = 'application/json';
+        fetchOpts.body = bodyText;
+    }
+
+    const start = performance.now();
+    try {
+        const res = await fetch(path, fetchOpts);
+        const elapsed = Math.round(performance.now() - start);
+        const contentType = res.headers.get('content-type') || '';
+        let bodyOut;
+        if (contentType.includes('application/json')) {
+            const json = await res.json();
+            bodyOut = JSON.stringify(json, null, 2);
+        } else {
+            bodyOut = await res.text();
+        }
+        statusBadge.innerHTML = `<span class="status-dot ${res.ok ? 'on' : 'off'}"></span>${res.status} ${escHtml(res.statusText)} · ${elapsed}ms`;
+        responseBox.textContent = bodyOut || '(resposta vazia)';
+    } catch (e) {
+        statusBadge.innerHTML = `<span class="status-dot off"></span>Erro de rede`;
+        responseBox.textContent = 'Erro: ' + e.message;
+    }
+
+    btn.disabled = false;
+    btn.textContent = originalText;
+});
+
 // ===== Inicialização =====
 (async () => {
     try {
@@ -1234,7 +1371,7 @@ async function loadEstats() {
                 <p style="margin-bottom:1rem;">Não foi possível conectar ao servidor:</p>
                 <div class="alert alert-error" style="font-family:monospace; word-break:break-all;">${escHtml(e.message)}</div>
                 <p style="font-size:0.85rem; color:var(--muted); margin-top:0.5rem;">
-                    Verifique se o servidor Flask está rodando em <code>http://localhost:5000</code>
+                    Verifique se o servidor Flask está rodando em <code>${escHtml(window.location.origin)}</code>
                     e se as credenciais no código estão corretas.
                 </p>
             `;
