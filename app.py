@@ -23,7 +23,7 @@ except Exception:
     remove = None
     REMBG_ENABLED = False
     logging.warning("rembg não disponível - remoção de fundo desativada")
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 from flask_migrate import Migrate  # Adicionado
 import re
 from io import BytesIO
@@ -34,6 +34,7 @@ IMAGES_FOLDER = 'static/imgs_produtos'
 PROCESSED_IMAGES_FOLDER = 'static/processed_images'
 AUDIO_FOLDER = 'static/audios'
 ARTES_FOLDER = 'static/artes_geradas'
+FONT_PATH = 'static/fonts/Montserrat-Variable.ttf'
 BING_API_KEY = 'fd94e4427d7c4622919f8ac561818e94'
 GOOGLE_API_KEY = 'AIzaSyDcgpSF9cRmzLwGqIk44x-3_GZjTfUChtM'
 GOOGLE_CX = '053e66708840f4936'
@@ -504,7 +505,7 @@ def obter_imagem_produto(codbar):
     existir, a URL da arte publicitária gerada para ele."""
     img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
     if img_path:
-        img_url = request.host_url.rstrip('/') + '/' + img_path
+        img_url = _static_url(img_path)
         logging.info(f"Imagem encontrada localmente para o produto {codbar}: {img_url}")
         return jsonify({'imagem_url': img_url, 'imagem_url_arte': _arte_url(codbar)}), 200
 
@@ -524,6 +525,13 @@ def find_existing_image(codbar, img_dir, image_extensions):
             return temp_path
     return None
 
+def _static_url(fs_path):
+    """Converte um caminho de arquivo dentro de static/ (com separadores do SO, ex.:
+    'static\\imgs_produtos\\x.png' no Windows) em uma URL http correta e absoluta."""
+    rel_path = os.path.relpath(fs_path, 'static').replace(os.sep, '/')
+    return url_for('static', filename=rel_path, _external=True)
+
+
 def _arte_url(codbar):
     """Retorna a URL da arte publicitária já gerada para o produto, ou None se ainda não existir."""
     if os.path.exists(os.path.join(ARTES_FOLDER, f'{codbar}.png')):
@@ -540,14 +548,14 @@ def save_image_from_response(image_data, codbar):
         with open(original_file_path, 'wb') as f:
             f.write(image_data)
 
-        img_url = request.host_url.rstrip('/') + '/' + original_file_path
+        img_url = _static_url(original_file_path)
         logging.info(f"Imagem salva para o produto {codbar}: {img_url}")
 
         # Processa a imagem para remover o fundo
         input_image = Image.open(original_file_path)
         save_image_with_background_removal(input_image, processed_file_path)
 
-        img_url = request.host_url.rstrip('/') + '/' + processed_file_path
+        img_url = _static_url(processed_file_path)
         logging.info(f"Imagem salva e processada para o produto {codbar}: {img_url}")
 
         return jsonify({'imagem_url': img_url}), 200
@@ -646,7 +654,7 @@ def serialize_produto_with_image(produto):
     img_url = None
     img_path = find_existing_image(produto.codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
     if img_path:
-        img_url = request.host_url.rstrip('/') + '/' + img_path
+        img_url = _static_url(img_path)
     else:
         bing_result = buscar_e_salvar_imagem_bing(produto.codbar)
         if bing_result[1] == 200:
@@ -1544,36 +1552,39 @@ ARTE_PROMPT_TEMPLATE = """Transforme a imagem do produto fornecida em uma peça 
 
 REGRAS PRINCIPAIS:
 - Use o produto da imagem original como elemento principal.
-- Preserve fielmente a embalagem, formato, proporções, cores, logotipo, textos e características visuais do produto.
+- Preserve fielmente a embalagem, formato, proporções, cores, logotipo, textos e características visuais do produto exatamente como estão na foto de referência.
 - NÃO invente informações sobre o produto.
 - NÃO altere a identidade visual da embalagem.
 - NÃO adicione preço ou promoção.
-- NÃO adicione logotipo da Mupa ou de qualquer outra empresa além do fabricante do produto.
+- NÃO adicione, replique ou destaque como selo/elemento gráfico separado nenhuma marca, logotipo ou selo de terceiros — nem da Mupa, nem de qualquer empresa, evento, campeonato ou promoção licenciada além do fabricante do produto. Isso vale mesmo que a embalagem original já tenha algum selo de terceiro impresso nela: preserve-o apenas ali, como parte da embalagem, e NÃO o recrie como um elemento gráfico isolado em outra parte da composição.
 - NÃO adicione QR Code.
 - NÃO adicione informações nutricionais ou benefícios que não estejam claramente presentes na embalagem.
+- NÃO inclua pessoas, rostos, mãos ou silhuetas humanas em nenhuma parte da composição — nem em primeiro plano, nem desfocadas no fundo.
+
+INTEGRAÇÃO DO PRODUTO (regra crítica):
+- A foto de referência do produto tem fundo branco/liso de estúdio — REMOVA COMPLETAMENTE esse fundo. É proibido deixar qualquer resquício de fundo branco, área lisa ou "recorte colado" ao redor do produto.
+- Extraia o produto e reintegre-o de forma perfeitamente realista dentro do novo cenário: iluminação, sombras projetadas, reflexos, gotas de condensação (quando fizer sentido para o produto) e perspectiva devem ser coerentes com o ambiente ao redor.
+- O resultado deve parecer que o produto foi fisicamente fotografado ali, na mesma sessão de fotos do cenário — nunca uma montagem ou colagem.
 
 COMPOSIÇÃO:
 - Crie uma arte horizontal, moderna e sofisticada, própria para Digital Signage em supermercado.
-- Crie um cenário fotográfico relacionado ao uso/consumo do produto, com ingredientes, alimentos preparados, utensílios ou contexto de consumo que combinem com o produto.
+- Crie um cenário fotográfico relacionado ao uso/consumo do produto, com ingredientes, alimentos preparados, utensílios ou contexto de consumo que combinem com o produto, preenchendo toda a composição (sem áreas de fundo branco isoladas).
 - Use profundidade de campo e fundo suavemente desfocado.
-- Iluminação profissional de fotografia publicitária, com sombras e reflexos realistas integrando o produto ao cenário.
-- Aparência de fotografia comercial de alto nível.
+- Iluminação profissional de fotografia publicitária, com sombras e reflexos realistas integrando totalmente o produto ao cenário.
+- Aparência de fotografia comercial de alto nível, como uma campanha publicitária real.
 
-LAYOUT (siga exatamente esta divisão em 3 áreas, é uma regra rígida de posicionamento):
-- METADE DIREITA da imagem: o produto, grande, centralizado nessa metade e perfeitamente legível. Esta é a única área onde o produto aparece.
-- METADE ESQUERDA, um quarto SUPERIOR: nome do produto + uma headline comercial curta e apelativa (texto).
-- METADE ESQUERDA, um quarto INFERIOR: deixe esta área COMPLETAMENTE VAZIA — sem texto, sem elementos gráficos, sem decoração, apenas o fundo/cenário liso ou suavemente desfocado. Esse espaço é reservado para o aplicativo inserir o preço do produto dinamicamente por cima depois; qualquer elemento visual aí vai atrapalhar essa inserção.
-- Tipografia grande, elegante e extremamente legível à distância, usada apenas no quarto superior esquerdo.
+LAYOUT (siga exatamente esta divisão, é uma regra rígida de posicionamento):
+- METADE DIREITA da imagem: o produto, grande, centralizado nessa metade, perfeitamente legível e totalmente integrado ao cenário (sem fundo branco/liso visível ao redor dele). Esta é a única área onde o produto aparece.
+- METADE ESQUERDA inteira (quarto superior e quarto inferior): mantenha essa área com composição visual simples — cenário, elementos decorativos leves suavemente desfocados — SEM nenhum texto, letra, número ou tipografia adicional. Essa área será usada depois por outro sistema para inserir nome do produto, headline e preço; qualquer texto ou elemento gráfico complexo aí vai atrapalhar essa inserção.
 - Use as cores da própria embalagem como referência para a identidade visual da arte.
 
 TEXTOS:
-- Escreva apenas no quarto superior esquerdo: o nome do produto e uma frase curta e apelativa relacionada a ele (headline comercial).
-- NÃO escreva nada, em nenhuma hipótese, no quarto inferior esquerdo — esse espaço deve ficar limpo e vazio.
-- Adicione no máximo 2 ou 3 pequenos destaques relacionados ao produto (se houver espaço no quarto superior esquerdo), sem inventar características que não estejam na embalagem.
+- NÃO escreva NENHUM texto adicional na imagem — nem nome do produto, nem frases, nem números, nem preço, em nenhuma parte da composição. A única exceção é o texto que já vem impresso na embalagem original do produto (parte da foto de referência), que deve ser preservado normalmente.
+- Os textos publicitários serão adicionados depois por um sistema separado; a imagem gerada deve ficar totalmente livre de tipografia adicional.
 
 ESTILO: premium, comercial, moderno, clean, supermercado, digital signage, fotografia publicitária realista, alta qualidade, visual impactante, sem pessoas.
 
-O resultado deve parecer uma campanha publicitária criada por uma agência profissional para uma grande rede de supermercados, e não simplesmente uma foto do produto com texto por cima.
+O resultado deve parecer o cenário de uma campanha publicitária criada por uma agência profissional para uma grande rede de supermercados — com o produto fisicamente integrado ao cenário (nunca um recorte colado sobre fundo branco) e sem nenhuma arte gráfica ou texto sobreposto.
 
 Produto de referência: {descricao}."""
 
@@ -1586,10 +1597,156 @@ def _montar_prompt_arte(produto):
     return ARTE_PROMPT_TEMPLATE.format(descricao=descricao)
 
 
+def gerar_textos_arte_ia(produto):
+    """Usa Gemini (texto, modelo leve e barato) para produzir um nome de produto limpo e uma
+    headline comercial curta. Gera o nome do zero a partir da descrição bruta em vez de usar
+    produto.description diretamente porque parte do catálogo tem caracteres corrompidos de uma
+    importação antiga (ex.: 'AÇÚCAR' virou 'A��CAR', perda de dados irreversível) —
+    a IA reconstrói o nome comercial correto a partir do contexto. Esse texto é sempre desenhado
+    depois com fonte real (nunca pela IA de imagem), então não corre risco de erro de ortografia.
+    Retorna (nome, headline); nome cai para produto.description em caixa normal se a IA falhar."""
+    fallback_nome = (produto.description or 'Produto').title()
+    api_key = _ler_todas_config().get('GEMINI_API_KEY', '').strip()
+    if not api_key:
+        return fallback_nome, None
+    try:
+        client = genai.Client(vertexai=True, api_key=api_key)
+        instrucao = (
+            f"A descrição bruta deste produto num sistema de catálogo é: \"{produto.description}\""
+            + (f" (marca {produto.marca})" if produto.marca else "")
+            + ". Essa descrição pode estar em caixa alta, abreviada, ou conter caracteres "
+            "corrompidos/símbolos estranhos (ex.: �) — ignore os símbolos quebrados e "
+            "reconstrua o nome comercial correto a partir do contexto.\n\n"
+            "Gere:\n"
+            "1. Um nome de produto limpo, comercial e curto, em capitalização normal (não tudo "
+            "maiúsculo), ex.: 'Coca-Cola Sem Açúcar 600ml'.\n"
+            "2. Uma frase curta e apelativa de campanha publicitária (máximo 5 palavras).\n\n"
+            "Responda EXATAMENTE neste formato, uma linha para cada, sem mais nada:\n"
+            "NOME: <nome do produto>\n"
+            "HEADLINE: <frase>"
+        )
+        response = client.models.generate_content(
+            model='gemini-2.5-flash-lite',
+            contents=instrucao,
+        )
+        texto = (response.text or '').strip()
+        nome, headline = None, None
+        for linha in texto.splitlines():
+            linha = linha.strip()
+            if linha.upper().startswith('NOME:'):
+                nome = linha.split(':', 1)[1].strip()
+            elif linha.upper().startswith('HEADLINE:'):
+                headline = linha.split(':', 1)[1].strip()
+        return (nome or fallback_nome), headline
+    except Exception as e:
+        logging.error(f"Erro ao gerar textos da arte via IA: {e}")
+        return fallback_nome, None
+
+
+def _quebrar_texto(texto, font, max_width, draw):
+    """Quebra um texto em linhas que cabem em max_width pixels, com a fonte dada."""
+    palavras = texto.split()
+    linhas = []
+    linha_atual = ''
+    for palavra in palavras:
+        tentativa = f'{linha_atual} {palavra}'.strip()
+        largura = draw.textbbox((0, 0), tentativa, font=font)[2]
+        if largura <= max_width or not linha_atual:
+            linha_atual = tentativa
+        else:
+            linhas.append(linha_atual)
+            linha_atual = palavra
+    if linha_atual:
+        linhas.append(linha_atual)
+    return linhas
+
+
+def _cortar_tarjas_pretas(image_bytes, limiar=12):
+    """Remove tarjas pretas sólidas no topo/base da imagem, caso o modelo tenha gerado
+    letterboxing em vez de uma imagem genuinamente widescreen (16:9)."""
+    image = Image.open(BytesIO(image_bytes)).convert('RGB')
+    width, height = image.size
+    grayscale = image.convert('L')
+    pixels = grayscale.load()
+    amostras_x = list(range(0, width, max(1, width // 50)))
+
+    def linha_e_preta(y):
+        media = sum(pixels[x, y] for x in amostras_x) / len(amostras_x)
+        return media <= limiar
+
+    topo = 0
+    while topo < height // 3 and linha_e_preta(topo):
+        topo += 1
+    base = height - 1
+    while base > height * 2 // 3 and linha_e_preta(base):
+        base -= 1
+
+    if topo == 0 and base == height - 1:
+        return image_bytes
+
+    cropped = image.crop((0, topo, width, base + 1))
+    output = BytesIO()
+    cropped.save(output, format='PNG')
+    return output.getvalue()
+
+
+def compor_texto_na_arte(image_bytes, nome_produto, headline):
+    """Desenha o nome do produto + headline sobre a imagem (sem texto) gerada pela IA,
+    usando fonte real — garante ortografia 100% correta, ao contrário de texto renderizado
+    diretamente pelo modelo de imagem."""
+    image = Image.open(BytesIO(image_bytes)).convert('RGBA')
+    width, height = image.size
+
+    overlay = Image.new('RGBA', image.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+
+    margin = int(width * 0.05)
+    card_width = int(width * 0.42)
+    card_top = margin
+    card_bottom = int(height * 0.46)
+    padding = int(width * 0.025)
+
+    draw.rounded_rectangle(
+        [margin, card_top, margin + card_width, card_bottom],
+        radius=int(height * 0.03),
+        fill=(255, 255, 255, 235),
+    )
+
+    font_nome = ImageFont.truetype(FONT_PATH, int(height * 0.075))
+    font_nome.set_variation_by_name('Bold')
+    font_headline = ImageFont.truetype(FONT_PATH, int(height * 0.045))
+    font_headline.set_variation_by_name('Medium')
+
+    text_x = margin + padding
+    text_y = card_top + padding
+    max_text_width = card_width - (padding * 2)
+    text_color = (15, 23, 42, 255)
+    muted_color = (71, 85, 105, 255)
+    line_height_nome = int(height * 0.085)
+    line_height_headline = int(height * 0.055)
+
+    for linha in _quebrar_texto(nome_produto, font_nome, max_text_width, draw)[:3]:
+        draw.text((text_x, text_y), linha, font=font_nome, fill=text_color)
+        text_y += line_height_nome
+
+    if headline:
+        text_y += int(height * 0.015)
+        for linha in _quebrar_texto(headline, font_headline, max_text_width, draw)[:2]:
+            draw.text((text_x, text_y), linha, font=font_headline, fill=muted_color)
+            text_y += line_height_headline
+
+    final_image = Image.alpha_composite(image, overlay).convert('RGB')
+    output = BytesIO()
+    final_image.save(output, format='PNG')
+    return output.getvalue()
+
+
 def gerar_arte_publicitaria(produto, image_path):
-    """Gera uma peça publicitária a partir da foto crua do produto via Gemini 2.5 Flash Image
-    (Vertex AI Modo Expresso, faturado pela conta de Cloud Billing do projeto) e salva o
-    resultado em ARTES_FOLDER. Retorna o caminho do arquivo gerado."""
+    """Gera uma peça publicitária a partir da foto crua do produto: a IA (Gemini 2.5 Flash
+    Image, via Vertex AI Modo Expresso) cria a cena/cenário com o produto totalmente
+    integrado (sem fundo branco) e sem nenhum texto, e o nome do produto + headline (gerada
+    separadamente por texto) são desenhados por cima com fonte real, garantindo ortografia
+    correta. Salva o resultado em ARTES_FOLDER e retorna o caminho do arquivo gerado."""
     api_key = _ler_todas_config().get('GEMINI_API_KEY', '').strip()
     if not api_key:
         raise ValueError('Nenhuma chave Gemini configurada. Configure em Configurações antes de gerar artes.')
@@ -1625,6 +1782,10 @@ def gerar_arte_publicitaria(produto, image_path):
 
     if not output_bytes:
         raise RuntimeError('A API Gemini não retornou uma imagem gerada (verifique se o modelo de imagem está disponível para sua chave).')
+
+    output_bytes = _cortar_tarjas_pretas(output_bytes)
+    nome_produto, headline = gerar_textos_arte_ia(produto)
+    output_bytes = compor_texto_na_arte(output_bytes, nome_produto, headline)
 
     output_path = os.path.join(ARTES_FOLDER, f'{produto.codbar}.png')
     with open(output_path, 'wb') as out_file:
@@ -1682,6 +1843,87 @@ def admin_gerar_arte(codbar):
 
     arte_url = url_for('static', filename=f'artes_geradas/{codbar}.png', _external=True)
     return jsonify({'message': 'Arte gerada com sucesso', 'arte_url': arte_url}), 200
+
+
+_gerando_arte_em_andamento = set()
+
+
+@app.route('/produto-imagem/<string:codbar>/gerar-arte', methods=['POST'])
+@swag_from({
+    'tags': ['Produtos'],
+    'parameters': [
+        {
+            'name': 'codbar',
+            'in': 'path',
+            'type': 'string',
+            'required': True
+        }
+    ],
+    'consumes': ['image/jpeg', 'image/png', 'image/webp'],
+    'responses': {
+        '200': {
+            'description': 'URL da arte publicitária (já existente ou recém-gerada)'
+        },
+        '404': {
+            'description': 'Produto não encontrado em nenhuma fonte'
+        }
+    }
+})
+def gerar_arte_publica(codbar):
+    """Gera a arte publicitária a partir de uma foto crua enviada no corpo da requisição
+    (usado pelo app de consulta de preço quando a foto vem de uma fonte externa própria da
+    integração, ex.: API do Komprão, que o srv-mupa ainda não conhece). Idempotente: se a
+    arte já existe, apenas retorna a URL existente sem gerar de novo."""
+    arte_existente = _arte_url(codbar)
+    if arte_existente:
+        return jsonify({'imagem_url_arte': arte_existente}), 200
+
+    image_data = request.get_data()
+    if not image_data:
+        return jsonify({'message': 'Corpo da requisição vazio (esperada a foto crua do produto)'}), 400
+
+    # Evita duas gerações concorrentes do mesmo EAN (ex.: dois terminais consultando o mesmo
+    # produto ao mesmo tempo) — cada chamada de gerar_arte_publicitaria já é uma chamada paga à
+    # API Gemini.
+    if codbar in _gerando_arte_em_andamento:
+        return jsonify({'message': 'Geração de arte já em andamento para este produto'}), 409
+    _gerando_arte_em_andamento.add(codbar)
+
+    try:
+        produto = Produto.query.filter_by(codbar=codbar).first()
+        if not produto:
+            for fonte, buscar in (
+                ('cosmos', fetch_product_from_cosmos),
+                ('open_food_facts', fetch_product_from_openfoodfacts),
+                ('zaffari', fetch_product_from_zaffari),
+            ):
+                dados = buscar(codbar)
+                if dados:
+                    produto = register_product_in_database(dados)
+                    if produto:
+                        break
+            if not produto:
+                return jsonify({'message': 'Produto não encontrado em nenhuma fonte (Cosmos, Open Food Facts, Zaffari)'}), 404
+
+        content_type = (request.content_type or '').lower()
+        ext = 'png' if 'png' in content_type else 'webp' if 'webp' in content_type else 'jpg'
+        img_path = os.path.join(IMAGES_FOLDER, f'{codbar}.{ext}')
+        if not find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS):
+            with open(img_path, 'wb') as f:
+                f.write(image_data)
+        else:
+            img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+
+        gerar_arte_publicitaria(produto, img_path)
+    except ValueError as e:
+        return jsonify({'message': str(e)}), 400
+    except Exception as e:
+        logging.error(f"Erro ao gerar arte publicitária (via upload) para {codbar}: {e}")
+        return jsonify({'message': f'Erro ao gerar arte: {e}'}), 500
+    finally:
+        _gerando_arte_em_andamento.discard(codbar)
+
+    return jsonify({'imagem_url_arte': _arte_url(codbar)}), 200
 
 
 @app.route('/admin/estatisticas', methods=['GET'])
@@ -1774,6 +2016,62 @@ def admin_produtos_com_foto():
         'page': page,
         'per_page': per_page,
         'pages': (count + per_page - 1) // per_page if count > 0 else 1,
+    })
+
+
+@app.route('/admin/consulta-produtos', methods=['GET'])
+@jwt_required()
+def admin_consulta_produtos():
+    """Lista/busca produtos em todo o catálogo (com ou sem foto), paginado. Usado pela aba
+    unificada 'Consulta Rápida' do painel (busca + navegação + geração de arte)."""
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 15, type=int)
+    search = request.args.get('q', '').strip()
+
+    if search:
+        like_search = f"%{search.upper()}%"
+        where_clause = " WHERE codbar = ? OR UPPER(description) LIKE ? OR UPPER(marca) LIKE ?"
+        where_params = [search, like_search, like_search]
+        order_clause = " ORDER BY (codbar = ?) DESC, description"
+        order_params = [search]
+    else:
+        where_clause = ""
+        where_params = []
+        order_clause = " ORDER BY description"
+        order_params = []
+
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        total = conn.execute("SELECT COUNT(*) FROM produto" + where_clause, where_params).fetchone()[0]
+
+        offset = (page - 1) * per_page
+        rows = conn.execute(
+            "SELECT codbar, description, marca, categoriaText, preco_medio FROM produto"
+            + where_clause + order_clause + " LIMIT ? OFFSET ?",
+            where_params + order_params + [per_page, offset],
+        ).fetchall()
+    finally:
+        conn.close()
+
+    produtos = []
+    for codbar, desc, marca, cat, preco in rows:
+        img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+        produtos.append({
+            'ean': codbar,
+            'descricao': desc,
+            'marca': marca,
+            'categoria': cat,
+            'preco_medio': preco,
+            'foto_png': _static_url(img_path) if img_path else None,
+            'arte_url': _arte_url(codbar),
+        })
+
+    return jsonify({
+        'produtos': produtos,
+        'total': total,
+        'page': page,
+        'per_page': per_page,
+        'pages': (total + per_page - 1) // per_page if total > 0 else 1,
     })
 
 

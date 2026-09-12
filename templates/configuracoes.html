@@ -385,6 +385,47 @@
         .lightbox-close:hover { background: rgba(255,255,255,0.22); }
         .lightbox-close svg { width: 18px; height: 18px; }
 
+        .detail-modal {
+            display: none;
+            position: fixed; inset: 0;
+            background: rgba(15,23,42,0.55);
+            z-index: 2100;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+        }
+        .detail-modal.show { display: flex; }
+        .detail-modal-card {
+            background: var(--card);
+            border-radius: var(--radius);
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            width: 100%;
+            max-width: 720px;
+            max-height: 90vh;
+            overflow-y: auto;
+            position: relative;
+        }
+        .detail-modal-close {
+            position: absolute; top: 1rem; right: 1rem;
+            width: 34px; height: 34px; border-radius: 50%;
+            background: #f1f5f9; border: none; color: var(--text);
+            cursor: pointer; display: flex; align-items: center; justify-content: center;
+            z-index: 1;
+        }
+        .detail-modal-close:hover { background: #e2e8f0; }
+        .detail-modal-close svg { width: 16px; height: 16px; }
+        .detail-modal-image {
+            width: 100%; aspect-ratio: 16/9; background: #f1f5f9;
+            display: flex; align-items: center; justify-content: center; overflow: hidden;
+            border-radius: var(--radius) var(--radius) 0 0;
+        }
+        .detail-modal-image img { width: 100%; height: 100%; object-fit: contain; }
+        .detail-modal-body { padding: 1.5rem; }
+        .detail-field { display: flex; justify-content: space-between; gap: 1rem; padding: 0.5rem 0; border-bottom: 1px solid var(--border); font-size: 0.85rem; }
+        .detail-field:last-child { border-bottom: none; }
+        .detail-field .label { color: var(--muted); flex-shrink: 0; }
+        .detail-field .value { text-align: right; font-weight: 500; }
+
         @media (max-width: 880px) {
             .sidebar {
                 position: fixed;
@@ -419,13 +460,9 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
                 Configurações
             </button>
-            <button class="nav-tab" data-tab="consulta" data-title="Consulta Rápida" data-subtitle="Busque produtos por EAN, descrição ou marca">
+            <button class="nav-tab" data-tab="consulta" data-title="Consulta Rápida" data-subtitle="Busque produtos, veja detalhes e gere artes publicitárias">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                 Consulta Rápida
-            </button>
-            <button class="nav-tab" data-tab="fotos" data-title="Produtos com Foto" data-subtitle="Catálogo de produtos com imagem cadastrada">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-                Produtos com Foto
             </button>
             <button class="nav-tab" data-tab="estats" data-title="Estatísticas" data-subtitle="Panorama geral do catálogo de produtos">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
@@ -541,51 +578,30 @@
                 </div>
             </div>
 
-            <!-- ===== TAB: CONSULTA RÁPIDA ===== -->
+            <!-- ===== TAB: CONSULTA RÁPIDA (unifica busca + catálogo + arte + detalhes) ===== -->
             <div id="tab-consulta" class="tab-content" style="display:none;">
                 <div class="card">
                     <h2>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                        Consulta Simples
+                        Catálogo de Produtos <span class="badge" id="consulta-count-badge">carregando...</span>
                     </h2>
-                    <div id="alert-consulta"></div>
-                    <div class="form-row">
-                        <label for="consulta-q">Buscar por EAN, descrição ou marca</label>
+                    <div class="form-row" style="margin-bottom:0.85rem;">
+                        <label for="consulta-q">Buscar por EAN, descrição ou marca (vazio = navega o catálogo inteiro)</label>
                         <div style="display:flex; gap:0.5rem;">
                             <input type="text" id="consulta-q" placeholder="Ex: 7896116900050, KICALDO, FEIJÃO..." autocomplete="off" style="flex:1;">
                             <button class="btn btn-primary" id="btn-consulta">Buscar</button>
+                            <button class="btn btn-secondary" id="btn-consulta-limpar">Limpar</button>
                         </div>
                     </div>
-                    <div id="resultado-consulta">
-                        <div class="empty-state">Digite um termo e clique em Buscar.</div>
+                    <div id="alert-consulta"></div>
+                    <div id="consulta-list" style="overflow-x:auto;">
+                        <div class="empty-state">Carregando catálogo...</div>
                     </div>
-                </div>
-            </div>
-
-            <!-- ===== TAB: PRODUTOS COM FOTO ===== -->
-            <div id="tab-fotos" class="tab-content" style="display:none;">
-                <div class="card">
-                    <h2>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-                        Produtos com Foto <span class="badge" id="foto-count-badge">carregando...</span>
-                    </h2>
-                    <div class="form-row" style="margin-bottom:0.85rem;">
-                        <label for="foto-search">Filtrar por EAN, descrição ou marca</label>
-                        <div style="display:flex; gap:0.5rem;">
-                            <input type="text" id="foto-search" placeholder="Filtrar..." autocomplete="off" style="flex:1;">
-                            <button class="btn btn-secondary btn-sm" id="btn-foto-search">Filtrar</button>
-                            <button class="btn btn-secondary btn-sm" id="btn-foto-limpar">Limpar</button>
-                        </div>
-                    </div>
-                    <div id="alert-fotos"></div>
-                    <div id="foto-list" style="overflow-x:auto;">
-                        <div class="empty-state">Carregando produtos com foto...</div>
-                    </div>
-                    <div id="foto-pagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:0.85rem; font-size:0.82rem; color:var(--muted);">
-                        <span id="foto-info">—</span>
+                    <div id="consulta-pagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:0.85rem; font-size:0.82rem; color:var(--muted);">
+                        <span id="consulta-info">—</span>
                         <span style="display:flex; gap:0.4rem;">
-                            <button class="btn btn-secondary btn-sm" id="btn-foto-prev">← Anterior</button>
-                            <button class="btn btn-secondary btn-sm" id="btn-foto-next">Próximo →</button>
+                            <button class="btn btn-secondary btn-sm" id="btn-consulta-prev">← Anterior</button>
+                            <button class="btn btn-secondary btn-sm" id="btn-consulta-next">Próximo →</button>
                         </span>
                     </div>
                 </div>
@@ -684,6 +700,38 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
     </button>
     <img id="lightbox-img" src="" alt="Arte gerada">
+</div>
+
+<div class="detail-modal" id="detail-modal">
+    <div class="detail-modal-card">
+        <button class="detail-modal-close" id="detail-modal-close" aria-label="Fechar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+        <div class="detail-modal-image" id="detail-modal-image"></div>
+        <div class="detail-modal-body">
+            <h2 id="detail-nome" style="margin:0 0 0.25rem;">—</h2>
+            <p id="detail-marca-cat" style="margin:0 0 1rem; color:var(--muted); font-size:0.85rem;">—</p>
+
+            <div class="detail-field"><span class="label">EAN</span><span class="value" id="detail-ean">—</span></div>
+            <div class="detail-field"><span class="label">Preço médio</span><span class="value" id="detail-preco">—</span></div>
+            <div class="detail-field"><span class="label">NCM</span><span class="value" id="detail-ncm">—</span></div>
+
+            <div style="display:flex; gap:0.6rem; margin:1.25rem 0;">
+                <button class="btn btn-primary btn-sm" id="detail-btn-gerar-arte">Gerar arte</button>
+                <button class="btn btn-secondary btn-sm" id="detail-btn-ver-arte" style="display:none;">Ver arte em tela cheia</button>
+            </div>
+
+            <div class="card" style="margin:0; background:#fafbff;">
+                <h2 style="font-size:0.9rem;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 0-4 12.75V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.25A7 7 0 0 0 12 2z"/><line x1="9" y1="21" x2="15" y2="21"/><line x1="10" y1="18" x2="14" y2="18"/></svg>
+                    Sugestão inteligente (IA)
+                </h2>
+                <div id="detail-sugestao">
+                    <div class="empty-state" style="padding:1rem;"><span class="spinner" style="border-top-color:var(--accent); border-color:rgba(79,70,229,0.25);"></span> Carregando sugestão...</div>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -795,7 +843,7 @@ $$('.nav-tab').forEach(btn => {
         if (subtitleEl && btn.dataset.subtitle) subtitleEl.textContent = btn.dataset.subtitle;
 
         if (tab === 'estats') loadEstats();
-        if (tab === 'fotos') loadFotos(1);
+        if (tab === 'consulta') loadConsulta(1);
         if (tab === 'config') loadConfig();
 
         closeSidebarMobile();
@@ -1018,99 +1066,47 @@ $$('.toggle').forEach(tog => {
     });
 });
 
-// ===== TAB: CONSULTA RÁPIDA =====
-$('#btn-consulta').addEventListener('click', async () => {
-    const q = $('#consulta-q').value.trim();
-    if (!q) { toast('Digite um termo de busca', 'error'); return; }
-    try {
-        const res = await fetch(`/admin/consulta-simples?q=${encodeURIComponent(q)}`, { headers: authHeaders() });
-        if (!res.ok) {
-            const errBody = await res.json().catch(() => ({}));
-            throw new Error(errBody.msg || errBody.error || `HTTP ${res.status}: consulta falhou`);
-        }
-        const data = await res.json();
-        renderConsulta(data);
-    } catch (e) {
-        showAlert('alert-consulta', `Erro: ${e.message}`, 'error');
-    }
-});
+// ===== TAB: CONSULTA RÁPIDA (catálogo unificado: busca + navegação + arte + detalhes) =====
+let consultaPage = 1;
+let consultaQ = '';
+let ultimoConsultaData = null;
 
-$('#consulta-q').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') $('#btn-consulta').click();
-});
-
-function renderConsulta(data) {
-    const container = $('#resultado-consulta');
-    if (!container) return;
-    if (data.results && data.results.length > 0) {
-        let html = `<div class="alert alert-info">Encontrados ${data.count} resultado(s) por "${escHtml(data.tipo_busca || 'busca')}".</div>`;
-        data.results.forEach((p) => {
-            const hasFoto = p.foto_png && p.foto_png !== 'No image available';
-            html += `
-            <div style="border:1px solid var(--border); border-radius:8px; padding:0.65rem; margin-bottom:0.4rem; display:flex; gap:0.6rem; align-items:flex-start;">
-                <div style="width:40px; height:40px; background:#f1f5f9; border-radius:6px; overflow:hidden; flex-shrink:0; display:flex; align-items:center; justify-content:center; color:#94a3b8;">
-                    ${hasFoto
-                        ? `<img src="${escHtml(p.foto_png)}" style="width:100%; height:100%; object-fit:cover;" alt="foto">`
-                        : `<span style="width:16px;height:16px;display:inline-flex;">${CAMERA_ICON}</span>`}
-                </div>
-                <div style="flex:1; min-width:0;">
-                    <div style="font-weight:600; font-size:0.88rem;">${escHtml(p.descricao)}</div>
-                    <div style="font-size:0.75rem; color:var(--muted);">
-                        Marca: ${escHtml(p.marca || '—')} · Categoria: ${escHtml(p.categoria || '—')}
-                    </div>
-                    <div style="margin-top:0.2rem;">
-                        <span class="ean">${escHtml(p.ean)}</span>
-                        ${p.preco_medio && p.preco_medio > 0 ? `<span style="margin-left:0.6rem; color:var(--success); font-weight:600; font-size:0.85rem;">R$ ${p.preco_medio.toFixed(2)}</span>` : ''}
-                    </div>
-                </div>
-            </div>`;
-        });
-        container.innerHTML = html;
-    } else if (data.message) {
-        container.innerHTML = `<div class="empty-state">${escHtml(data.message)}</div>`;
-    } else {
-        container.innerHTML = `<div class="empty-state">Nenhum resultado encontrado.</div>`;
-    }
-}
-
-// ===== TAB: PRODUTOS COM FOTO =====
-let fotoPage = 1;
-
-async function loadFotos(page = 1) {
-    fotoPage = page;
-    const search = ($('#foto-search').value || '').trim();
+async function loadConsulta(page = 1) {
+    consultaPage = page;
+    consultaQ = ($('#consulta-q').value || '').trim();
     try {
         const params = new URLSearchParams({ page, per_page: 15 });
-        if (search) params.append('search', search);
-        const res = await fetch('/admin/produtos-com-foto?' + params.toString(), { headers: authHeaders() });
+        if (consultaQ) params.append('q', consultaQ);
+        const res = await fetch('/admin/consulta-produtos?' + params.toString(), { headers: authHeaders() });
         if (!res.ok) {
             const errBody = await res.json().catch(() => ({}));
             throw new Error(errBody.msg || errBody.error || `HTTP ${res.status}`);
         }
         const data = await res.json();
-        renderFotos(data);
+        ultimoConsultaData = data;
+        renderConsultaTable(data);
     } catch (e) {
-        showAlert('alert-fotos', `Erro: ${e.message}`, 'error');
+        showAlert('alert-consulta', `Erro: ${e.message}`, 'error');
     }
 }
 
-function renderFotos(data) {
-    const badge = $('#foto-count-badge');
-    const list = $('#foto-list');
-    const info = $('#foto-info');
-    const prevBtn = $('#btn-foto-prev');
-    const nextBtn = $('#btn-foto-next');
+function renderConsultaTable(data) {
+    const badge = $('#consulta-count-badge');
+    const list = $('#consulta-list');
+    const info = $('#consulta-info');
+    const prevBtn = $('#btn-consulta-prev');
+    const nextBtn = $('#btn-consulta-next');
     if (!badge || !list) return;
 
-    badge.textContent = `${data.total || 0} produtos`;
+    badge.textContent = `${(data.total || 0).toLocaleString('pt-BR')} produtos`;
     if (!data.produtos || data.produtos.length === 0) {
-        const search = ($('#foto-search').value || '').trim();
-        list.innerHTML = `<div class="empty-state">Nenhum produto com foto encontrado${search ? ' para "' + escHtml(search) + '"' : ''}.</div>`;
-        info.textContent = 'Página 0 de 0';
+        list.innerHTML = `<div class="empty-state">Nenhum produto encontrado${consultaQ ? ' para "' + escHtml(consultaQ) + '"' : ''}.</div>`;
+        if (info) info.textContent = 'Página 0 de 0';
         if (prevBtn) prevBtn.disabled = true;
         if (nextBtn) nextBtn.disabled = true;
         return;
     }
+
     let html = `<table style="margin-top:0.4rem;">
         <thead><tr>
             <th style="width:85px;">EAN</th>
@@ -1119,36 +1115,40 @@ function renderFotos(data) {
             <th style="width:70px;">Preço</th>
             <th style="width:40px;">Foto</th>
             <th style="width:150px;">Arte publicitária</th>
+            <th style="width:90px;"></th>
         </tr></thead><tbody>`;
     data.produtos.forEach(p => {
-        const hasFoto = p.foto_png && p.foto_png !== 'No image available';
         html += `
         <tr>
             <td><span class="ean">${escHtml(p.ean)}</span></td>
-            <td>${escHtml(p.descricao)}</td>
+            <td>${escHtml(p.descricao || '—')}</td>
             <td style="color:var(--muted);">${escHtml(p.marca || '—')}</td>
             <td style="color:var(--success); font-weight:600;">${p.preco_medio && p.preco_medio > 0 ? 'R$ ' + p.preco_medio.toFixed(2) : '—'}</td>
-            <td>${hasFoto
+            <td>${p.foto_png
                 ? `<img src="${p.foto_png}" class="foto-thumb" alt="foto">`
                 : `<span class="foto-thumb-placeholder">${CAMERA_ICON}</span>`}</td>
             <td>${renderArteCell(p)}</td>
+            <td><button class="btn btn-secondary btn-sm" data-action="detalhes" data-codbar="${escHtml(p.ean)}">Detalhes</button></td>
         </tr>`;
     });
     html += '</tbody></table>';
     list.innerHTML = html;
     const pages = data.pages || 1;
-    if (info) info.textContent = `Página ${data.page} de ${pages} (${data.total} produtos)`;
+    if (info) info.textContent = `Página ${data.page} de ${pages} (${(data.total || 0).toLocaleString('pt-BR')} produtos)`;
     if (prevBtn) prevBtn.disabled = data.page <= 1;
     if (nextBtn) nextBtn.disabled = data.page >= pages;
 }
 
-$('#btn-foto-search').addEventListener('click', () => loadFotos(1));
-$('#btn-foto-limpar').addEventListener('click', () => {
-    $('#foto-search').value = '';
-    loadFotos(1);
+$('#btn-consulta').addEventListener('click', () => loadConsulta(1));
+$('#consulta-q').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') loadConsulta(1);
 });
-$('#btn-foto-prev').addEventListener('click', () => loadFotos(fotoPage - 1));
-$('#btn-foto-next').addEventListener('click', () => loadFotos(fotoPage + 1));
+$('#btn-consulta-limpar').addEventListener('click', () => {
+    $('#consulta-q').value = '';
+    loadConsulta(1);
+});
+$('#btn-consulta-prev').addEventListener('click', () => loadConsulta(consultaPage - 1));
+$('#btn-consulta-next').addEventListener('click', () => loadConsulta(consultaPage + 1));
 
 // ===== Geração de arte publicitária (IA) =====
 function renderArteCell(p) {
@@ -1162,21 +1162,10 @@ function renderArteCell(p) {
     return `<button class="btn btn-primary btn-sm" data-action="gerar-arte" data-codbar="${escHtml(p.ean)}">Gerar arte</button>`;
 }
 
-$('#foto-list').addEventListener('click', async (e) => {
-    const verBtn = e.target.closest('[data-action="ver-arte"]');
-    if (verBtn) {
-        openLightbox(verBtn.dataset.url);
-        return;
-    }
-
-    const gerarBtn = e.target.closest('[data-action="gerar-arte"]');
-    if (!gerarBtn) return;
-
-    const codbar = gerarBtn.dataset.codbar;
-    const originalText = gerarBtn.textContent;
+async function gerarArteParaBotao(gerarBtn, codbar, onDone) {
+    const originalHtml = gerarBtn.innerHTML;
     gerarBtn.disabled = true;
     gerarBtn.innerHTML = `<span class="spinner"></span> Gerando...`;
-
     try {
         const res = await fetch(`/admin/gerar-arte/${encodeURIComponent(codbar)}`, {
             method: 'POST',
@@ -1186,12 +1175,32 @@ $('#foto-list').addEventListener('click', async (e) => {
             const errBody = await res.json().catch(() => ({}));
             throw new Error(errBody.message || errBody.msg || `HTTP ${res.status}`);
         }
+        const data = await res.json();
         toast('Arte publicitária gerada com sucesso', 'success');
-        loadFotos(fotoPage);
+        if (onDone) onDone(data);
     } catch (e2) {
         toast('Erro ao gerar arte: ' + e2.message, 'error');
         gerarBtn.disabled = false;
-        gerarBtn.textContent = originalText;
+        gerarBtn.innerHTML = originalHtml;
+    }
+}
+
+$('#consulta-list').addEventListener('click', async (e) => {
+    const verBtn = e.target.closest('[data-action="ver-arte"]');
+    if (verBtn) {
+        openLightbox(verBtn.dataset.url);
+        return;
+    }
+
+    const detalhesBtn = e.target.closest('[data-action="detalhes"]');
+    if (detalhesBtn) {
+        openDetailModal(detalhesBtn.dataset.codbar);
+        return;
+    }
+
+    const gerarBtn = e.target.closest('[data-action="gerar-arte"]');
+    if (gerarBtn) {
+        await gerarArteParaBotao(gerarBtn, gerarBtn.dataset.codbar, () => loadConsulta(consultaPage));
     }
 });
 
@@ -1207,6 +1216,86 @@ $('#lightbox-close').addEventListener('click', closeLightbox);
 $('#lightbox').addEventListener('click', (e) => {
     if (e.target.id === 'lightbox') closeLightbox();
 });
+
+// ===== Modal: Detalhes do Produto =====
+let detailEan = null;
+
+function closeDetailModal() {
+    $('#detail-modal').classList.remove('show');
+    detailEan = null;
+}
+$('#detail-modal-close').addEventListener('click', closeDetailModal);
+$('#detail-modal').addEventListener('click', (e) => {
+    if (e.target.id === 'detail-modal') closeDetailModal();
+});
+
+async function openDetailModal(ean) {
+    detailEan = ean;
+    $('#detail-modal').classList.add('show');
+    $('#detail-nome').textContent = 'Carregando...';
+    $('#detail-marca-cat').textContent = '—';
+    $('#detail-ean').textContent = ean;
+    $('#detail-preco').textContent = '—';
+    $('#detail-ncm').textContent = '—';
+    $('#detail-modal-image').innerHTML = `<span style="width:40px;height:40px;color:#94a3b8;display:inline-flex;">${CAMERA_ICON}</span>`;
+    $('#detail-btn-ver-arte').style.display = 'none';
+    $('#detail-sugestao').innerHTML = `<div class="empty-state" style="padding:1rem;"><span class="spinner" style="border-top-color:var(--accent); border-color:rgba(79,70,229,0.25);"></span> Carregando sugestão...</div>`;
+
+    const gerarBtn = $('#detail-btn-gerar-arte');
+    gerarBtn.disabled = false;
+    gerarBtn.textContent = 'Gerar arte';
+    gerarBtn.onclick = () => gerarArteParaBotao(gerarBtn, ean, (data) => {
+        if (data.arte_url) {
+            $('#detail-modal-image').innerHTML = `<img src="${escHtml(data.arte_url)}?t=${Date.now()}" alt="Arte gerada">`;
+            const verBtn = $('#detail-btn-ver-arte');
+            verBtn.style.display = 'inline-flex';
+            verBtn.onclick = () => openLightbox(data.arte_url);
+            gerarBtn.textContent = 'Regenerar arte';
+        }
+        loadConsulta(consultaPage);
+    });
+
+    // Preenche a imagem imediatamente a partir da linha já carregada na tabela (sem nova
+    // requisição): prioriza a arte já existente, senão a foto crua.
+    const linhaConhecida = ultimoConsultaData?.produtos?.find(p => p.ean === ean);
+    if (linhaConhecida) {
+        if (linhaConhecida.arte_url) {
+            $('#detail-modal-image').innerHTML = `<img src="${escHtml(linhaConhecida.arte_url)}" alt="Arte gerada">`;
+            const verBtn = $('#detail-btn-ver-arte');
+            verBtn.style.display = 'inline-flex';
+            verBtn.onclick = () => openLightbox(linhaConhecida.arte_url);
+            gerarBtn.textContent = 'Regenerar arte';
+        } else if (linhaConhecida.foto_png) {
+            $('#detail-modal-image').innerHTML = `<img src="${escHtml(linhaConhecida.foto_png)}" alt="Foto do produto">`;
+        }
+    }
+
+    try {
+        const res = await fetch(`/produto/${encodeURIComponent(ean)}`, { headers: authHeaders() });
+        if (!res.ok) {
+            const errBody = await res.json().catch(() => ({}));
+            throw new Error(errBody.message || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        if (detailEan !== ean) return; // usuário já trocou de produto enquanto carregava
+
+        $('#detail-nome').textContent = data.description || 'Produto sem descrição';
+        $('#detail-marca-cat').textContent = `${data.marca || 'Marca não informada'} · ${data.categoriaText || 'Categoria não informada'}`;
+        $('#detail-preco').textContent = data.preco_medio && data.preco_medio > 0 ? `R$ ${data.preco_medio.toFixed(2)}` : '—';
+        $('#detail-ncm').textContent = data.ncm || '—';
+
+        if (data.sugestao && data.sugestao.texto) {
+            const eans = (data.sugestao.eans_sugeridos || []).map(x => `<span class="ean">${escHtml(x)}</span>`).join(' ');
+            $('#detail-sugestao').innerHTML = `<p style="margin:0 0 0.5rem; font-size:0.85rem;">${escHtml(data.sugestao.texto)}</p>${eans ? `<div style="font-size:0.75rem; color:var(--muted);">EANs relacionados: ${eans}</div>` : ''}`;
+        } else {
+            $('#detail-sugestao').innerHTML = `<div class="empty-state" style="padding:1rem;">Nenhuma sugestão disponível.</div>`;
+        }
+    } catch (e) {
+        if (detailEan !== ean) return;
+        $('#detail-nome').textContent = 'Erro ao carregar detalhes';
+        $('#detail-sugestao').innerHTML = `<div class="alert alert-error">Erro: ${escHtml(e.message)}</div>`;
+    }
+}
 
 // ===== TAB: ESTATÍSTICAS =====
 async function loadEstats() {
@@ -1358,7 +1447,7 @@ $('#btn-api-send').addEventListener('click', async () => {
         token = await login();
         loadConfig();
         loadEstats();
-        loadFotos(1);
+        loadConsulta(1);
     } catch (e) {
         const container = document.querySelector('.content');
         if (container) {
