@@ -167,6 +167,7 @@
         .sidebar-backdrop.show { display: block; }
 
         .content { padding: 1.5rem 2rem 3rem; max-width: 1080px; width: 100%; margin: 0 auto; }
+        .content.wide { max-width: none; }
 
         /* ===== Cards & form ===== */
         .card {
@@ -385,26 +386,16 @@
         .lightbox-close:hover { background: rgba(255,255,255,0.22); }
         .lightbox-close svg { width: 18px; height: 18px; }
 
-        .detail-modal {
-            display: none;
-            position: fixed; inset: 0;
-            background: rgba(15,23,42,0.55);
-            z-index: 2100;
-            align-items: center;
-            justify-content: center;
-            padding: 1.5rem;
+        /* ===== Consulta Rápida: lista + painel de detalhes lado a lado ===== */
+        .consulta-layout { display: flex; align-items: flex-start; gap: 1.1rem; }
+        .consulta-list-col { flex: 1; min-width: 0; }
+        .consulta-detail-col { width: 400px; flex-shrink: 0; }
+        @media (max-width: 1100px) {
+            .consulta-layout { flex-direction: column; }
+            .consulta-detail-col { width: 100%; }
         }
-        .detail-modal.show { display: flex; }
-        .detail-modal-card {
-            background: var(--card);
-            border-radius: var(--radius);
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            width: 100%;
-            max-width: 720px;
-            max-height: 90vh;
-            overflow-y: auto;
-            position: relative;
-        }
+
+        .detail-panel { position: relative; padding: 0; overflow: hidden; }
         .detail-modal-close {
             position: absolute; top: 1rem; right: 1rem;
             width: 34px; height: 34px; border-radius: 50%;
@@ -417,7 +408,6 @@
         .detail-modal-image {
             width: 100%; aspect-ratio: 16/9; background: #f1f5f9;
             display: flex; align-items: center; justify-content: center; overflow: hidden;
-            border-radius: var(--radius) var(--radius) 0 0;
         }
         .detail-modal-image img { width: 100%; height: 100%; object-fit: contain; }
         .detail-modal-body { padding: 1.5rem; }
@@ -492,7 +482,7 @@
             </div>
         </header>
 
-        <div class="content">
+        <div class="content" id="content">
             <!-- ===== TAB: CONFIGURAÇÕES ===== -->
             <div id="tab-config" class="tab-content">
                 <div class="card">
@@ -580,29 +570,71 @@
 
             <!-- ===== TAB: CONSULTA RÁPIDA (unifica busca + catálogo + arte + detalhes) ===== -->
             <div id="tab-consulta" class="tab-content" style="display:none;">
-                <div class="card">
-                    <h2>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                        Catálogo de Produtos <span class="badge" id="consulta-count-badge">carregando...</span>
-                    </h2>
-                    <div class="form-row" style="margin-bottom:0.85rem;">
-                        <label for="consulta-q">Buscar por EAN, descrição ou marca (vazio = navega o catálogo inteiro)</label>
-                        <div style="display:flex; gap:0.5rem;">
-                            <input type="text" id="consulta-q" placeholder="Ex: 7896116900050, KICALDO, FEIJÃO..." autocomplete="off" style="flex:1;">
-                            <button class="btn btn-primary" id="btn-consulta">Buscar</button>
-                            <button class="btn btn-secondary" id="btn-consulta-limpar">Limpar</button>
+                <div class="consulta-layout">
+                    <div class="consulta-list-col">
+                        <div class="card">
+                            <h2>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                                Catálogo de Produtos <span class="badge" id="consulta-count-badge">carregando...</span>
+                            </h2>
+                            <div class="form-row" style="margin-bottom:0.85rem;">
+                                <label for="consulta-q">Buscar por EAN, descrição ou marca (vazio = navega o catálogo inteiro)</label>
+                                <div style="display:flex; gap:0.5rem;">
+                                    <input type="text" id="consulta-q" placeholder="Ex: 7896116900050, KICALDO, FEIJÃO..." autocomplete="off" style="flex:1;">
+                                    <button class="btn btn-primary" id="btn-consulta">Buscar</button>
+                                    <button class="btn btn-secondary" id="btn-consulta-limpar">Limpar</button>
+                                </div>
+                            </div>
+                            <div id="alert-consulta"></div>
+                            <div id="consulta-list" style="overflow-x:auto;">
+                                <div class="empty-state">Carregando catálogo...</div>
+                            </div>
+                            <div id="consulta-pagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:0.85rem; font-size:0.82rem; color:var(--muted);">
+                                <span id="consulta-info">—</span>
+                                <span style="display:flex; gap:0.4rem;">
+                                    <button class="btn btn-secondary btn-sm" id="btn-consulta-prev">← Anterior</button>
+                                    <button class="btn btn-secondary btn-sm" id="btn-consulta-next">Próximo →</button>
+                                </span>
+                            </div>
                         </div>
                     </div>
-                    <div id="alert-consulta"></div>
-                    <div id="consulta-list" style="overflow-x:auto;">
-                        <div class="empty-state">Carregando catálogo...</div>
-                    </div>
-                    <div id="consulta-pagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:0.85rem; font-size:0.82rem; color:var(--muted);">
-                        <span id="consulta-info">—</span>
-                        <span style="display:flex; gap:0.4rem;">
-                            <button class="btn btn-secondary btn-sm" id="btn-consulta-prev">← Anterior</button>
-                            <button class="btn btn-secondary btn-sm" id="btn-consulta-next">Próximo →</button>
-                        </span>
+
+                    <div class="consulta-detail-col">
+                        <div class="card detail-panel" id="detail-panel">
+                            <div id="detail-empty" class="empty-state" style="padding:2.5rem 1.25rem;">
+                                Selecione um produto na lista para ver os detalhes.
+                            </div>
+                            <div id="detail-content" style="display:none;">
+                                <button class="detail-modal-close" id="detail-panel-close" aria-label="Fechar detalhes">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                </button>
+                                <div class="detail-modal-image" id="detail-modal-image"></div>
+                                <div class="detail-modal-body">
+                                    <h2 id="detail-nome" style="margin:0 0 0.25rem;">—</h2>
+                                    <p id="detail-marca-cat" style="margin:0 0 1rem; color:var(--muted); font-size:0.85rem;">—</p>
+
+                                    <div class="detail-field"><span class="label">EAN</span><span class="value" id="detail-ean">—</span></div>
+                                    <div class="detail-field"><span class="label">Preço médio</span><span class="value" id="detail-preco">—</span></div>
+                                    <div class="detail-field"><span class="label">NCM</span><span class="value" id="detail-ncm">—</span></div>
+
+                                    <div style="display:flex; flex-wrap:wrap; gap:0.6rem; margin:1.25rem 0;">
+                                        <button class="btn btn-secondary btn-sm" id="detail-btn-buscar-imagem">Buscar imagem</button>
+                                        <button class="btn btn-primary btn-sm" id="detail-btn-gerar-arte">Gerar arte</button>
+                                        <button class="btn btn-secondary btn-sm" id="detail-btn-ver-arte" style="display:none;">Ver arte em tela cheia</button>
+                                    </div>
+
+                                    <div class="card" style="margin:0; background:#fafbff;">
+                                        <h2 style="font-size:0.9rem;">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 0-4 12.75V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.25A7 7 0 0 0 12 2z"/><line x1="9" y1="21" x2="15" y2="21"/><line x1="10" y1="18" x2="14" y2="18"/></svg>
+                                            Sugestão inteligente (IA)
+                                        </h2>
+                                        <div id="detail-sugestao">
+                                            <div class="empty-state" style="padding:1rem;"><span class="spinner" style="border-top-color:var(--accent); border-color:rgba(79,70,229,0.25);"></span> Carregando sugestão...</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -700,38 +732,6 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
     </button>
     <img id="lightbox-img" src="" alt="Arte gerada">
-</div>
-
-<div class="detail-modal" id="detail-modal">
-    <div class="detail-modal-card">
-        <button class="detail-modal-close" id="detail-modal-close" aria-label="Fechar">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        </button>
-        <div class="detail-modal-image" id="detail-modal-image"></div>
-        <div class="detail-modal-body">
-            <h2 id="detail-nome" style="margin:0 0 0.25rem;">—</h2>
-            <p id="detail-marca-cat" style="margin:0 0 1rem; color:var(--muted); font-size:0.85rem;">—</p>
-
-            <div class="detail-field"><span class="label">EAN</span><span class="value" id="detail-ean">—</span></div>
-            <div class="detail-field"><span class="label">Preço médio</span><span class="value" id="detail-preco">—</span></div>
-            <div class="detail-field"><span class="label">NCM</span><span class="value" id="detail-ncm">—</span></div>
-
-            <div style="display:flex; gap:0.6rem; margin:1.25rem 0;">
-                <button class="btn btn-primary btn-sm" id="detail-btn-gerar-arte">Gerar arte</button>
-                <button class="btn btn-secondary btn-sm" id="detail-btn-ver-arte" style="display:none;">Ver arte em tela cheia</button>
-            </div>
-
-            <div class="card" style="margin:0; background:#fafbff;">
-                <h2 style="font-size:0.9rem;">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 0-4 12.75V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.25A7 7 0 0 0 12 2z"/><line x1="9" y1="21" x2="15" y2="21"/><line x1="10" y1="18" x2="14" y2="18"/></svg>
-                    Sugestão inteligente (IA)
-                </h2>
-                <div id="detail-sugestao">
-                    <div class="empty-state" style="padding:1rem;"><span class="spinner" style="border-top-color:var(--accent); border-color:rgba(79,70,229,0.25);"></span> Carregando sugestão...</div>
-                </div>
-            </div>
-        </div>
-    </div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -836,6 +836,7 @@ $$('.nav-tab').forEach(btn => {
         const tab = btn.dataset.tab;
         $$('.tab-content').forEach(tc => tc.style.display = 'none');
         $(`#tab-${tab}`).style.display = 'block';
+        $('#content')?.classList.toggle('wide', tab === 'consulta');
 
         const titleEl = $('#page-title');
         const subtitleEl = $('#page-subtitle');
@@ -1217,21 +1218,20 @@ $('#lightbox').addEventListener('click', (e) => {
     if (e.target.id === 'lightbox') closeLightbox();
 });
 
-// ===== Modal: Detalhes do Produto =====
+// ===== Painel lateral: Detalhes do Produto =====
 let detailEan = null;
 
 function closeDetailModal() {
-    $('#detail-modal').classList.remove('show');
+    $('#detail-content').style.display = 'none';
+    $('#detail-empty').style.display = 'block';
     detailEan = null;
 }
-$('#detail-modal-close').addEventListener('click', closeDetailModal);
-$('#detail-modal').addEventListener('click', (e) => {
-    if (e.target.id === 'detail-modal') closeDetailModal();
-});
+$('#detail-panel-close').addEventListener('click', closeDetailModal);
 
 async function openDetailModal(ean) {
     detailEan = ean;
-    $('#detail-modal').classList.add('show');
+    $('#detail-empty').style.display = 'none';
+    $('#detail-content').style.display = 'block';
     $('#detail-nome').textContent = 'Carregando...';
     $('#detail-marca-cat').textContent = '—';
     $('#detail-ean').textContent = ean;
@@ -1254,6 +1254,34 @@ async function openDetailModal(ean) {
         }
         loadConsulta(consultaPage);
     });
+
+    const buscarImgBtn = $('#detail-btn-buscar-imagem');
+    buscarImgBtn.disabled = false;
+    buscarImgBtn.textContent = 'Buscar imagem';
+    buscarImgBtn.onclick = async () => {
+        const originalHtml = buscarImgBtn.innerHTML;
+        buscarImgBtn.disabled = true;
+        buscarImgBtn.innerHTML = `<span class="spinner"></span> Buscando...`;
+        try {
+            const res = await fetch(`/admin/buscar-imagem/${encodeURIComponent(ean)}`, {
+                method: 'POST',
+                headers: authHeaders(),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+            toast(data.message || 'Imagem encontrada', 'success');
+            if (data.imagem_url && detailEan === ean) {
+                const img = $('#detail-modal-image').querySelector('img');
+                if (!img) $('#detail-modal-image').innerHTML = `<img src="${escHtml(data.imagem_url)}?t=${Date.now()}" alt="Foto do produto">`;
+            }
+            loadConsulta(consultaPage);
+        } catch (e2) {
+            toast('Erro ao buscar imagem: ' + e2.message, 'error');
+        } finally {
+            buscarImgBtn.disabled = false;
+            buscarImgBtn.innerHTML = originalHtml;
+        }
+    };
 
     // Preenche a imagem imediatamente a partir da linha já carregada na tabela (sem nova
     // requisição): prioriza a arte já existente, senão a foto crua.
