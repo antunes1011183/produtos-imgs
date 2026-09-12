@@ -2,6 +2,7 @@ import os
 import csv
 import sqlite3
 import base64
+import threading
 import requests
 from io import StringIO, BytesIO
 from io import StringIO
@@ -502,20 +503,56 @@ def deletar_imagem_produto(codbar):
 })
 def obter_imagem_produto(codbar):
     """Obtém a imagem crua do produto (local -> Bing -> Google -> Zaffari) e, se já
-    existir, a URL da arte publicitária gerada para ele."""
+    existir, a URL da arte publicitária gerada para ele. Quando a foto existe mas a arte
+    ainda não foi gerada, dispara a geração em background (a resposta desta chamada ainda
+    sai sem 'imagem_url_arte'; uma consulta seguinte já encontra a arte pronta)."""
     img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
     if img_path:
         img_url = _static_url(img_path)
         logging.info(f"Imagem encontrada localmente para o produto {codbar}: {img_url}")
-        return jsonify({'imagem_url': img_url, 'imagem_url_arte': _arte_url(codbar)}), 200
+        arte_url = _arte_url(codbar)
+        if not arte_url:
+            _disparar_geracao_arte_em_background(codbar, img_path)
+        return jsonify({'imagem_url': img_url, 'imagem_url_arte': arte_url}), 200
 
     for buscar in (buscar_e_salvar_imagem_bing, buscar_e_salvar_imagem_google, buscar_e_salvar_imagem_zaffari):
         resultado = buscar(codbar)
         if resultado[1] == 200:
             imagem_url = resultado[0].get_json().get('imagem_url')
-            return jsonify({'imagem_url': imagem_url, 'imagem_url_arte': _arte_url(codbar)}), 200
+            novo_img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+            if novo_img_path:
+                _disparar_geracao_arte_em_background(codbar, novo_img_path)
+            return jsonify({'imagem_url': imagem_url, 'imagem_url_arte': None}), 200
 
     return jsonify({'message': 'Imagem não encontrada em nenhuma fonte (local, Bing, Google, Zaffari)'}), 404
+
+
+def _disparar_geracao_arte_em_background(codbar, img_path):
+    """Gera a arte publicitária em uma thread separada, sem atrasar a resposta de
+    /produto-imagem/<codbar>. Idempotente (não dispara de novo se já existir ou já estiver
+    em andamento) e silencioso quando faltar produto cadastrado ou chave Gemini — a foto crua
+    continua sendo servida normalmente de qualquer forma."""
+    if codbar in _gerando_arte_em_andamento or _arte_url(codbar):
+        return
+    if not _ler_todas_config().get('GEMINI_API_KEY', '').strip():
+        return
+    produto = Produto.query.filter_by(codbar=codbar).first()
+    if not produto:
+        return
+
+    _gerando_arte_em_andamento.add(codbar)
+
+    def _run():
+        with app.app_context():
+            try:
+                gerar_arte_publicitaria(produto, img_path)
+                logging.info(f"Arte publicitária gerada automaticamente para {codbar}")
+            except Exception as e:
+                logging.error(f"Erro ao gerar arte automática para {codbar}: {e}")
+            finally:
+                _gerando_arte_em_andamento.discard(codbar)
+
+    threading.Thread(target=_run, daemon=True).start()
 
 def find_existing_image(codbar, img_dir, image_extensions):
     """Procura a imagem existente em um diretório"""
