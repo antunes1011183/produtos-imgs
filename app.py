@@ -1783,7 +1783,7 @@ def compor_texto_na_arte(image_bytes, nome_produto, headline, cor_acento=(200, 3
 
     font_nome = ImageFont.truetype(FONT_PATH, int(height * 0.075))
     font_nome.set_variation_by_name('Bold')
-    font_headline = ImageFont.truetype(FONT_PATH, int(height * 0.038))
+    font_headline = ImageFont.truetype(FONT_PATH, int(height * 0.030))
     font_headline.set_variation_by_name('Medium')
 
     text_x = margin + padding
@@ -1792,7 +1792,7 @@ def compor_texto_na_arte(image_bytes, nome_produto, headline, cor_acento=(200, 3
     text_color = (255, 255, 255, 255)
     muted_color = (222, 226, 232, 235)
     line_height_nome = int(height * 0.085)
-    line_height_headline = int(height * 0.048)
+    line_height_headline = int(height * 0.038)
 
     for linha in _quebrar_texto(nome_produto, font_nome, max_text_width, draw)[:3]:
         draw.text((text_x, text_y), linha, font=font_nome, fill=text_color)
