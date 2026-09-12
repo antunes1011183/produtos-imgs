@@ -1690,10 +1690,34 @@ def _cortar_tarjas_pretas(image_bytes, limiar=12):
     return output.getvalue()
 
 
-def compor_texto_na_arte(image_bytes, nome_produto, headline):
+def _extrair_cor_acento(image_path, fallback=(200, 30, 30)):
+    """Extrai uma cor saturada e representativa da foto crua do produto, pra usar como
+    acento visual (a linha sob o texto) — aproxima a cor de marca do produto (ex.: vermelho
+    da Coca-Cola) sem precisar de um mapeamento manual por marca."""
+    try:
+        img = Image.open(image_path).convert('RGB')
+        img.thumbnail((150, 150))
+        paleta = img.quantize(colors=8, method=Image.MEDIANCUT).convert('RGB')
+        cores = paleta.getcolors(img.width * img.height) or []
+        cores.sort(key=lambda c: c[0], reverse=True)
+        for _contagem, (r, g, b) in cores:
+            maximo, minimo = max(r, g, b), min(r, g, b)
+            saturacao = (maximo - minimo) / maximo if maximo else 0
+            brilho = maximo / 255
+            # Ignora tons quase brancos/pretos/cinzas (fundo/embalagem neutra) — fica só
+            # com cores vivas o suficiente pra funcionar como acento de marca.
+            if saturacao > 0.35 and 0.15 < brilho < 0.95:
+                return (r, g, b)
+    except Exception:
+        pass
+    return fallback
+
+
+def compor_texto_na_arte(image_bytes, nome_produto, headline, cor_acento=(200, 30, 30)):
     """Desenha o nome do produto + headline sobre a imagem (sem texto) gerada pela IA,
     usando fonte real — garante ortografia 100% correta, ao contrário de texto renderizado
-    diretamente pelo modelo de imagem."""
+    diretamente pelo modelo de imagem. Cartão escuro com opacidade (padrão visual único pra
+    todas as artes) + linha de acento na cor do produto."""
     image = Image.open(BytesIO(image_bytes)).convert('RGBA')
     width, height = image.size
 
@@ -1705,25 +1729,33 @@ def compor_texto_na_arte(image_bytes, nome_produto, headline):
     card_top = margin
     card_bottom = int(height * 0.46)
     padding = int(width * 0.025)
+    radius = int(height * 0.03)
+    accent_height = max(4, int(height * 0.012))
 
     draw.rounded_rectangle(
         [margin, card_top, margin + card_width, card_bottom],
-        radius=int(height * 0.03),
-        fill=(255, 255, 255, 235),
+        radius=radius,
+        fill=(10, 12, 16, 175),
+    )
+    # Linha de acento na cor do produto, encostada na base do cartão.
+    draw.rounded_rectangle(
+        [margin, card_bottom - accent_height, margin + card_width, card_bottom],
+        radius=min(radius, accent_height),
+        fill=(*cor_acento, 255),
     )
 
     font_nome = ImageFont.truetype(FONT_PATH, int(height * 0.075))
     font_nome.set_variation_by_name('Bold')
-    font_headline = ImageFont.truetype(FONT_PATH, int(height * 0.045))
+    font_headline = ImageFont.truetype(FONT_PATH, int(height * 0.038))
     font_headline.set_variation_by_name('Medium')
 
     text_x = margin + padding
     text_y = card_top + padding
     max_text_width = card_width - (padding * 2)
-    text_color = (15, 23, 42, 255)
-    muted_color = (71, 85, 105, 255)
+    text_color = (255, 255, 255, 255)
+    muted_color = (222, 226, 232, 235)
     line_height_nome = int(height * 0.085)
-    line_height_headline = int(height * 0.055)
+    line_height_headline = int(height * 0.048)
 
     for linha in _quebrar_texto(nome_produto, font_nome, max_text_width, draw)[:3]:
         draw.text((text_x, text_y), linha, font=font_nome, fill=text_color)
@@ -1785,7 +1817,8 @@ def gerar_arte_publicitaria(produto, image_path):
 
     output_bytes = _cortar_tarjas_pretas(output_bytes)
     nome_produto, headline = gerar_textos_arte_ia(produto)
-    output_bytes = compor_texto_na_arte(output_bytes, nome_produto, headline)
+    cor_acento = _extrair_cor_acento(image_path)
+    output_bytes = compor_texto_na_arte(output_bytes, nome_produto, headline, cor_acento)
 
     output_path = os.path.join(ARTES_FOLDER, f'{produto.codbar}.png')
     with open(output_path, 'wb') as out_file:
