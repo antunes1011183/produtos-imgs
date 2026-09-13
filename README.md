@@ -1,33 +1,23 @@
-<<<<<<< HEAD
-# api-produto
-=======
-# API de Produtos com Flask
+# produtos-imgs (Mupa Brain)
 
-Este é um projeto de API para gerenciamento de produtos e imagens de produtos, incluindo funcionalidades de autenticação, upload de imagens, remoção de fundo de imagens, e geração de sugestões de produtos usando a API OpenAI GPT-4.
+API Flask para gerenciamento de produtos e imagens usada pelo app de consulta de preço da Mupa (`mplayer`). Inclui cadastro/consulta de produtos, upload e remoção de fundo de imagens, e geração automática de "arte publicitária" (foto do produto integrada a uma cena gerada por IA + nome/preço sobrepostos) para exibição em tela cheia nos terminais de loja.
+
+Para decisões de arquitetura, regras do prompt de geração de arte e por que cada uma existe, ver [CLAUDE.md](CLAUDE.md).
 
 ## Funcionalidades
 
 - Autenticação de usuário com JWT
-- Upload de imagens de produtos
-- Remoção de fundo de imagens
-- Geração de sugestões de produtos
-- Integração com APIs do Google e Bing para busca de imagens de produtos
-- API documentada com Swagger
+- Cadastro, consulta e importação de produtos (CSV e busca automática por EAN em fontes externas)
+- Upload de imagens de produtos e remoção de fundo
+- Geração automática de arte publicitária com IA (Google Gemini) quando o produto ainda não tem uma
+- Painel administrativo (`/configuracoes`) com consulta rápida, catálogo e geração de arte
 
 ## Requisitos
 
 - Python 3.10+
-- Flask
-- Flask-JWT-Extended
-- Flask-SQLAlchemy
-- Flask-Migrate
-- Flask-Swagger
-- OpenAI API
-- Azure Cognitive Services TTS
-- rembg
-- requests
-- Pillow
-- pytz
+- Flask, Flask-JWT-Extended, Flask-SQLAlchemy, Flask-Migrate
+- google-genai (Gemini/Vertex AI)
+- rembg, Pillow, requests, pytz
 
 ## Instalação
 
@@ -49,14 +39,7 @@ Este é um projeto de API para gerenciamento de produtos e imagens de produtos, 
     pip install -r requirements.txt
     ```
 
-4. Configure as variáveis de ambiente no arquivo `.env`:
-    ```bash
-    OPENAI_API_KEY=your_openai_api_key
-    JWT_SECRET_KEY=your_jwt_secret_key
-    AZURE_SUBSCRIPTION_KEY=your_azure_subscription_key
-    AZURE_REGION=your_azure_region
-    TIMEZONE=your_timezone
-    ```
+4. Configure as variáveis de ambiente no arquivo `.env` (ver `app.py` para a lista completa de chaves usadas, incluindo credenciais do Gemini/Vertex AI).
 
 5. Inicialize o banco de dados:
     ```bash
@@ -67,42 +50,40 @@ Este é um projeto de API para gerenciamento de produtos e imagens de produtos, 
 
 ## Uso
 
-1. Execute a aplicação:
-    ```bash
-    flask run
-    ```
+Execute a aplicação (ver [CLAUDE.md](CLAUDE.md) para observações sobre o reloader no Windows):
+```bash
+python app.py
+```
 
-2. Acesse a documentação Swagger em:
-    ```
-    http://localhost:5000/apidocs
-    ```
+A API sobe em `http://localhost:5050`. O painel administrativo fica em `http://localhost:5050/configuracoes`.
 
-## Endpoints Principais
+## Endpoints principais
 
 ### Autenticação
 
-- `POST /login`: Realiza login e retorna o token JWT.
+- `POST /login`: realiza login e retorna o token JWT.
 
-### Upload de Imagens
+### Produtos
 
-- `POST /upload-imagem-produto/<codbar>`: Faz o upload da imagem de um produto.
-- `POST /upload-multiplas-imagens`: Faz o upload de múltiplas imagens de produtos.
+- `GET /produtos`: lista produtos.
+- `GET /produto/<codbar>`: detalhes de um produto.
+- `PUT /produto/preco/<codbar>`: atualiza o preço médio de um produto.
+- `GET /produto-sugestoes`: sugestões de produtos relacionados.
+- `POST /importar-produtos`: importa produtos de um arquivo CSV.
 
-### Remoção de Fundo
+### Imagens e arte publicitária
 
-- `POST /remove_background_url`: Remove o fundo de uma imagem a partir de uma URL.
-- `POST /remove_background_upload`: Remove o fundo de uma imagem enviada pelo usuário.
+- `GET /produto-imagem/<codbar>`: retorna a imagem/arte de um produto; se a arte ainda não existir, dispara a geração automaticamente em segundo plano.
+- `POST /produto-imagem/<codbar>/gerar-arte`: gera (ou regenera) a arte publicitária de um produto a partir da foto enviada.
+- `POST /upload-imagem-produto/<codbar>`: faz upload da foto de um produto.
+- `POST /upload-multiplas-imagens`: upload de múltiplas imagens de produtos.
+- `DELETE /deletar-imagem-produto/<codbar>`: remove a imagem de um produto.
+- `POST /remove_background_url` / `POST /remove_background_upload`: remoção de fundo de imagem, por URL ou upload.
 
-### Sugestões de Produtos
+### Administração (`/admin/...`)
 
-- `GET /produto-sugestoes`: Obtém sugestões de produtos relacionados.
-
-### Outras Funcionalidades
-
-- `POST /importar-produtos`: Importa produtos de um arquivo CSV.
-- `DELETE /deletar-imagem-produto/<string:codbar>`: Deleta a imagem de um produto.
-- `GET /produto-imagem/<codbar>`: Obtém a imagem de um produto.
-- `PUT /produto/preco/<string:codbar>`: Atualiza o preço médio de um produto.
+- `GET /admin/estatisticas`, `GET /admin/produtos-com-foto`, `GET /admin/consulta-produtos`, `GET /admin/consulta-simples`: usados pelo painel `/configuracoes`.
+- `POST /admin/buscar-imagem/<codbar>`, `POST /admin/gerar-arte/<codbar>`: ações administrativas de imagem/arte.
 
 ## Contribuição
 
@@ -120,5 +101,4 @@ Este projeto está licenciado sob a Licença MIT - veja o arquivo [LICENSE](LICE
 
 Adriano Antunes - antunes@mupa.app
 
-Projeto Link: [https://github.com/antunes1011183/produtos-imgs](https://github.com/antunes1011183/produtos-imgs)
->>>>>>> ae52e37a50c623492cea475c86d2ba729f257ca7
+Projeto: [https://github.com/antunes1011183/produtos-imgs](https://github.com/antunes1011183/produtos-imgs)

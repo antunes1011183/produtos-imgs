@@ -3,6 +3,7 @@ import csv
 import sqlite3
 import base64
 import threading
+import time
 import requests
 from io import StringIO, BytesIO
 from io import StringIO
@@ -24,7 +25,7 @@ except Exception:
     remove = None
     REMBG_ENABLED = False
     logging.warning("rembg não disponível - remoção de fundo desativada")
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageChops
 from flask_migrate import Migrate  # Adicionado
 import re
 from io import BytesIO
@@ -144,6 +145,32 @@ class SugestaoProduto(db.Model):
     tipo_sugestao = db.Column(db.String(255))  # Novo campo para tipo de sugestão
     sugestao = db.Column(db.String(255))
     audio_url = db.Column(db.String(255))
+
+
+class HistoricoBuscaImagem(db.Model):
+    """Registra cada consulta de imagem de produto feita ao sistema — tanto pelos terminais
+    (GET /produto-imagem/<codbar>, via='terminal') quanto por uma retentativa manual no painel
+    (POST /admin/buscar-imagem/<codbar>, via='admin'). Serve de histórico de uso E de fila de
+    pendências: o resumo diário de e-mail/WhatsApp consulta as linhas com encontrado=False e
+    notificado_em=NULL."""
+    id = db.Column(db.Integer, primary_key=True)
+    codbar = db.Column(db.String(64), nullable=False, index=True)
+    encontrado = db.Column(db.Boolean, nullable=False, default=False)
+    origem = db.Column(db.String(30), nullable=True)  # local, bing, google, zaffari
+    via = db.Column(db.String(20), nullable=False, default='terminal')  # terminal, admin
+    criado_em = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    notificado_em = db.Column(db.DateTime, nullable=True)
+
+
+def _registrar_busca_imagem(codbar, encontrado, origem=None, via='terminal'):
+    """Grava uma linha de histórico de busca de imagem. Nunca deixa uma falha de log quebrar
+    o fluxo principal de consulta de imagem."""
+    try:
+        db.session.add(HistoricoBuscaImagem(codbar=codbar, encontrado=encontrado, origem=origem, via=via))
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        logging.error(f"Erro ao registrar histórico de busca de imagem para {codbar}: {e}")
 
 @app.route('/')
 def index():
@@ -513,17 +540,24 @@ def obter_imagem_produto(codbar):
         arte_url = _arte_url(codbar)
         if not arte_url:
             _disparar_geracao_arte_em_background(codbar, img_path)
+        _registrar_busca_imagem(codbar, True, origem='local', via='terminal')
         return jsonify({'imagem_url': img_url, 'imagem_url_arte': arte_url}), 200
 
-    for buscar in (buscar_e_salvar_imagem_bing, buscar_e_salvar_imagem_google, buscar_e_salvar_imagem_zaffari):
+    for fonte, buscar in (
+        ('bing', buscar_e_salvar_imagem_bing),
+        ('google', buscar_e_salvar_imagem_google),
+        ('zaffari', buscar_e_salvar_imagem_zaffari),
+    ):
         resultado = buscar(codbar)
         if resultado[1] == 200:
             imagem_url = resultado[0].get_json().get('imagem_url')
             novo_img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
             if novo_img_path:
                 _disparar_geracao_arte_em_background(codbar, novo_img_path)
+            _registrar_busca_imagem(codbar, True, origem=fonte, via='terminal')
             return jsonify({'imagem_url': imagem_url, 'imagem_url_arte': None}), 200
 
+    _registrar_busca_imagem(codbar, False, via='terminal')
     return jsonify({'message': 'Imagem não encontrada em nenhuma fonte (local, Bing, Google, Zaffari)'}), 404
 
 
@@ -571,8 +605,8 @@ def _static_url(fs_path):
 
 def _arte_url(codbar):
     """Retorna a URL da arte publicitária já gerada para o produto, ou None se ainda não existir."""
-    if os.path.exists(os.path.join(ARTES_FOLDER, f'{codbar}.png')):
-        return url_for('static', filename=f'artes_geradas/{codbar}.png', _external=True)
+    if os.path.exists(os.path.join(ARTES_FOLDER, f'{codbar}.webp')):
+        return url_for('static', filename=f'artes_geradas/{codbar}.webp', _external=True)
     return None
 
 def save_image_from_response(image_data, codbar):
@@ -841,6 +875,7 @@ def register_product_in_database(product_data):
         )
         db.session.add(new_product)
         db.session.commit()
+        _incrementar_contador('STATS_CADASTROS_AUTOMATICOS')
         return new_product
     except Exception as e:
         return None
@@ -1210,19 +1245,93 @@ def update_preco_medio(codbar):
     else:
         return jsonify({'message': 'Produto não encontrado'}), 404
 
-def fetch_product_from_cosmos(ean):
-    """Busca o produto na API do Cosmos usando o código de barras (EAN)"""
-    cosmos_url = f"https://api.cosmos.bluesoft.com.br/gtins/{ean}.json"
-    headers = {
-        'Authorization': 'Bearer KZSEuMgGjPb8d9gFztQHiw'  # Seu token do Cosmos
-    }
+def _incrementar_contador(chave, delta=1):
+    """Incrementa um contador simples guardado na tabela Config (usado pelas estatísticas do
+    resumo diário). Não é atômico entre processos concorrentes, mas o volume de escrita aqui é
+    baixo o bastante (cadastros/consultas ao Cosmos) pra isso não ser um problema na prática."""
     try:
-        response = requests.get(cosmos_url, headers=headers, timeout=15)
-        response.raise_for_status()
-        return response.json()
-    except requests.RequestException as e:
-        logging.error(f"Erro ao buscar produto no Cosmos: {e}")
+        atual = int(_ler_todas_config().get(chave, '0') or '0')
+    except ValueError:
+        atual = 0
+    set_config(chave, str(atual + delta))
+
+
+def _lista_tokens_cosmos():
+    """Lê a lista de tokens do Cosmos configurada no painel (um por linha, em
+    COSMOS_API_TOKENS). Mantém compatibilidade com a chave antiga COSMOS_API_TOKEN (token
+    único) enquanto ela não for migrada."""
+    cfg = _ler_todas_config()
+    bruto = cfg.get('COSMOS_API_TOKENS', '').strip()
+    if bruto:
+        tokens = [t.strip() for t in bruto.splitlines() if t.strip()]
+        if tokens:
+            return tokens
+    antigo = cfg.get('COSMOS_API_TOKEN', '').strip()
+    return [antigo] if antigo else []
+
+
+# Códigos HTTP que indicam problema com o TOKEN em si (cota do plano free esgotada ou token
+# inválido/revogado) — nesses casos faz sentido girar pro próximo token da lista. Um 404
+# significa apenas que o EAN não existe no Cosmos (não é problema de token, não gira).
+_CODIGOS_HTTP_TOKEN_ESGOTADO = {401, 402, 403, 429}
+
+
+def fetch_product_from_cosmos(ean):
+    """Busca o produto na API do Cosmos usando o código de barras (EAN).
+
+    O plano free do Cosmos tem cota mensal por token, então o sistema mantém uma LISTA de
+    tokens (COSMOS_API_TOKENS, um por linha, configurável no painel) e um índice do 'token
+    atual' (COSMOS_TOKEN_INDEX_ATUAL). Começa pelo token atual; se a resposta indicar cota
+    esgotada ou token inválido (401/402/403/429), avança pro próximo token da lista, tenta de
+    novo, e persiste o novo índice — assim a próxima chamada já começa de onde parou, sem
+    precisar regirar todos os tokens já esgotados a cada consulta. Um 404 (produto não existe
+    no Cosmos) retorna None imediatamente, sem trocar de token."""
+    tokens = _lista_tokens_cosmos()
+    if not tokens:
         return None
+
+    cfg = _ler_todas_config()
+    try:
+        indice = int(cfg.get('COSMOS_TOKEN_INDEX_ATUAL', '0') or '0') % len(tokens)
+    except ValueError:
+        indice = 0
+
+    cosmos_url = f"https://api.cosmos.bluesoft.com.br/gtins/{ean}.json"
+    indice_inicial = indice
+
+    for tentativa in range(len(tokens)):
+        token = tokens[indice]
+        try:
+            response = requests.get(
+                cosmos_url,
+                headers={'Authorization': f'Bearer {token}'},
+                timeout=15,
+            )
+        except requests.RequestException as e:
+            logging.error(f"Erro de rede ao buscar produto no Cosmos (token #{indice + 1}/{len(tokens)}): {e}")
+            return None
+
+        if response.status_code == 200:
+            if indice != indice_inicial:
+                set_config('COSMOS_TOKEN_INDEX_ATUAL', str(indice))
+            _incrementar_contador('STATS_COSMOS_SUCESSOS')
+            return response.json()
+
+        if response.status_code == 404:
+            return None
+
+        if response.status_code in _CODIGOS_HTTP_TOKEN_ESGOTADO:
+            logging.warning(f"Token Cosmos #{indice + 1}/{len(tokens)} sem cota ou inválido (HTTP {response.status_code}), tentando o próximo.")
+            _incrementar_contador('STATS_COSMOS_ROTACOES')
+            indice = (indice + 1) % len(tokens)
+            continue
+
+        logging.error(f"Erro ao buscar produto no Cosmos: HTTP {response.status_code}")
+        return None
+
+    set_config('COSMOS_TOKEN_INDEX_ATUAL', str(indice))
+    logging.error(f"Todos os {len(tokens)} token(ns) do Cosmos estão sem cota ou inválidos.")
+    return None
 
 
 def fetch_product_from_openfoodfacts(ean):
@@ -1498,17 +1607,49 @@ def configuracoes():
             set_config('REMBG_ENABLED', str(enabled).lower())
             return jsonify({'message': f'REMBG_ENABLED = {enabled}', 'saved': True})
 
+        elif action == 'toggle_resumo_ativo':
+            val = data.get('RESUMO_ATIVO')
+            enabled = (val == 'true' or val is True)
+            set_config('RESUMO_ATIVO', str(enabled).lower())
+            return jsonify({'message': f'RESUMO_ATIVO = {enabled}', 'saved': True})
+
+        elif action == 'toggle_whatsapp_ativo':
+            val = data.get('WHATSAPP_ATIVO')
+            enabled = (val == 'true' or val is True)
+            set_config('WHATSAPP_ATIVO', str(enabled).lower())
+            return jsonify({'message': f'WHATSAPP_ATIVO = {enabled}', 'saved': True})
+
+        elif action == 'save_cosmos_tokens':
+            bruto = (data.get('cosmos_tokens') or '').strip()
+            tokens = [t.strip() for t in bruto.splitlines() if t.strip()]
+            set_config('COSMOS_API_TOKENS', '\n'.join(tokens))
+            set_config('COSMOS_TOKEN_INDEX_ATUAL', '0')
+            return jsonify({'message': f'{len(tokens)} token(ns) do Cosmos salvo(s) com sucesso', 'saved': True, 'total_tokens': len(tokens)})
+
+        elif action == 'save_notificacoes':
+            for chave in NOTIFICACAO_CONFIG_KEYS:
+                if chave in data:
+                    valor = data.get(chave)
+                    if chave in ('RESUMO_ATIVO', 'WHATSAPP_ATIVO'):
+                        valor = str(valor == 'true' or valor is True).lower()
+                    set_config(chave, (valor or '').strip() if isinstance(valor, str) else valor)
+            return jsonify({'message': 'Configurações de notificação salvas com sucesso', 'saved': True})
+
         return jsonify({'error': 'Ação desconhecida'}), 400
 
     # GET com Accept: application/json → JSON
     cfg = _ler_todas_config()
     openai_key_full = cfg.get('OPENAI_API_KEY', '') or ''
     gemini_key_full = cfg.get('GEMINI_API_KEY', '') or ''
+    cosmos_status = _status_tokens_cosmos()
     return jsonify({
         'openai_key': openai_key_full[:8] + '...' if openai_key_full and len(openai_key_full) > 8 else openai_key_full or '(não configurado)',
         'openai_key_full': openai_key_full,
         'gemini_key': gemini_key_full[:8] + '...' if gemini_key_full and len(gemini_key_full) > 8 else gemini_key_full or '(não configurado)',
         'gemini_key_full': gemini_key_full,
+        'cosmos_tokens_full': '\n'.join(_lista_tokens_cosmos()),
+        'cosmos_status': cosmos_status,
+        'notificacoes': {chave: cfg.get(chave, '') for chave in NOTIFICACAO_CONFIG_KEYS},
         'use_openai': cfg.get('USE_OPENAI_SUGESTIONS', 'true') == 'true',
         'rembg_enabled': cfg.get('REMBG_ENABLED', 'false') == 'true',
     })
@@ -1585,14 +1726,25 @@ def api_teste_gemini():
 # Geração de Arte Publicitária (imagem crua -> peça de campanha)
 # =====================================================================
 
-ARTE_PROMPT_TEMPLATE = """Transforme a imagem do produto fornecida em uma peça publicitária profissional de varejo, com aparência de campanha de supermercado premium.
+ARTE_PROMPT_TEMPLATE = """Crie uma peça publicitária premium para a tela de um terminal de consulta de preços dentro de um supermercado — a partir da imagem do produto fornecida.
+
+OBJETIVO PRINCIPAL:
+Isto NÃO é uma tela informativa de consulta. É uma MICROEXPERIÊNCIA DE VENDA: o shopper já está com o produto em mãos e acabou de consultar o preço porque tem interesse nele — a cena deve aumentar esse desejo, provocando de cara "isso parece ótimo, eu quero levar" antes mesmo de ler qualquer texto.
+
+CONCEITO VISUAL:
+- Transforme o produto no protagonista de uma cena de consumo/uso aspiracional que conte uma pequena história visual — o shopper deve pensar "eu posso usar/fazer isso em casa", "isso vai ficar muito bom", "vale a pena levar".
+- Se o produto É alimento ou bebida: monte uma cena gastronômica extremamente apetitosa — ingredientes frescos, textura real (vapor, cremosidade, crocância, brilho, gotas), como se estivesse pronto para ser consumido agora mesmo.
+- Se o produto NÃO é alimento (higiene pessoal, perfumaria, cosmético, limpeza, eletrônico etc.): crie a mesma sensação de desejo e aspiração através do contexto de USO REAL da categoria (ex.: banheiro/spa moderno, rotina de cuidado pessoal, ambiente doméstico impecável) — nunca insira comida, ingredientes crus ou sobremesa só porque o nome do produto menciona um sabor/fragrância como "chocolate", "menta", "coco" etc.; isso descreve o AROMA do produto, não um alimento real a ser retratado.
+- Na dúvida sobre a categoria, prefira um cenário neutro e elegante (superfície premium, iluminação de estúdio) a arriscar um contexto tematicamente errado.
+- Fotografia com aparência de campanha de uma grande marca: iluminação cinematográfica, profundidade de campo, textura extremamente realista, composição sofisticada, sensação de produto premium, cores naturais e convidativas, fundo levemente desfocado, detalhes nítidos no produto.
 
 REGRAS PRINCIPAIS:
 - Use o produto da imagem original como elemento principal.
 - Preserve fielmente a embalagem, formato, proporções, cores, logotipo, textos e características visuais do produto exatamente como estão na foto de referência.
 - NÃO invente informações sobre o produto.
 - NÃO altere a identidade visual da embalagem.
-- NÃO adicione preço ou promoção.
+- NÃO adicione preço ou promoção. Se a embalagem original já tiver algum texto promocional impresso nela (ex.: "Leve 5 Pague 4", "20% a mais"), preserve-o normalmente, mas só ali, uma única vez, como parte da própria embalagem — nunca o repita, amplie ou destaque em outro lugar da composição.
+- O PRODUTO APARECE UMA ÚNICA VEZ em toda a composição. NÃO duplique, reflita, "ecoe" ou repita o produto (inteiro ou em parte) em nenhum outro lugar da cena — nem borrado ao fundo, nem cortado nas bordas, nem como reflexo em vidro/superfície, nem uma segunda embalagem menor ou fora de foco. Isso vale mesmo que pareça decorativo: uma segunda cópia do produto é sempre um defeito grave desta arte.
 - NÃO adicione, replique ou destaque como selo/elemento gráfico separado nenhuma marca, logotipo ou selo de terceiros — nem da Mupa, nem de qualquer empresa, evento, campeonato ou promoção licenciada além do fabricante do produto. Isso vale mesmo que a embalagem original já tenha algum selo de terceiro impresso nela: preserve-o apenas ali, como parte da embalagem, e NÃO o recrie como um elemento gráfico isolado em outra parte da composição.
 - NÃO adicione QR Code.
 - NÃO adicione informações nutricionais ou benefícios que não estejam claramente presentes na embalagem.
@@ -1605,23 +1757,23 @@ INTEGRAÇÃO DO PRODUTO (regra crítica):
 
 COMPOSIÇÃO:
 - Crie uma arte horizontal, moderna e sofisticada, própria para Digital Signage em supermercado.
-- Crie um cenário fotográfico relacionado ao uso/consumo do produto, com ingredientes, alimentos preparados, utensílios ou contexto de consumo que combinem com o produto, preenchendo toda a composição (sem áreas de fundo branco isoladas).
+- Preencha toda a composição com o cenário (sem áreas de fundo branco isoladas).
 - Use profundidade de campo e fundo suavemente desfocado.
 - Iluminação profissional de fotografia publicitária, com sombras e reflexos realistas integrando totalmente o produto ao cenário.
-- Aparência de fotografia comercial de alto nível, como uma campanha publicitária real.
+- Aparência de fotografia comercial de alto nível, como uma campanha publicitária real de uma grande marca — nunca aparência de panfleto promocional, ficha técnica ou tela informativa.
 
 LAYOUT (siga exatamente esta divisão, é uma regra rígida de posicionamento):
-- METADE DIREITA da imagem: o produto, grande, centralizado nessa metade, perfeitamente legível e totalmente integrado ao cenário (sem fundo branco/liso visível ao redor dele). Esta é a única área onde o produto aparece.
-- METADE ESQUERDA inteira (quarto superior e quarto inferior): mantenha essa área com composição visual simples — cenário, elementos decorativos leves suavemente desfocados — SEM nenhum texto, letra, número ou tipografia adicional. Essa área será usada depois por outro sistema para inserir nome do produto, headline e preço; qualquer texto ou elemento gráfico complexo aí vai atrapalhar essa inserção.
+- METADE DIREITA da imagem: o produto, grande, centralizado nessa metade, perfeitamente legível e totalmente integrado ao cenário (sem fundo branco/liso visível ao redor dele). Esta é a ÚNICA área da composição inteira onde o produto (ou qualquer parte reconhecível dele — embalagem, rótulo, tampa etc.) pode aparecer.
+- METADE ESQUERDA inteira (quarto superior e quarto inferior): mantenha essa área com composição visual simples — cenário, elementos decorativos leves suavemente desfocados — SEM nenhum texto, letra, número ou tipografia adicional, E SEM nenhuma parte do produto (nem borrada, nem cortada, nem ao fundo, nem em segundo plano). Um cenário genérico (parede, superfície, ambiente) preenche essa área; o produto nunca "vaza" pra esse lado. É ali que um sistema separado insere depois, com fonte real: o nome do produto, uma frase curta de benefício (o "motivo pra levar") e o preço — a hierarquia visual DESEJO → PRODUTO → BENEFÍCIO/PREÇO só funciona se essa área ficar completamente livre de texto e de qualquer elemento reconhecível do produto.
 - Use as cores da própria embalagem como referência para a identidade visual da arte.
 
 TEXTOS:
 - NÃO escreva NENHUM texto adicional na imagem — nem nome do produto, nem frases, nem números, nem preço, em nenhuma parte da composição. A única exceção é o texto que já vem impresso na embalagem original do produto (parte da foto de referência), que deve ser preservado normalmente.
-- Os textos publicitários serão adicionados depois por um sistema separado; a imagem gerada deve ficar totalmente livre de tipografia adicional.
+- A frase de benefício, o nome do produto e o preço são adicionados depois por um sistema separado, com fonte real (garante ortografia correta); a imagem gerada deve ficar totalmente livre de tipografia adicional — sua responsabilidade aqui é só a cena/fotografia.
 
-ESTILO: premium, comercial, moderno, clean, supermercado, digital signage, fotografia publicitária realista, alta qualidade, visual impactante, sem pessoas.
+ESTILO: premium, comercial, moderno, clean, cinematográfico, aspiracional, apetitoso (quando o produto for alimento ou bebida), supermercado, digital signage, fotografia publicitária realista de grande marca, alta qualidade, visual impactante, sem pessoas.
 
-O resultado deve parecer o cenário de uma campanha publicitária criada por uma agência profissional para uma grande rede de supermercados — com o produto fisicamente integrado ao cenário (nunca um recorte colado sobre fundo branco) e sem nenhuma arte gráfica ou texto sobreposto.
+RESULTADO ESPERADO: a cena deve parecer uma campanha de merchandising digital criada por uma grande marca — nunca uma tela informativa de consulta de preço — vendendo o produto visualmente antes mesmo que o shopper leia qualquer texto. Produto fisicamente integrado ao cenário (nunca um recorte colado sobre fundo branco), sem nenhuma arte gráfica ou texto sobreposto.
 
 Produto de referência: {descricao}."""
 
@@ -1634,6 +1786,15 @@ def _montar_prompt_arte(produto):
     return ARTE_PROMPT_TEMPLATE.format(descricao=descricao)
 
 
+def _texto_corrompido(texto):
+    """Detecta indícios de corrupção de encoding num texto: o caractere de substituição
+    (U+FFFD, '�') OU bytes de controle C1 (U+0080–U+009F) — estes últimos sobram quando um
+    arquivo UTF-8 foi lido como Latin-1/Windows-1252 na importação (mojibake), sem virar U+FFFD
+    (ex.: 'SOCOCO' virou 'SOC\\xc3\\x94CO', onde \\x94 é um controle C1 solto no meio da
+    palavra). Qualquer um dos dois não tem motivo pra aparecer numa descrição de produto real."""
+    return any(ch == '�' or 0x80 <= ord(ch) <= 0x9F for ch in texto)
+
+
 def gerar_textos_arte_ia(produto):
     """Usa Gemini (texto, modelo leve e barato) para produzir um nome de produto limpo e uma
     headline comercial curta. Gera o nome do zero a partir da descrição bruta em vez de usar
@@ -1641,27 +1802,76 @@ def gerar_textos_arte_ia(produto):
     importação antiga (ex.: 'AÇÚCAR' virou 'A��CAR', perda de dados irreversível) —
     a IA reconstrói o nome comercial correto a partir do contexto. Esse texto é sempre desenhado
     depois com fonte real (nunca pela IA de imagem), então não corre risco de erro de ortografia.
+
+    Quando há corrupção (caractere de substituição U+FFFD, '�'), a IA às vezes "adivinha" a
+    palavra errada (ex.: 'SOC�CO' virou 'Socaneco' numa geração, quando o certo era 'Sococo') —
+    ou usa uma marca cadastrada errada (esse mesmo produto tem marca='KELLOGG S' no banco, dado
+    de importação claramente errado). Nesses casos, busca uma descrição/marca ÍNTEGRAS pelo EAN
+    nas mesmas fontes públicas do cadastro automático (Cosmos -> Open Food Facts -> Zaffari)
+    ANTES de deixar a IA adivinhar — muito mais confiável que reconstruir de um texto corrompido.
+
     Retorna (nome, headline); nome cai para produto.description em caixa normal se a IA falhar."""
-    fallback_nome = (produto.description or 'Produto').title()
+    descricao_fonte = produto.description or ''
+    marca_fonte = produto.marca or ''
+    fallback_nome = (descricao_fonte or 'Produto').title()
+    fonte_confiavel = False
+
+    if _texto_corrompido(descricao_fonte) or _texto_corrompido(marca_fonte):
+        for buscar in (fetch_product_from_cosmos, fetch_product_from_openfoodfacts, fetch_product_from_zaffari):
+            dados = buscar(produto.codbar)
+            if not dados:
+                continue
+            desc_externa = (dados.get('description') or '').strip()
+            if not desc_externa or _texto_corrompido(desc_externa):
+                continue
+            descricao_fonte = desc_externa
+            fallback_nome = desc_externa.title()
+            fonte_confiavel = True
+            marca_externa = dados.get('brand', {}).get('name', '') if isinstance(dados.get('brand'), dict) else ''
+            if marca_externa and marca_externa != 'Marca não disponível':
+                marca_fonte = marca_externa
+            break
+
     api_key = _ler_todas_config().get('GEMINI_API_KEY', '').strip()
     if not api_key:
         return fallback_nome, None
     try:
         client = genai.Client(vertexai=True, api_key=api_key)
-        instrucao = (
-            f"A descrição bruta deste produto num sistema de catálogo é: \"{produto.description}\""
-            + (f" (marca {produto.marca})" if produto.marca else "")
-            + ". Essa descrição pode estar em caixa alta, abreviada, ou conter caracteres "
-            "corrompidos/símbolos estranhos (ex.: �) — ignore os símbolos quebrados e "
-            "reconstrua o nome comercial correto a partir do contexto.\n\n"
-            "Gere:\n"
-            "1. Um nome de produto limpo, comercial e curto, em capitalização normal (não tudo "
-            "maiúsculo), ex.: 'Coca-Cola Sem Açúcar 600ml'.\n"
-            "2. Uma frase curta e apelativa de campanha publicitária (máximo 5 palavras).\n\n"
-            "Responda EXATAMENTE neste formato, uma linha para cada, sem mais nada:\n"
-            "NOME: <nome do produto>\n"
-            "HEADLINE: <frase>"
-        )
+        if fonte_confiavel:
+            # Descrição já vem íntegra de uma fonte externa (Cosmos/Open Food Facts/Zaffari) —
+            # não vale a pena deixar a IA "reescrever" o nome de novo aqui: às vezes ela troca
+            # uma letra ou erra a marca mesmo com um texto de entrada perfeito. Usa o nome exato
+            # dessa fonte (fallback_nome) e pede só a frase de benefício.
+            instrucao = (
+                f"Este produto de supermercado é: \"{descricao_fonte}\""
+                + (f" (marca {marca_fonte})" if marca_fonte else "")
+                + ". Gere apenas uma frase curta de BENEFÍCIO/motivo pra levar o produto (máximo "
+                "5 palavras), tom emocional e comercial — não descreva o produto, diga o que ele "
+                "proporciona. Exemplos de tom (adapte pro produto, não copie): 'Mais sabor pro "
+                "seu dia', 'Leve para casa', 'Vale a pena experimentar', 'Um toque especial'.\n\n"
+                "Responda EXATAMENTE neste formato, sem mais nada:\n"
+                "HEADLINE: <frase>"
+            )
+        else:
+            instrucao = (
+                f"A descrição bruta deste produto num sistema de catálogo é: \"{descricao_fonte}\""
+                + (f" (marca {marca_fonte})" if marca_fonte else "")
+                + ". Essa descrição pode estar em caixa alta, abreviada, ou conter caracteres "
+                "corrompidos/símbolos estranhos (ex.: �) — ignore os símbolos quebrados e "
+                "reconstrua o nome comercial correto a partir do contexto. Se não tiver certeza "
+                "absoluta de qual palavra/marca um trecho corrompido deveria formar, mantenha só "
+                "a parte legível em vez de inventar uma palavra parecida.\n\n"
+                "Gere:\n"
+                "1. Um nome de produto limpo, comercial e curto, em capitalização normal (não "
+                "tudo maiúsculo), ex.: 'Coca-Cola Sem Açúcar 600ml'.\n"
+                "2. Uma frase curta de BENEFÍCIO/motivo pra levar o produto (máximo 5 palavras), "
+                "tom emocional e comercial — não descreva o produto, diga o que ele proporciona. "
+                "Exemplos de tom (adapte pro produto, não copie): 'Mais sabor pro seu dia', 'Leve "
+                "para casa', 'Vale a pena experimentar', 'Um toque especial'.\n\n"
+                "Responda EXATAMENTE neste formato, uma linha para cada, sem mais nada:\n"
+                "NOME: <nome do produto>\n"
+                "HEADLINE: <frase>"
+            )
         response = client.models.generate_content(
             model='gemini-2.5-flash-lite',
             contents=instrucao,
@@ -1674,7 +1884,8 @@ def gerar_textos_arte_ia(produto):
                 nome = linha.split(':', 1)[1].strip()
             elif linha.upper().startswith('HEADLINE:'):
                 headline = linha.split(':', 1)[1].strip()
-        return (nome or fallback_nome), headline
+        nome_final = fallback_nome if fonte_confiavel else (nome or fallback_nome)
+        return nome_final, headline
     except Exception as e:
         logging.error(f"Erro ao gerar textos da arte via IA: {e}")
         return fallback_nome, None
@@ -1750,12 +1961,51 @@ def _extrair_cor_acento(image_path, fallback=(200, 30, 30)):
     return fallback
 
 
+def _gradiente_borda_1d(tamanho, largura_pct, alpha_max):
+    """Lista de alphas 0..tamanho-1: alto nas duas pontas, caindo a 0 até a borda da faixa
+    central — usado como LUT pra montar a vinheta (1 eixo por vez, depois combinados)."""
+    largura_borda = max(1, int(tamanho * largura_pct))
+    valores = []
+    for i in range(tamanho):
+        if i < largura_borda:
+            alpha = int(alpha_max * (1 - i / largura_borda))
+        elif i >= tamanho - largura_borda:
+            alpha = int(alpha_max * (1 - (tamanho - 1 - i) / largura_borda))
+        else:
+            alpha = 0
+        valores.append(alpha)
+    return valores
+
+
+def _aplicar_vinheta(image, largura_pct=0.14, altura_pct=0.14, alpha_max=110):
+    """Escurece sutilmente as quatro bordas da imagem (efeito vinheta/gradiente preto),
+    sem afetar a área central — dá um acabamento mais premium/cinematográfico à arte."""
+    width, height = image.size
+
+    linha_h = Image.new('L', (width, 1))
+    linha_h.putdata(_gradiente_borda_1d(width, largura_pct, alpha_max))
+    mascara_h = linha_h.resize((width, height))
+
+    linha_v = Image.new('L', (1, height))
+    linha_v.putdata(_gradiente_borda_1d(height, altura_pct, alpha_max))
+    mascara_v = linha_v.resize((width, height))
+
+    # "lighter" pega o maior alpha entre os dois eixos por pixel — os cantos (perto de ambas
+    # as bordas) ficam no mesmo tom máximo da vinheta, em vez de somar e escurecer demais.
+    mascara = ImageChops.lighter(mascara_h, mascara_v)
+
+    preto = Image.new('RGBA', image.size, (0, 0, 0, 255))
+    preto.putalpha(mascara)
+    return Image.alpha_composite(image.convert('RGBA'), preto)
+
+
 def compor_texto_na_arte(image_bytes, nome_produto, headline, cor_acento=(200, 30, 30)):
     """Desenha o nome do produto + headline sobre a imagem (sem texto) gerada pela IA,
     usando fonte real — garante ortografia 100% correta, ao contrário de texto renderizado
     diretamente pelo modelo de imagem. Cartão escuro com opacidade (padrão visual único pra
     todas as artes) + linha de acento na cor do produto."""
     image = Image.open(BytesIO(image_bytes)).convert('RGBA')
+    image = _aplicar_vinheta(image)
     width, height = image.size
 
     overlay = Image.new('RGBA', image.size, (0, 0, 0, 0))
@@ -1781,9 +2031,14 @@ def compor_texto_na_arte(image_bytes, nome_produto, headline, cor_acento=(200, 3
         fill=(*cor_acento, 255),
     )
 
+    # Proporções calibradas (e testadas de verdade) num tablet 10" 1280x800 na horizontal — o
+    # dispositivo real usado nos testes de consulta de preço. Continuam relativas à altura da
+    # própria imagem (não um valor fixo em pixels) porque a IA às vezes devolve uma resolução
+    # um pouco diferente; a proporção é o que garante que o texto sempre saia no mesmo tamanho
+    # visual nessa tela, independente disso.
     font_nome = ImageFont.truetype(FONT_PATH, int(height * 0.075))
     font_nome.set_variation_by_name('Bold')
-    font_headline = ImageFont.truetype(FONT_PATH, int(height * 0.030))
+    font_headline = ImageFont.truetype(FONT_PATH, int(height * 0.0255))
     font_headline.set_variation_by_name('Medium')
 
     text_x = margin + padding
@@ -1792,7 +2047,7 @@ def compor_texto_na_arte(image_bytes, nome_produto, headline, cor_acento=(200, 3
     text_color = (255, 255, 255, 255)
     muted_color = (222, 226, 232, 235)
     line_height_nome = int(height * 0.085)
-    line_height_headline = int(height * 0.038)
+    line_height_headline = int(height * 0.0323)
 
     for linha in _quebrar_texto(nome_produto, font_nome, max_text_width, draw)[:3]:
         draw.text((text_x, text_y), linha, font=font_nome, fill=text_color)
@@ -1806,7 +2061,10 @@ def compor_texto_na_arte(image_bytes, nome_produto, headline, cor_acento=(200, 3
 
     final_image = Image.alpha_composite(image, overlay).convert('RGB')
     output = BytesIO()
-    final_image.save(output, format='PNG')
+    # WEBP em vez de PNG: pra uma foto (não um gráfico com poucas cores), fica 60-70% menor com
+    # qualidade visualmente idêntica — e o app já reconverte pra webp no cache local mesmo, então
+    # deixar de gerar em PNG evita um retrabalho.
+    final_image.save(output, format='WEBP', quality=88)
     return output.getvalue()
 
 
@@ -1857,7 +2115,7 @@ def gerar_arte_publicitaria(produto, image_path):
     cor_acento = _extrair_cor_acento(image_path)
     output_bytes = compor_texto_na_arte(output_bytes, nome_produto, headline, cor_acento)
 
-    output_path = os.path.join(ARTES_FOLDER, f'{produto.codbar}.png')
+    output_path = os.path.join(ARTES_FOLDER, f'{produto.codbar}.webp')
     with open(output_path, 'wb') as out_file:
         out_file.write(output_bytes)
 
@@ -1886,8 +2144,10 @@ def admin_buscar_imagem(codbar):
         resultado = buscar(codbar)
         if resultado[1] == 200:
             imagem_url = resultado[0].get_json().get('imagem_url')
+            _registrar_busca_imagem(codbar, True, origem=fonte, via='admin')
             return jsonify({'message': f'Imagem encontrada via {fonte}', 'imagem_url': imagem_url, 'fonte': fonte}), 200
 
+    _registrar_busca_imagem(codbar, False, via='admin')
     return jsonify({'message': 'Nenhuma imagem encontrada em nenhuma das fontes (Bing, Google, Zaffari)'}), 404
 
 
@@ -1911,8 +2171,7 @@ def admin_gerar_arte(codbar):
         logging.error(f"Erro ao gerar arte publicitária para {codbar}: {e}")
         return jsonify({'message': f'Erro ao gerar arte: {e}'}), 500
 
-    arte_url = url_for('static', filename=f'artes_geradas/{codbar}.png', _external=True)
-    return jsonify({'message': 'Arte gerada com sucesso', 'arte_url': arte_url}), 200
+    return jsonify({'message': 'Arte gerada com sucesso', 'arte_url': _arte_url(codbar)}), 200
 
 
 _gerando_arte_em_andamento = set()
@@ -2216,7 +2475,312 @@ def admin_consulta_simples():
     finally:
         conn.close()
 
+
+@app.route('/admin/historico-buscas', methods=['GET'])
+@jwt_required()
+def admin_historico_buscas():
+    """Histórico de buscas de imagem (sucesso e falha), paginado. `status` filtra por
+    'encontrado', 'nao_encontrado' ou 'todos' (padrão)."""
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 20, type=int)
+    status = request.args.get('status', 'todos')
+    codbar_filtro = request.args.get('codbar', '').strip()
+
+    query = HistoricoBuscaImagem.query
+    if status == 'encontrado':
+        query = query.filter_by(encontrado=True)
+    elif status == 'nao_encontrado':
+        query = query.filter_by(encontrado=False)
+    if codbar_filtro:
+        query = query.filter(HistoricoBuscaImagem.codbar.like(f'%{codbar_filtro}%'))
+
+    query = query.order_by(HistoricoBuscaImagem.criado_em.desc())
+    total = query.count()
+    registros = query.offset((page - 1) * per_page).limit(per_page).all()
+
+    codbars = {r.codbar for r in registros}
+    descricoes = {}
+    if codbars:
+        for p in Produto.query.filter(Produto.codbar.in_(codbars)).all():
+            descricoes[p.codbar] = p.description
+
+    return jsonify({
+        'registros': [{
+            'id': r.id,
+            'codbar': r.codbar,
+            'descricao': descricoes.get(r.codbar),
+            'encontrado': r.encontrado,
+            'origem': r.origem,
+            'via': r.via,
+            'criado_em': r.criado_em.isoformat() + 'Z',
+            'notificado': r.notificado_em is not None,
+        } for r in registros],
+        'total': total,
+        'page': page,
+        'per_page': per_page,
+        'pages': (total + per_page - 1) // per_page if total > 0 else 1,
+    })
+
+
+# =====================================================================
+# Notificações de imagens não encontradas (resumo por e-mail / WhatsApp)
+# =====================================================================
+
+NOTIFICACAO_CONFIG_KEYS = [
+    'RESEND_API_KEY', 'RESEND_REMETENTE', 'RESUMO_DESTINATARIOS', 'RESUMO_HORARIO', 'RESUMO_ATIVO',
+    'WHATSAPP_ATIVO', 'WHATSAPP_PROVEDOR', 'WHATSAPP_BASE_URL', 'WHATSAPP_INSTANCE',
+    'WHATSAPP_TOKEN', 'WHATSAPP_NUMERO_DESTINO',
+]
+
+
+def _estatisticas_gerais():
+    """Estatísticas rápidas do catálogo, no mesmo estilo (leve) de /admin/estatisticas — conta
+    arquivos nas pastas em vez de checar produto por produto (o catálogo tem ~945 mil linhas,
+    então checar arquivo por arquivo pra cada uma seria caro demais pra rodar num resumo diário)."""
+    total = Produto.query.count()
+    com_foto = len([f for f in os.listdir(IMAGES_FOLDER) if os.path.splitext(f)[1].lstrip('.').lower() in ALLOWED_EXTENSIONS])
+    com_arte = len([f for f in os.listdir(ARTES_FOLDER) if f.lower().endswith('.webp')])
+    return {'total_produtos': total, 'com_foto': com_foto, 'sem_foto': total - com_foto, 'com_arte': com_arte}
+
+
+def _status_tokens_cosmos():
+    """Estado atual da rotação de tokens do Cosmos + contadores acumulados desde o último
+    resumo enviado (zerados em enviar_resumo_diario_sistema após um envio bem-sucedido)."""
+    tokens = _lista_tokens_cosmos()
+    cfg = _ler_todas_config()
+    try:
+        indice_atual = int(cfg.get('COSMOS_TOKEN_INDEX_ATUAL', '0') or '0') % max(len(tokens), 1)
+    except ValueError:
+        indice_atual = 0
+    return {
+        'total_tokens': len(tokens),
+        'token_atual': (indice_atual + 1) if tokens else 0,
+        'sucessos': int(cfg.get('STATS_COSMOS_SUCESSOS', '0') or '0'),
+        'rotacoes': int(cfg.get('STATS_COSMOS_ROTACOES', '0') or '0'),
+    }
+
+
+def _enviar_email_resumo_diario(cfg, pendentes, stats, cosmos_status, cadastros_automaticos):
+    """Envia o resumo diário completo por e-mail via Resend (API HTTP, sem SMTP). Levanta
+    exceção em caso de falha (o chamador decide como registrar/logar)."""
+    api_key = cfg.get('RESEND_API_KEY', '').strip()
+    destinatarios = [d.strip() for d in cfg.get('RESUMO_DESTINATARIOS', '').split(',') if d.strip()]
+    remetente = cfg.get('RESEND_REMETENTE', '').strip() or 'Mupa Brain <onboarding@resend.dev>'
+    if not api_key or not destinatarios:
+        raise ValueError('Resend não configurado (API key ou destinatários ausentes)')
+
+    linhas_texto_pendentes = [
+        f"- {p['codbar']} | {p['descricao'] or '(produto não cadastrado)'} | {p['ocorrencias']}x | última tentativa: {p['ultima_ocorrencia']}"
+        for p in pendentes
+    ] or ['(nenhuma pendência)']
+    linhas_html_pendentes = "".join(
+        f"<tr><td style='padding:4px 10px;'>{p['codbar']}</td>"
+        f"<td style='padding:4px 10px;'>{p['descricao'] or '(produto não cadastrado)'}</td>"
+        f"<td style='padding:4px 10px; text-align:center;'>{p['ocorrencias']}</td>"
+        f"<td style='padding:4px 10px;'>{p['ultima_ocorrencia']}</td></tr>"
+        for p in pendentes
+    ) or "<tr><td colspan='4' style='padding:8px 10px; color:#666;'>Nenhuma pendência</td></tr>"
+
+    assunto = f"Mupa Brain - Resumo diário do sistema ({len(pendentes)} imagem(ns) pendente(s))"
+    corpo_texto = (
+        "Resumo diário do sistema Mupa Brain\n\n"
+        f"Catálogo: {stats['total_produtos']} produtos | {stats['com_foto']} com foto | {stats['sem_foto']} sem foto | {stats['com_arte']} com arte publicitária\n"
+        f"Cadastros automáticos desde o último resumo: {cadastros_automaticos}\n"
+        f"Cosmos: token #{cosmos_status['token_atual']} de {cosmos_status['total_tokens']} em uso | "
+        f"{cosmos_status['sucessos']} sucesso(s) e {cosmos_status['rotacoes']} rotação(ões) por cota esgotada desde o último resumo\n\n"
+        "Imagens de produto não encontradas (ainda não notificadas):\n" + "\n".join(linhas_texto_pendentes)
+    )
+    corpo_html = f"""
+    <h2 style="font-family:sans-serif;">Resumo diário do sistema — Mupa Brain</h2>
+    <table style="border-collapse:collapse; font-family:sans-serif; font-size:13px; margin-bottom:16px;">
+        <tr><td style="padding:4px 10px; color:#666;">Produtos no catálogo</td><td style="padding:4px 10px; font-weight:bold;">{stats['total_produtos']}</td></tr>
+        <tr><td style="padding:4px 10px; color:#666;">Com foto</td><td style="padding:4px 10px;">{stats['com_foto']}</td></tr>
+        <tr><td style="padding:4px 10px; color:#666;">Sem foto</td><td style="padding:4px 10px;">{stats['sem_foto']}</td></tr>
+        <tr><td style="padding:4px 10px; color:#666;">Com arte publicitária</td><td style="padding:4px 10px;">{stats['com_arte']}</td></tr>
+        <tr><td style="padding:4px 10px; color:#666;">Cadastros automáticos (desde o último resumo)</td><td style="padding:4px 10px;">{cadastros_automaticos}</td></tr>
+        <tr><td style="padding:4px 10px; color:#666;">Cosmos — token em uso</td><td style="padding:4px 10px;">#{cosmos_status['token_atual']} de {cosmos_status['total_tokens']}</td></tr>
+        <tr><td style="padding:4px 10px; color:#666;">Cosmos — sucessos / rotações por cota (desde o último resumo)</td><td style="padding:4px 10px;">{cosmos_status['sucessos']} / {cosmos_status['rotacoes']}</td></tr>
+    </table>
+    <h3 style="font-family:sans-serif;">Imagens de produto não encontradas ({len(pendentes)})</h3>
+    <table style="border-collapse:collapse; font-family:sans-serif; font-size:13px;">
+        <tr style="background:#f1f1f1;"><th style="padding:4px 10px; text-align:left;">EAN</th>
+        <th style="padding:4px 10px; text-align:left;">Descrição</th>
+        <th style="padding:4px 10px;">Ocorrências</th>
+        <th style="padding:4px 10px; text-align:left;">Última tentativa (UTC)</th></tr>
+        {linhas_html_pendentes}
+    </table>
+    """
+
+    resposta = requests.post(
+        'https://api.resend.com/emails',
+        headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+        json={
+            'from': remetente,
+            'to': destinatarios,
+            'subject': assunto,
+            'html': corpo_html,
+            'text': corpo_texto,
+        },
+        timeout=20,
+    )
+    if resposta.status_code >= 400:
+        raise ValueError(f"Resend retornou HTTP {resposta.status_code}: {resposta.text[:300]}")
+
+
+def _enviar_whatsapp_resumo_diario(cfg, pendentes, stats, cosmos_status, cadastros_automaticos):
+    """Envia um resumo diário curto por WhatsApp via Z-API ou Evolution API (gateways
+    self-hosted comuns no Brasil, ambos recebem um POST simples com token/instância). Formato
+    ainda não testado contra uma conta real — ajustar o corpo/endpoint aqui se o provedor
+    específico usar um contrato diferente. Levanta exceção em caso de falha."""
+    base_url = cfg.get('WHATSAPP_BASE_URL', '').strip().rstrip('/')
+    instancia = cfg.get('WHATSAPP_INSTANCE', '').strip()
+    token = cfg.get('WHATSAPP_TOKEN', '').strip()
+    numero = cfg.get('WHATSAPP_NUMERO_DESTINO', '').strip()
+    provedor = cfg.get('WHATSAPP_PROVEDOR', 'zapi').strip()
+    if not base_url or not token or not numero:
+        raise ValueError('WhatsApp não configurado (URL, token ou número destino ausentes)')
+
+    mensagem = (
+        "*Mupa Brain* - Resumo diário\n\n"
+        f"Catálogo: {stats['total_produtos']} produtos ({stats['com_foto']} com foto, {stats['com_arte']} com arte)\n"
+        f"Cadastros automáticos: {cadastros_automaticos}\n"
+        f"Cosmos: token #{cosmos_status['token_atual']}/{cosmos_status['total_tokens']} — {cosmos_status['sucessos']} sucesso(s), {cosmos_status['rotacoes']} rotação(ões)\n"
+        f"Imagens não encontradas pendentes: {len(pendentes)}"
+    )
+
+    if provedor == 'evolution':
+        url = f"{base_url}/message/sendText/{instancia}"
+        headers = {'apikey': token, 'Content-Type': 'application/json'}
+        payload = {'number': numero, 'text': mensagem}
+    else:  # zapi (padrão)
+        url = f"{base_url}/instances/{instancia}/token/{token}/send-text"
+        headers = {'Content-Type': 'application/json'}
+        payload = {'phone': numero, 'message': mensagem}
+
+    resposta = requests.post(url, json=payload, headers=headers, timeout=20)
+    resposta.raise_for_status()
+
+
+def enviar_resumo_diario_sistema():
+    """Monta e envia (por e-mail e/ou WhatsApp, conforme os canais ativos) o resumo diário do
+    sistema: estatísticas gerais do catálogo, status da rotação de tokens do Cosmos, cadastros
+    automáticos via fontes externas e as imagens de produto ainda não encontradas / não
+    notificadas. Ao contrário da versão anterior (só "imagens não encontradas"), agora sempre
+    envia quando algum canal está ativo — mesmo sem pendências de imagem — porque o resumo
+    também carrega as estatísticas gerais, que são úteis como um "heartbeat" diário do sistema.
+    Os contadores (Cosmos, cadastros automáticos) são zerados após um envio bem-sucedido: cada
+    resumo reporta o que aconteceu desde o resumo anterior, não o total histórico acumulado.
+    Sempre roda dentro de um app_context (chamada tanto pelo agendador em thread quanto pela
+    rota de teste manual)."""
+    cfg = _ler_todas_config()
+
+    if cfg.get('RESUMO_ATIVO', 'false') != 'true' and cfg.get('WHATSAPP_ATIVO', 'false') != 'true':
+        return {'enviado': False, 'motivo': 'nenhum canal ativo', 'total_nao_encontradas': 0, 'erros': []}
+
+    pendentes_query = (
+        db.session.query(
+            HistoricoBuscaImagem.codbar,
+            db.func.count(HistoricoBuscaImagem.id),
+            db.func.max(HistoricoBuscaImagem.criado_em),
+        )
+        .filter(HistoricoBuscaImagem.encontrado == False, HistoricoBuscaImagem.notificado_em.is_(None))
+        .group_by(HistoricoBuscaImagem.codbar)
+        .all()
+    )
+    codbars = [codbar for codbar, _, _ in pendentes_query]
+    descricoes = {p.codbar: p.description for p in Produto.query.filter(Produto.codbar.in_(codbars)).all()} if codbars else {}
+    pendentes = [{
+        'codbar': codbar,
+        'descricao': descricoes.get(codbar),
+        'ocorrencias': total,
+        'ultima_ocorrencia': ultima.strftime('%d/%m/%Y %H:%M'),
+    } for codbar, total, ultima in pendentes_query]
+
+    stats = _estatisticas_gerais()
+    cosmos_status = _status_tokens_cosmos()
+    cadastros_automaticos = int(cfg.get('STATS_CADASTROS_AUTOMATICOS', '0') or '0')
+
+    algum_sucesso = False
+    erros = []
+
+    if cfg.get('RESUMO_ATIVO', 'false') == 'true':
+        try:
+            _enviar_email_resumo_diario(cfg, pendentes, stats, cosmos_status, cadastros_automaticos)
+            algum_sucesso = True
+            logging.info("Resumo diário do sistema enviado por e-mail.")
+        except Exception as e:
+            erros.append(f'email: {e}')
+            logging.error(f"Falha ao enviar resumo diário por e-mail: {e}")
+
+    if cfg.get('WHATSAPP_ATIVO', 'false') == 'true':
+        try:
+            _enviar_whatsapp_resumo_diario(cfg, pendentes, stats, cosmos_status, cadastros_automaticos)
+            algum_sucesso = True
+            logging.info("Resumo diário do sistema enviado por WhatsApp.")
+        except Exception as e:
+            erros.append(f'whatsapp: {e}')
+            logging.error(f"Falha ao enviar resumo diário por WhatsApp: {e}")
+
+    if algum_sucesso:
+        agora = datetime.utcnow()
+        if codbars:
+            db.session.query(HistoricoBuscaImagem).filter(
+                HistoricoBuscaImagem.codbar.in_(codbars),
+                HistoricoBuscaImagem.encontrado == False,
+                HistoricoBuscaImagem.notificado_em.is_(None),
+            ).update({HistoricoBuscaImagem.notificado_em: agora}, synchronize_session=False)
+        set_config('STATS_COSMOS_SUCESSOS', '0')
+        set_config('STATS_COSMOS_ROTACOES', '0')
+        set_config('STATS_CADASTROS_AUTOMATICOS', '0')
+        db.session.commit()
+
+    return {'enviado': algum_sucesso, 'total_nao_encontradas': len(pendentes), 'erros': erros}
+
+
+@app.route('/admin/enviar-resumo-diario', methods=['POST'])
+@jwt_required()
+def admin_enviar_resumo_diario():
+    """Dispara manualmente o envio do resumo diário do sistema — útil para testar a
+    configuração de SMTP/WhatsApp sem esperar o horário agendado."""
+    try:
+        resultado = enviar_resumo_diario_sistema()
+    except Exception as e:
+        logging.error(f"Erro ao enviar resumo diário manual: {e}")
+        return jsonify({'message': f'Erro ao enviar resumo: {e}'}), 500
+
+    if resultado.get('motivo') == 'nenhum canal ativo':
+        return jsonify({'message': 'Nenhum canal de notificação está ativo (e-mail ou WhatsApp).', **resultado}), 400
+    if not resultado['enviado']:
+        return jsonify({'message': 'Falha ao enviar em todos os canais ativos.', **resultado}), 500
+    return jsonify({'message': f"Resumo enviado ({resultado['total_nao_encontradas']} imagem(ns) pendente(s)).", **resultado}), 200
+
+
+def _iniciar_agendador_resumo():
+    """Thread em segundo plano que dispara enviar_resumo_diario_sistema() uma vez por dia, no
+    horário configurado em RESUMO_HORARIO (formato 'HH:MM', padrão 08:00). Roda indefinidamente;
+    erros de uma execução não impedem a próxima (loop nunca morre por exceção)."""
+    def _loop():
+        while True:
+            try:
+                with app.app_context():
+                    horario = _ler_todas_config().get('RESUMO_HORARIO', '08:00').strip() or '08:00'
+                    hora, minuto = (int(x) for x in horario.split(':'))
+                agora = datetime.now()
+                proxima = agora.replace(hour=hora, minute=minuto, second=0, microsecond=0)
+                if proxima <= agora:
+                    proxima += timedelta(days=1)
+                time.sleep((proxima - agora).total_seconds())
+                with app.app_context():
+                    enviar_resumo_diario_sistema()
+            except Exception as e:
+                logging.error(f"Erro no loop do agendador de resumo: {e}")
+                time.sleep(300)
+
+    threading.Thread(target=_loop, daemon=True).start()
+
+
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
+    _iniciar_agendador_resumo()
     app.run('0.0.0.0', port=5050, debug=True, threaded=True)

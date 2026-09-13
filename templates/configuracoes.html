@@ -458,6 +458,10 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
                 Estatísticas
             </button>
+            <button class="nav-tab" data-tab="historico" data-title="Histórico de Buscas" data-subtitle="Todas as consultas de imagem, encontradas ou não">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                Histórico
+            </button>
 
             <span class="nav-section-label">Desenvolvedor</span>
             <button class="nav-tab" data-tab="apitest" data-title="Testar API" data-subtitle="Envie requisições para qualquer rota da API e veja a resposta">
@@ -531,6 +535,97 @@
                     <p style="font-size:0.76rem; color:var(--muted); margin-top:0.75rem; margin-bottom:0;">
                         Usada para gerar as artes publicitárias (gemini-2.5-flash-image) na aba Produtos com Foto.
                     </p>
+                </div>
+
+                <div class="card">
+                    <h2>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-3 3m-6.34 6.34a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5M19 4l-3.5 3.5"/></svg>
+                        Tokens Cosmos (Bluesoft) <span class="badge">COSMOS_API_TOKENS</span>
+                    </h2>
+                    <div id="alert-cosmos"></div>
+                    <div class="form-row">
+                        <label for="cosmos-tokens">Um token por linha — o plano free tem cota mensal por token, então o sistema usa o primeiro até esgotar a cota (HTTP 401/402/403/429) e passa para o próximo automaticamente</label>
+                        <textarea id="cosmos-tokens" rows="4" placeholder="token_1&#10;token_2&#10;token_3" autocomplete="off" style="font-family:&quot;SF Mono&quot;,Consolas,monospace; font-size:0.82rem; padding:0.6rem 0.75rem; border:1px solid var(--border); border-radius:8px; resize:vertical; width:100%; box-sizing:border-box;"></textarea>
+                    </div>
+                    <div class="form-row" style="flex-direction:row; gap:0.6rem; align-items:center; flex-wrap:wrap;">
+                        <button class="btn btn-primary" id="btn-save-cosmos">Salvar Tokens</button>
+                        <span style="font-size:0.82rem; color:var(--muted); margin-left:0.25rem;" id="cosmos-status-text">Carregando...</span>
+                    </div>
+                    <p style="font-size:0.76rem; color:var(--muted); margin-top:0.75rem; margin-bottom:0;">
+                        Sem nenhum token configurado, o cadastro automático continua funcionando via Open Food Facts e Zaffari (o Cosmos só é pulado).
+                    </p>
+                </div>
+
+                <div class="card">
+                    <h2>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M22 6l-10 7L2 6"/></svg>
+                        Notificações — Resumo diário do sistema
+                    </h2>
+                    <div id="alert-notificacoes"></div>
+                    <p style="font-size:0.82rem; color:var(--muted); margin-top:0; margin-bottom:1rem;">
+                        Um resumo diário com estatísticas gerais do catálogo, status da rotação de tokens do Cosmos, cadastros automáticos e imagens de produto ainda não encontradas (registradas na aba <b>Histórico</b>).
+                    </p>
+
+                    <div class="toggle-row">
+                        <div class="toggle-label">
+                            <span class="name">Resumo diário por e-mail</span>
+                            <span class="desc">Envia (no horário abaixo) o resumo completo do sistema.</span>
+                        </div>
+                        <div class="toggle" id="toggle-resumo-ativo" data-key="RESUMO_ATIVO"></div>
+                    </div>
+                    <div class="form-row">
+                        <label for="notif-horario">Horário do envio diário (UTC do servidor)</label>
+                        <input type="time" id="notif-horario" value="08:00" style="max-width:160px;">
+                    </div>
+                    <div class="form-row">
+                        <label for="notif-resend-key">Chave de API do Resend</label>
+                        <input type="password" id="notif-resend-key" placeholder="re_..." autocomplete="off">
+                    </div>
+                    <div class="form-row">
+                        <label for="notif-resend-remetente">Remetente (precisa ser de um domínio verificado no Resend, ou use o padrão de testes)</label>
+                        <input type="text" id="notif-resend-remetente" placeholder="Mupa Brain <alertas@mupa.app> (padrão: onboarding@resend.dev)">
+                    </div>
+                    <div class="form-row">
+                        <label for="notif-resumo-destinatarios">Destinatários (separados por vírgula)</label>
+                        <input type="text" id="notif-resumo-destinatarios" placeholder="fulano@mupa.app, ciclano@mupa.app">
+                    </div>
+
+                    <hr style="border:none; border-top:1px solid var(--border); margin:1.25rem 0;">
+
+                    <div class="toggle-row">
+                        <div class="toggle-label">
+                            <span class="name">Resumo diário por WhatsApp</span>
+                            <span class="desc">Via Z-API ou Evolution API (gateways self-hosted). Formato genérico, ajustar se necessário após o primeiro teste.</span>
+                        </div>
+                        <div class="toggle" id="toggle-whatsapp-ativo" data-key="WHATSAPP_ATIVO"></div>
+                    </div>
+                    <div class="form-row">
+                        <label for="notif-whatsapp-provedor">Provedor</label>
+                        <select id="notif-whatsapp-provedor" style="max-width:220px;">
+                            <option value="zapi">Z-API</option>
+                            <option value="evolution">Evolution API</option>
+                        </select>
+                    </div>
+                    <div class="form-row">
+                        <label for="notif-whatsapp-base-url">URL base do gateway</label>
+                        <input type="text" id="notif-whatsapp-base-url" placeholder="https://api.z-api.io">
+                    </div>
+                    <div class="form-row">
+                        <label for="notif-whatsapp-instance">Instância / ID</label>
+                        <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+                            <input type="text" id="notif-whatsapp-instance" placeholder="ID da instância" style="flex:1; min-width:160px;">
+                            <input type="password" id="notif-whatsapp-token" placeholder="Token" autocomplete="off" style="flex:1; min-width:160px;">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <label for="notif-whatsapp-numero">Número de destino (com DDI, ex: 5551999998888)</label>
+                        <input type="text" id="notif-whatsapp-numero" placeholder="5551999998888">
+                    </div>
+
+                    <div class="form-row" style="flex-direction:row; gap:0.6rem; align-items:center; flex-wrap:wrap; margin-top:0.5rem;">
+                        <button class="btn btn-primary" id="btn-save-notificacoes">Salvar configurações</button>
+                        <button class="btn btn-secondary" id="btn-testar-resumo">Enviar resumo agora (teste)</button>
+                    </div>
                 </div>
 
                 <div class="card">
@@ -621,6 +716,9 @@
                                         <button class="btn btn-secondary btn-sm" id="detail-btn-buscar-imagem">Buscar imagem</button>
                                         <button class="btn btn-primary btn-sm" id="detail-btn-gerar-arte">Gerar arte</button>
                                         <button class="btn btn-secondary btn-sm" id="detail-btn-ver-arte" style="display:none;">Ver arte em tela cheia</button>
+                                        <button class="btn btn-secondary btn-sm" id="detail-btn-trocar-imagem">Enviar/Trocar imagem</button>
+                                        <input type="file" id="detail-input-imagem" accept="image/png,image/jpeg,image/webp" style="display:none;">
+                                        <button class="btn btn-danger btn-sm" id="detail-btn-excluir-imagem">Excluir imagem</button>
                                     </div>
 
                                     <div class="card" style="margin:0; background:#fafbff;">
@@ -683,6 +781,42 @@
                         <thead><tr><th>#</th><th>Categoria</th><th>Produtos</th></tr></thead>
                         <tbody><tr><td colspan="3" class="empty-state">Carregando...</td></tr></tbody>
                     </table>
+                </div>
+            </div>
+
+            <!-- ===== TAB: HISTÓRICO DE BUSCAS ===== -->
+            <div id="tab-historico" class="tab-content" style="display:none;">
+                <div class="card">
+                    <h2>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                        Histórico de Buscas de Imagem <span class="badge" id="historico-count-badge">carregando...</span>
+                    </h2>
+                    <div id="alert-historico"></div>
+                    <div class="form-row" style="flex-direction:row; gap:0.5rem; flex-wrap:wrap; align-items:flex-end; margin-bottom:0.85rem;">
+                        <div style="flex:1; min-width:180px;">
+                            <label for="historico-codbar" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">Filtrar por EAN</label>
+                            <input type="text" id="historico-codbar" placeholder="Ex: 7896116900050" autocomplete="off">
+                        </div>
+                        <div>
+                            <label for="historico-status" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">Status</label>
+                            <select id="historico-status">
+                                <option value="todos">Todos</option>
+                                <option value="nao_encontrado">Não encontrados</option>
+                                <option value="encontrado">Encontrados</option>
+                            </select>
+                        </div>
+                        <button class="btn btn-primary" id="btn-historico-filtrar">Filtrar</button>
+                    </div>
+                    <div id="historico-list" style="overflow-x:auto;">
+                        <div class="empty-state">Carregando histórico...</div>
+                    </div>
+                    <div id="historico-pagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:0.85rem; font-size:0.82rem; color:var(--muted);">
+                        <span id="historico-info">—</span>
+                        <span style="display:flex; gap:0.4rem;">
+                            <button class="btn btn-secondary btn-sm" id="btn-historico-prev">← Anterior</button>
+                            <button class="btn btn-secondary btn-sm" id="btn-historico-next">Próximo →</button>
+                        </span>
+                    </div>
                 </div>
             </div>
 
@@ -846,6 +980,7 @@ $$('.nav-tab').forEach(btn => {
         if (tab === 'estats') loadEstats();
         if (tab === 'consulta') loadConsulta(1);
         if (tab === 'config') loadConfig();
+        if (tab === 'historico') loadHistorico(1);
 
         closeSidebarMobile();
     });
@@ -873,9 +1008,27 @@ async function loadConfig() {
 
         $('#openai-key').value = cfg.openai_key_full || '';
         $('#gemini-key').value = cfg.gemini_key_full || '';
+        $('#cosmos-tokens').value = cfg.cosmos_tokens_full || '';
+        const cosmosStatus = cfg.cosmos_status || {};
+        $('#cosmos-status-text').textContent = cosmosStatus.total_tokens
+            ? `Token #${cosmosStatus.token_atual} de ${cosmosStatus.total_tokens} em uso · ${cosmosStatus.sucessos} sucesso(s) e ${cosmosStatus.rotacoes} rotação(ões) desde o último resumo`
+            : 'Nenhum token configurado — cadastro automático seguirá via Open Food Facts / Zaffari';
 
         setToggle('toggle-use-openai', cfg.use_openai);
         setToggle('toggle-rembg', cfg.rembg_enabled);
+
+        const notif = cfg.notificacoes || {};
+        $('#notif-horario').value = notif.RESUMO_HORARIO || '08:00';
+        $('#notif-resend-key').value = notif.RESEND_API_KEY || '';
+        $('#notif-resend-remetente').value = notif.RESEND_REMETENTE || '';
+        $('#notif-resumo-destinatarios').value = notif.RESUMO_DESTINATARIOS || '';
+        $('#notif-whatsapp-provedor').value = notif.WHATSAPP_PROVEDOR || 'zapi';
+        $('#notif-whatsapp-base-url').value = notif.WHATSAPP_BASE_URL || '';
+        $('#notif-whatsapp-instance').value = notif.WHATSAPP_INSTANCE || '';
+        $('#notif-whatsapp-token').value = notif.WHATSAPP_TOKEN || '';
+        $('#notif-whatsapp-numero').value = notif.WHATSAPP_NUMERO_DESTINO || '';
+        setToggle('toggle-resumo-ativo', notif.RESUMO_ATIVO === 'true');
+        setToggle('toggle-whatsapp-ativo', notif.WHATSAPP_ATIVO === 'true');
 
         updateOpenAIStatus(cfg.openai_key_full || '');
         updateGeminiStatus(cfg.gemini_key_full || '');
@@ -1067,6 +1220,135 @@ $$('.toggle').forEach(tog => {
     });
 });
 
+$('#btn-save-cosmos').addEventListener('click', async () => {
+    const tokens = $('#cosmos-tokens').value;
+    try {
+        const res = await fetch('/configuracoes', {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ action: 'save_cosmos_tokens', cosmos_tokens: tokens })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.saved) throw new Error(data.message || `HTTP ${res.status}`);
+        showAlert('alert-cosmos', data.message || 'Tokens salvos com sucesso!', 'success');
+        $('#cosmos-status-text').textContent = data.total_tokens > 0
+            ? `${data.total_tokens} token(ns) configurado(s), começando pelo #1`
+            : 'Nenhum token configurado — cadastro automático seguirá via Open Food Facts / Zaffari';
+    } catch (e) {
+        showAlert('alert-cosmos', `Erro: ${e.message}`, 'error');
+    }
+});
+
+$('#btn-save-notificacoes').addEventListener('click', async () => {
+    try {
+        const body = new URLSearchParams({
+            action: 'save_notificacoes',
+            RESUMO_HORARIO: $('#notif-horario').value || '08:00',
+            RESEND_API_KEY: $('#notif-resend-key').value.trim(),
+            RESEND_REMETENTE: $('#notif-resend-remetente').value.trim(),
+            RESUMO_DESTINATARIOS: $('#notif-resumo-destinatarios').value.trim(),
+            WHATSAPP_PROVEDOR: $('#notif-whatsapp-provedor').value,
+            WHATSAPP_BASE_URL: $('#notif-whatsapp-base-url').value.trim(),
+            WHATSAPP_INSTANCE: $('#notif-whatsapp-instance').value.trim(),
+            WHATSAPP_TOKEN: $('#notif-whatsapp-token').value,
+            WHATSAPP_NUMERO_DESTINO: $('#notif-whatsapp-numero').value.trim(),
+        });
+        const res = await fetch('/configuracoes', {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/x-www-form-urlencoded' },
+            body,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.saved) throw new Error(data.message || `HTTP ${res.status}`);
+        showAlert('alert-notificacoes', 'Configurações salvas com sucesso!', 'success');
+    } catch (e) {
+        showAlert('alert-notificacoes', `Erro: ${e.message}`, 'error');
+    }
+});
+
+$('#btn-testar-resumo').addEventListener('click', async () => {
+    const btn = $('#btn-testar-resumo');
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Enviando...';
+    try {
+        const res = await fetch('/admin/enviar-resumo-diario', { method: 'POST', headers: authHeaders() });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+        showAlert('alert-notificacoes', data.message, 'success');
+    } catch (e) {
+        showAlert('alert-notificacoes', `Erro: ${e.message}`, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+    }
+});
+
+// ===== TAB: HISTÓRICO DE BUSCAS =====
+let historicoPage = 1;
+
+async function loadHistorico(page = 1) {
+    historicoPage = page;
+    try {
+        const params = new URLSearchParams({
+            page, per_page: 20,
+            status: $('#historico-status').value || 'todos',
+        });
+        const codbar = ($('#historico-codbar').value || '').trim();
+        if (codbar) params.append('codbar', codbar);
+
+        const res = await fetch('/admin/historico-buscas?' + params.toString(), { headers: authHeaders() });
+        if (!res.ok) {
+            const errBody = await res.json().catch(() => ({}));
+            throw new Error(errBody.message || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+
+        $('#historico-count-badge').textContent = `${data.total} registro${data.total === 1 ? '' : 's'}`;
+        $('#historico-info').textContent = data.total > 0
+            ? `Página ${data.page} de ${data.pages} · ${data.total} registro(s)`
+            : 'Nenhum registro encontrado';
+
+        if (!data.registros.length) {
+            $('#historico-list').innerHTML = '<div class="empty-state">Nenhum registro encontrado.</div>';
+            return;
+        }
+
+        const linhas = data.registros.map(r => {
+            const dataFmt = new Date(r.criado_em).toLocaleString('pt-BR');
+            const statusBadge = r.encontrado
+                ? `<span class="badge" style="background:#dcfce7; color:#166534;">Encontrado${r.origem ? ' · ' + escHtml(r.origem) : ''}</span>`
+                : `<span class="badge" style="background:#fee2e2; color:#991b1b;">Não encontrado</span>`;
+            const viaBadge = r.via === 'admin' ? 'Painel (manual)' : 'Terminal (app)';
+            const notifBadge = !r.encontrado
+                ? (r.notificado ? '<span style="color:var(--muted);">Já notificado</span>' : '<span style="color:var(--warn);">Pendente</span>')
+                : '—';
+            return `<tr>
+                <td><span class="ean">${escHtml(r.codbar)}</span></td>
+                <td>${escHtml(r.descricao || '—')}</td>
+                <td>${statusBadge}</td>
+                <td>${viaBadge}</td>
+                <td>${notifBadge}</td>
+                <td style="white-space:nowrap; color:var(--muted); font-size:0.8rem;">${dataFmt}</td>
+            </tr>`;
+        }).join('');
+
+        $('#historico-list').innerHTML = `<table>
+            <thead><tr><th>EAN</th><th>Descrição</th><th>Status</th><th>Via</th><th>Notificação</th><th>Data/hora</th></tr></thead>
+            <tbody>${linhas}</tbody>
+        </table>`;
+    } catch (e) {
+        $('#historico-list').innerHTML = `<div class="empty-state">Erro ao carregar histórico.</div>`;
+        showAlert('alert-historico', `Erro: ${e.message}`, 'error');
+    }
+}
+
+$('#btn-historico-filtrar').addEventListener('click', () => loadHistorico(1));
+$('#historico-codbar').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadHistorico(1); });
+$('#historico-status').addEventListener('change', () => loadHistorico(1));
+$('#btn-historico-prev').addEventListener('click', () => { if (historicoPage > 1) loadHistorico(historicoPage - 1); });
+$('#btn-historico-next').addEventListener('click', () => loadHistorico(historicoPage + 1));
+
 // ===== TAB: CONSULTA RÁPIDA (catálogo unificado: busca + navegação + arte + detalhes) =====
 let consultaPage = 1;
 let consultaQ = '';
@@ -1101,10 +1383,36 @@ function renderConsultaTable(data) {
 
     badge.textContent = `${(data.total || 0).toLocaleString('pt-BR')} produtos`;
     if (!data.produtos || data.produtos.length === 0) {
-        list.innerHTML = `<div class="empty-state">Nenhum produto encontrado${consultaQ ? ' para "' + escHtml(consultaQ) + '"' : ''}.</div>`;
+        const pareceEan = /^\d{8,14}$/.test(consultaQ);
+        list.innerHTML = `<div class="empty-state">
+            Nenhum produto encontrado${consultaQ ? ' para "' + escHtml(consultaQ) + '"' : ''}.
+            ${pareceEan ? `<div style="margin-top:0.85rem;">
+                <button class="btn btn-primary btn-sm" id="btn-cadastrar-via-cosmos" data-ean="${escHtml(consultaQ)}">Cadastrar produto (buscar em Cosmos / Open Food Facts / Zaffari)</button>
+            </div>` : ''}
+        </div>`;
         if (info) info.textContent = 'Página 0 de 0';
         if (prevBtn) prevBtn.disabled = true;
         if (nextBtn) nextBtn.disabled = true;
+        const cadastrarBtn = $('#btn-cadastrar-via-cosmos');
+        if (cadastrarBtn) {
+            cadastrarBtn.addEventListener('click', async () => {
+                const ean = cadastrarBtn.dataset.ean;
+                const originalHtml = cadastrarBtn.innerHTML;
+                cadastrarBtn.disabled = true;
+                cadastrarBtn.innerHTML = `<span class="spinner"></span> Buscando...`;
+                try {
+                    const res = await fetch(`/produto/${encodeURIComponent(ean)}`, { headers: authHeaders() });
+                    const respData = await res.json().catch(() => ({}));
+                    if (!res.ok) throw new Error(respData.message || `HTTP ${res.status}`);
+                    toast(`Produto cadastrado via ${respData.fonte || 'fonte externa'}: ${respData.description || ean}`, 'success');
+                    loadConsulta(1);
+                } catch (e2) {
+                    toast('Não foi possível cadastrar: ' + e2.message, 'error');
+                    cadastrarBtn.disabled = false;
+                    cadastrarBtn.innerHTML = originalHtml;
+                }
+            });
+        }
         return;
     }
 
@@ -1280,6 +1588,66 @@ async function openDetailModal(ean) {
         } finally {
             buscarImgBtn.disabled = false;
             buscarImgBtn.innerHTML = originalHtml;
+        }
+    };
+
+    const trocarImgBtn = $('#detail-btn-trocar-imagem');
+    const inputImagem = $('#detail-input-imagem');
+    trocarImgBtn.onclick = () => inputImagem.click();
+    inputImagem.value = '';
+    inputImagem.onchange = async () => {
+        const file = inputImagem.files[0];
+        if (!file) return;
+        const originalHtml = trocarImgBtn.innerHTML;
+        trocarImgBtn.disabled = true;
+        trocarImgBtn.innerHTML = `<span class="spinner"></span> Enviando...`;
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            const res = await fetch(`/upload-imagem-produto/${encodeURIComponent(ean)}`, {
+                method: 'POST',
+                headers: authHeaders(),
+                body: formData,
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+            toast('Imagem enviada com sucesso', 'success');
+            if (detailEan === ean) {
+                $('#detail-modal-image').innerHTML = `<img src="${escHtml(data.path ? '/' + data.path.replace(/\\/g, '/') : '')}?t=${Date.now()}" alt="Foto do produto">`;
+            }
+            loadConsulta(consultaPage);
+        } catch (e2) {
+            toast('Erro ao enviar imagem: ' + e2.message, 'error');
+        } finally {
+            trocarImgBtn.disabled = false;
+            trocarImgBtn.innerHTML = originalHtml;
+            inputImagem.value = '';
+        }
+    };
+
+    const excluirImgBtn = $('#detail-btn-excluir-imagem');
+    excluirImgBtn.onclick = async () => {
+        if (!confirm(`Excluir a foto do produto ${ean}? A arte publicitária já gerada (se houver) não é apagada por essa ação.`)) return;
+        const originalHtml = excluirImgBtn.innerHTML;
+        excluirImgBtn.disabled = true;
+        excluirImgBtn.innerHTML = `<span class="spinner"></span> Excluindo...`;
+        try {
+            const res = await fetch(`/deletar-imagem-produto/${encodeURIComponent(ean)}`, {
+                method: 'DELETE',
+                headers: authHeaders(),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+            toast('Imagem excluída com sucesso', 'success');
+            if (detailEan === ean) {
+                $('#detail-modal-image').innerHTML = `<span style="width:40px;height:40px;color:#94a3b8;display:inline-flex;">${CAMERA_ICON}</span>`;
+            }
+            loadConsulta(consultaPage);
+        } catch (e2) {
+            toast('Erro ao excluir imagem: ' + e2.message, 'error');
+        } finally {
+            excluirImgBtn.disabled = false;
+            excluirImgBtn.innerHTML = originalHtml;
         }
     };
 
