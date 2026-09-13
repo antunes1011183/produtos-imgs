@@ -4,6 +4,7 @@ import sqlite3
 import base64
 import threading
 import time
+import queue
 import requests
 from io import StringIO, BytesIO
 from io import StringIO
@@ -539,7 +540,7 @@ def obter_imagem_produto(codbar):
         logging.info(f"Imagem encontrada localmente para o produto {codbar}: {img_url}")
         arte_url = _arte_url(codbar)
         if not arte_url:
-            _disparar_geracao_arte_em_background(codbar, img_path)
+            _enfileirar_geracao_arte(codbar, img_path)
         _registrar_busca_imagem(codbar, True, origem='local', via='terminal')
         return jsonify({'imagem_url': img_url, 'imagem_url_arte': arte_url}), 200
 
@@ -553,7 +554,7 @@ def obter_imagem_produto(codbar):
             imagem_url = resultado[0].get_json().get('imagem_url')
             novo_img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
             if novo_img_path:
-                _disparar_geracao_arte_em_background(codbar, novo_img_path)
+                _enfileirar_geracao_arte(codbar, novo_img_path)
             _registrar_busca_imagem(codbar, True, origem=fonte, via='terminal')
             return jsonify({'imagem_url': imagem_url, 'imagem_url_arte': None}), 200
 
@@ -561,32 +562,79 @@ def obter_imagem_produto(codbar):
     return jsonify({'message': 'Imagem não encontrada em nenhuma fonte (local, Bing, Google, Zaffari)'}), 404
 
 
-def _disparar_geracao_arte_em_background(codbar, img_path):
-    """Gera a arte publicitária em uma thread separada, sem atrasar a resposta de
-    /produto-imagem/<codbar>. Idempotente (não dispara de novo se já existir ou já estiver
-    em andamento) e silencioso quando faltar produto cadastrado ou chave Gemini — a foto crua
-    continua sendo servida normalmente de qualquer forma."""
-    if codbar in _gerando_arte_em_andamento or _arte_url(codbar):
-        return
+_fila_arte = queue.Queue()
+
+
+class _JobArte:
+    """Uma tarefa de geração de arte enfileirada. `evento` só é criado quando o chamador
+    precisa aguardar o resultado (admin_gerar_arte, gerar_arte_publica) — o disparo em
+    background feito por obter_imagem_produto não espera, só enfileira e segue servindo a
+    foto crua normalmente."""
+    __slots__ = ('codbar', 'img_path', 'evento', 'erro')
+
+    def __init__(self, codbar, img_path, aguardar):
+        self.codbar = codbar
+        self.img_path = img_path
+        self.evento = threading.Event() if aguardar else None
+        self.erro = None
+
+
+def _enfileirar_geracao_arte(codbar, img_path, aguardar=False, forcar=False):
+    """Coloca a geração de arte na fila em vez de disparar na hora. Com vários dispositivos em
+    lojas/clientes diferentes consultando ao mesmo tempo, gerar tudo em paralelo estourava o
+    rate limit do Gemini (429 RESOURCE_EXHAUSTED, já visto em produção) — um único worker
+    (_worker_fila_arte) processa a fila em sequência, então nunca há mais de uma chamada ao
+    Gemini em andamento por vez, custe o que custar em latência sob carga.
+
+    `forcar=True` ignora a checagem de "arte já existe" (usado pelo botão de regenerar do
+    admin). `aguardar=True` bloqueia até o job específico terminar e retorna o job para o
+    chamador checar `job.erro` — usado pelas rotas que precisam responder com o resultado
+    (admin_gerar_arte, gerar_arte_publica); sem isso, é fire-and-forget (retorna o job já
+    enfileirado, mas ninguém espera por ele).
+
+    Retorna None quando não há nada a fazer (já em andamento, arte já existe e não é forçado,
+    sem chave Gemini configurada, ou produto não cadastrado)."""
+    if codbar in _gerando_arte_em_andamento:
+        return None
+    if not forcar and _arte_url(codbar):
+        return None
     if not _ler_todas_config().get('GEMINI_API_KEY', '').strip():
-        return
-    produto = Produto.query.filter_by(codbar=codbar).first()
-    if not produto:
-        return
+        return None
+    if not Produto.query.filter_by(codbar=codbar).first():
+        return None
 
     _gerando_arte_em_andamento.add(codbar)
+    job = _JobArte(codbar, img_path, aguardar)
+    _fila_arte.put(job)
+    return job
 
-    def _run():
-        with app.app_context():
-            try:
-                gerar_arte_publicitaria(produto, img_path)
-                logging.info(f"Arte publicitária gerada automaticamente para {codbar}")
-            except Exception as e:
-                logging.error(f"Erro ao gerar arte automática para {codbar}: {e}")
-            finally:
-                _gerando_arte_em_andamento.discard(codbar)
 
-    threading.Thread(target=_run, daemon=True).start()
+def _worker_fila_arte():
+    """Processa a fila de geração de arte um item por vez, para sempre, numa única thread —
+    é essa serialização que garante no máximo uma chamada ao Gemini em andamento simultânea,
+    independente de quantos dispositivos estejam consultando produtos diferentes ao mesmo
+    tempo. Refaz a consulta do produto aqui dentro (em vez de receber o objeto já carregado)
+    para não reaproveitar uma instância do SQLAlchemy entre threads/sessões diferentes."""
+    while True:
+        job = _fila_arte.get()
+        try:
+            with app.app_context():
+                produto = Produto.query.filter_by(codbar=job.codbar).first()
+                if produto:
+                    gerar_arte_publicitaria(produto, job.img_path)
+                    logging.info(f"Arte publicitária gerada (fila) para {job.codbar}")
+        except Exception as e:
+            job.erro = str(e)
+            logging.error(f"Erro ao gerar arte da fila para {job.codbar}: {e}")
+        finally:
+            _gerando_arte_em_andamento.discard(job.codbar)
+            if job.evento:
+                job.evento.set()
+            _fila_arte.task_done()
+
+
+def _iniciar_worker_fila_arte():
+    threading.Thread(target=_worker_fila_arte, daemon=True).start()
 
 def find_existing_image(codbar, img_dir, image_extensions):
     """Procura a imagem existente em um diretório"""
@@ -1256,6 +1304,40 @@ def _incrementar_contador(chave, delta=1):
     set_config(chave, str(atual + delta))
 
 
+def _registrar_uso_gemini(categoria, sucesso, rate_limited=False):
+    """Contabiliza uma chamada ao Gemini (modelo de imagem ou de texto) pra dar visibilidade de
+    consumo dentro do próprio painel, já que checar o console do Google não é prático pro
+    dia a dia. `categoria` é 'imagem' (gerar_arte_publicitaria) ou 'texto'
+    (gerar_textos_arte_ia). Contadores resetados a cada resumo diário enviado com sucesso (ver
+    enviar_resumo_diario_sistema) — reportam consumo 'desde o último resumo', não histórico
+    acumulado."""
+    prefixo = f'STATS_GEMINI_{categoria.upper()}'
+    if sucesso:
+        _incrementar_contador(f'{prefixo}_SUCESSOS')
+    elif rate_limited:
+        _incrementar_contador(f'{prefixo}_RATE_LIMIT')
+    else:
+        _incrementar_contador(f'{prefixo}_ERROS')
+
+
+def _status_gemini():
+    """Consumo do Gemini desde o último resumo diário enviado."""
+    cfg = _ler_todas_config()
+    def _n(chave):
+        try:
+            return int(cfg.get(chave, '0') or '0')
+        except ValueError:
+            return 0
+    return {
+        'imagem_sucessos': _n('STATS_GEMINI_IMAGEM_SUCESSOS'),
+        'imagem_rate_limit': _n('STATS_GEMINI_IMAGEM_RATE_LIMIT'),
+        'imagem_erros': _n('STATS_GEMINI_IMAGEM_ERROS'),
+        'texto_sucessos': _n('STATS_GEMINI_TEXTO_SUCESSOS'),
+        'texto_rate_limit': _n('STATS_GEMINI_TEXTO_RATE_LIMIT'),
+        'texto_erros': _n('STATS_GEMINI_TEXTO_ERROS'),
+    }
+
+
 def _lista_tokens_cosmos():
     """Lê a lista de tokens do Cosmos configurada no painel (um por linha, em
     COSMOS_API_TOKENS). Mantém compatibilidade com a chave antiga COSMOS_API_TOKEN (token
@@ -1296,7 +1378,7 @@ def fetch_product_from_cosmos(ean):
     except ValueError:
         indice = 0
 
-    cosmos_url = f"https://api.cosmos.bluesoft.com.br/gtins/{ean}.json"
+    cosmos_url = f"https://cosmos.bluesoft.com.br/api/gtins/{ean}.json"
     indice_inicial = indice
 
     for tentativa in range(len(tokens)):
@@ -1304,7 +1386,11 @@ def fetch_product_from_cosmos(ean):
         try:
             response = requests.get(
                 cosmos_url,
-                headers={'Authorization': f'Bearer {token}'},
+                headers={
+                    'X-Cosmos-Token': token,
+                    'Content-Type': 'application/json',
+                    'User-Agent': 'Cosmos-API-Request',
+                },
                 timeout=15,
             )
         except requests.RequestException as e:
@@ -1876,6 +1962,7 @@ def gerar_textos_arte_ia(produto):
             model='gemini-2.5-flash-lite',
             contents=instrucao,
         )
+        _registrar_uso_gemini('texto', sucesso=True)
         texto = (response.text or '').strip()
         nome, headline = None, None
         for linha in texto.splitlines():
@@ -1887,6 +1974,8 @@ def gerar_textos_arte_ia(produto):
         nome_final = fallback_nome if fonte_confiavel else (nome or fallback_nome)
         return nome_final, headline
     except Exception as e:
+        rate_limited = '429' in str(e) or 'RESOURCE_EXHAUSTED' in str(e)
+        _registrar_uso_gemini('texto', sucesso=False, rate_limited=rate_limited)
         logging.error(f"Erro ao gerar textos da arte via IA: {e}")
         return fallback_nome, None
 
@@ -2097,7 +2186,10 @@ def gerar_arte_publicitaria(produto, image_path):
                 image_config=genai_types.ImageConfig(aspect_ratio='16:9'),
             ),
         )
+        _registrar_uso_gemini('imagem', sucesso=True)
     except Exception as e:
+        rate_limited = '429' in str(e) or 'RESOURCE_EXHAUSTED' in str(e)
+        _registrar_uso_gemini('imagem', sucesso=False, rate_limited=rate_limited)
         raise RuntimeError(f'Erro da API Gemini: {e}')
 
     parts = response.candidates[0].content.parts if response.candidates else []
@@ -2120,6 +2212,49 @@ def gerar_arte_publicitaria(produto, image_path):
         out_file.write(output_bytes)
 
     return output_path
+
+
+@app.route('/admin/cadastrar-produto-cosmos/<string:codbar>', methods=['POST'])
+@jwt_required()
+def admin_cadastrar_produto_cosmos(codbar):
+    """Cadastra um produto buscando especificamente no Cosmos pelo EAN (com rotação de tokens,
+    ver fetch_product_from_cosmos). É o fluxo explícito do formulário 'Cadastrar produto' do
+    painel — não cai para Open Food Facts/Zaffari aqui; essa busca multi-fonte continua
+    acontecendo automaticamente em GET /produto/<codbar> e no botão de cadastro que aparece
+    quando a busca do catálogo não encontra nada localmente."""
+    produto_existente = Produto.query.filter_by(codbar=codbar).first()
+    if produto_existente:
+        return jsonify({
+            'message': f'Produto já cadastrado no catálogo: {produto_existente.description}',
+            'ja_existia': True,
+            'codbar': produto_existente.codbar,
+            'description': produto_existente.description,
+        }), 200
+
+    dados = fetch_product_from_cosmos(codbar)
+    if not dados:
+        return jsonify({'message': 'Produto não encontrado no Cosmos para esse EAN (ou todos os tokens configurados estão sem cota/inválidos).'}), 404
+
+    novo_produto = register_product_in_database(dados)
+    if not novo_produto:
+        return jsonify({'message': 'O Cosmos retornou dados para esse EAN, mas houve um erro ao salvar o produto no banco.'}), 500
+
+    thumbnail = dados.get('thumbnail')
+    if thumbnail and isinstance(thumbnail, str) and thumbnail.startswith('http') and not find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS):
+        try:
+            img_response = requests.get(thumbnail, timeout=15)
+            img_response.raise_for_status()
+            save_image_from_response(img_response.content, codbar)
+        except requests.RequestException as e:
+            logging.warning(f"Não foi possível salvar a imagem do Cosmos para {codbar}: {e}")
+
+    return jsonify({
+        'message': f'Produto cadastrado com sucesso via Cosmos: {novo_produto.description}',
+        'ja_existia': False,
+        'codbar': novo_produto.codbar,
+        'description': novo_produto.description,
+        'marca': novo_produto.marca,
+    }), 201
 
 
 @app.route('/admin/buscar-imagem/<string:codbar>', methods=['POST'])
@@ -2154,7 +2289,10 @@ def admin_buscar_imagem(codbar):
 @app.route('/admin/gerar-arte/<string:codbar>', methods=['POST'])
 @jwt_required()
 def admin_gerar_arte(codbar):
-    """Gera (ou regenera) a arte publicitária de um produto a partir da sua foto crua."""
+    """Gera (ou regenera) a arte publicitária de um produto a partir da sua foto crua. A
+    geração em si acontece na fila única (ver _enfileirar_geracao_arte) — essa rota aguarda o
+    próprio job terminar antes de responder, então o contrato não muda (ainda retorna a URL
+    pronta), só passa a esperar a vez se houver outras gerações em andamento na fila."""
     produto = Produto.query.filter_by(codbar=codbar).first()
     if not produto:
         return jsonify({'message': 'Produto não encontrado'}), 404
@@ -2163,13 +2301,16 @@ def admin_gerar_arte(codbar):
     if not img_path:
         return jsonify({'message': 'Produto não possui foto cadastrada para servir de base'}), 400
 
-    try:
-        gerar_arte_publicitaria(produto, img_path)
-    except ValueError as e:
-        return jsonify({'message': str(e)}), 400
-    except Exception as e:
-        logging.error(f"Erro ao gerar arte publicitária para {codbar}: {e}")
-        return jsonify({'message': f'Erro ao gerar arte: {e}'}), 500
+    if codbar in _gerando_arte_em_andamento:
+        return jsonify({'message': 'Já existe uma geração em andamento para este produto'}), 409
+
+    job = _enfileirar_geracao_arte(codbar, img_path, aguardar=True, forcar=True)
+    if job is None:
+        return jsonify({'message': 'Não foi possível enfileirar a geração (verifique se a chave do Gemini está configurada)'}), 400
+
+    job.evento.wait()
+    if job.erro:
+        return jsonify({'message': f'Erro ao gerar arte: {job.erro}'}), 500
 
     return jsonify({'message': 'Arte gerada com sucesso', 'arte_url': _arte_url(codbar)}), 200
 
@@ -2212,11 +2353,11 @@ def gerar_arte_publica(codbar):
         return jsonify({'message': 'Corpo da requisição vazio (esperada a foto crua do produto)'}), 400
 
     # Evita duas gerações concorrentes do mesmo EAN (ex.: dois terminais consultando o mesmo
-    # produto ao mesmo tempo) — cada chamada de gerar_arte_publicitaria já é uma chamada paga à
-    # API Gemini.
+    # produto ao mesmo tempo). A geração em si acontece na fila única (ver
+    # _enfileirar_geracao_arte) — essa rota aguarda o próprio job terminar antes de responder,
+    # então o contrato não muda (ainda retorna a URL pronta no corpo da resposta).
     if codbar in _gerando_arte_em_andamento:
         return jsonify({'message': 'Geração de arte já em andamento para este produto'}), 409
-    _gerando_arte_em_andamento.add(codbar)
 
     try:
         produto = Produto.query.filter_by(codbar=codbar).first()
@@ -2243,14 +2384,14 @@ def gerar_arte_publica(codbar):
         else:
             img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
 
-        gerar_arte_publicitaria(produto, img_path)
-    except ValueError as e:
-        return jsonify({'message': str(e)}), 400
+        job = _enfileirar_geracao_arte(codbar, img_path, aguardar=True)
+        if job is not None:
+            job.evento.wait()
+            if job.erro:
+                return jsonify({'message': f'Erro ao gerar arte: {job.erro}'}), 500
     except Exception as e:
         logging.error(f"Erro ao gerar arte publicitária (via upload) para {codbar}: {e}")
         return jsonify({'message': f'Erro ao gerar arte: {e}'}), 500
-    finally:
-        _gerando_arte_em_andamento.discard(codbar)
 
     return jsonify({'imagem_url_arte': _arte_url(codbar)}), 200
 
@@ -2522,6 +2663,23 @@ def admin_historico_buscas():
     })
 
 
+@app.route('/admin/status-sistema', methods=['GET'])
+@jwt_required()
+def admin_status_sistema():
+    """Status operacional em tempo real: fila de geração de arte (o quanto está pendente e
+    quais EANs estão em processamento agora) e consumo do Gemini/Cosmos desde o último resumo
+    diário enviado — os mesmos contadores usados no e-mail, mas consultáveis aqui sem esperar
+    o horário agendado."""
+    return jsonify({
+        'fila_arte': {
+            'pendentes': _fila_arte.qsize(),
+            'em_processamento': sorted(_gerando_arte_em_andamento),
+        },
+        'gemini': _status_gemini(),
+        'cosmos': _status_tokens_cosmos(),
+    })
+
+
 # =====================================================================
 # Notificações de imagens não encontradas (resumo por e-mail / WhatsApp)
 # =====================================================================
@@ -2560,7 +2718,7 @@ def _status_tokens_cosmos():
     }
 
 
-def _enviar_email_resumo_diario(cfg, pendentes, stats, cosmos_status, cadastros_automaticos):
+def _enviar_email_resumo_diario(cfg, pendentes, stats, cosmos_status, cadastros_automaticos, gemini_status):
     """Envia o resumo diário completo por e-mail via Resend (API HTTP, sem SMTP). Levanta
     exceção em caso de falha (o chamador decide como registrar/logar)."""
     api_key = cfg.get('RESEND_API_KEY', '').strip()
@@ -2587,7 +2745,9 @@ def _enviar_email_resumo_diario(cfg, pendentes, stats, cosmos_status, cadastros_
         f"Catálogo: {stats['total_produtos']} produtos | {stats['com_foto']} com foto | {stats['sem_foto']} sem foto | {stats['com_arte']} com arte publicitária\n"
         f"Cadastros automáticos desde o último resumo: {cadastros_automaticos}\n"
         f"Cosmos: token #{cosmos_status['token_atual']} de {cosmos_status['total_tokens']} em uso | "
-        f"{cosmos_status['sucessos']} sucesso(s) e {cosmos_status['rotacoes']} rotação(ões) por cota esgotada desde o último resumo\n\n"
+        f"{cosmos_status['sucessos']} sucesso(s) e {cosmos_status['rotacoes']} rotação(ões) por cota esgotada desde o último resumo\n"
+        f"Gemini (imagem): {gemini_status['imagem_sucessos']} gerada(s) | {gemini_status['imagem_rate_limit']} bloqueada(s) por limite de taxa | {gemini_status['imagem_erros']} erro(s) outro\n"
+        f"Gemini (texto/headline): {gemini_status['texto_sucessos']} gerado(s) | {gemini_status['texto_rate_limit']} bloqueado(s) por limite de taxa | {gemini_status['texto_erros']} erro(s) outro\n\n"
         "Imagens de produto não encontradas (ainda não notificadas):\n" + "\n".join(linhas_texto_pendentes)
     )
     corpo_html = f"""
@@ -2600,6 +2760,8 @@ def _enviar_email_resumo_diario(cfg, pendentes, stats, cosmos_status, cadastros_
         <tr><td style="padding:4px 10px; color:#666;">Cadastros automáticos (desde o último resumo)</td><td style="padding:4px 10px;">{cadastros_automaticos}</td></tr>
         <tr><td style="padding:4px 10px; color:#666;">Cosmos — token em uso</td><td style="padding:4px 10px;">#{cosmos_status['token_atual']} de {cosmos_status['total_tokens']}</td></tr>
         <tr><td style="padding:4px 10px; color:#666;">Cosmos — sucessos / rotações por cota (desde o último resumo)</td><td style="padding:4px 10px;">{cosmos_status['sucessos']} / {cosmos_status['rotacoes']}</td></tr>
+        <tr><td style="padding:4px 10px; color:#666;">Gemini imagem — geradas / limite de taxa / outro erro</td><td style="padding:4px 10px;">{gemini_status['imagem_sucessos']} / {gemini_status['imagem_rate_limit']} / {gemini_status['imagem_erros']}</td></tr>
+        <tr><td style="padding:4px 10px; color:#666;">Gemini texto — gerados / limite de taxa / outro erro</td><td style="padding:4px 10px;">{gemini_status['texto_sucessos']} / {gemini_status['texto_rate_limit']} / {gemini_status['texto_erros']}</td></tr>
     </table>
     <h3 style="font-family:sans-serif;">Imagens de produto não encontradas ({len(pendentes)})</h3>
     <table style="border-collapse:collapse; font-family:sans-serif; font-size:13px;">
@@ -2627,7 +2789,7 @@ def _enviar_email_resumo_diario(cfg, pendentes, stats, cosmos_status, cadastros_
         raise ValueError(f"Resend retornou HTTP {resposta.status_code}: {resposta.text[:300]}")
 
 
-def _enviar_whatsapp_resumo_diario(cfg, pendentes, stats, cosmos_status, cadastros_automaticos):
+def _enviar_whatsapp_resumo_diario(cfg, pendentes, stats, cosmos_status, cadastros_automaticos, gemini_status):
     """Envia um resumo diário curto por WhatsApp via Z-API ou Evolution API (gateways
     self-hosted comuns no Brasil, ambos recebem um POST simples com token/instância). Formato
     ainda não testado contra uma conta real — ajustar o corpo/endpoint aqui se o provedor
@@ -2645,6 +2807,7 @@ def _enviar_whatsapp_resumo_diario(cfg, pendentes, stats, cosmos_status, cadastr
         f"Catálogo: {stats['total_produtos']} produtos ({stats['com_foto']} com foto, {stats['com_arte']} com arte)\n"
         f"Cadastros automáticos: {cadastros_automaticos}\n"
         f"Cosmos: token #{cosmos_status['token_atual']}/{cosmos_status['total_tokens']} — {cosmos_status['sucessos']} sucesso(s), {cosmos_status['rotacoes']} rotação(ões)\n"
+        f"Gemini: {gemini_status['imagem_sucessos']} arte(s) geradas, {gemini_status['imagem_rate_limit']} bloqueada(s) por limite\n"
         f"Imagens não encontradas pendentes: {len(pendentes)}"
     )
 
@@ -2698,6 +2861,7 @@ def enviar_resumo_diario_sistema():
 
     stats = _estatisticas_gerais()
     cosmos_status = _status_tokens_cosmos()
+    gemini_status = _status_gemini()
     cadastros_automaticos = int(cfg.get('STATS_CADASTROS_AUTOMATICOS', '0') or '0')
 
     algum_sucesso = False
@@ -2705,7 +2869,7 @@ def enviar_resumo_diario_sistema():
 
     if cfg.get('RESUMO_ATIVO', 'false') == 'true':
         try:
-            _enviar_email_resumo_diario(cfg, pendentes, stats, cosmos_status, cadastros_automaticos)
+            _enviar_email_resumo_diario(cfg, pendentes, stats, cosmos_status, cadastros_automaticos, gemini_status)
             algum_sucesso = True
             logging.info("Resumo diário do sistema enviado por e-mail.")
         except Exception as e:
@@ -2714,7 +2878,7 @@ def enviar_resumo_diario_sistema():
 
     if cfg.get('WHATSAPP_ATIVO', 'false') == 'true':
         try:
-            _enviar_whatsapp_resumo_diario(cfg, pendentes, stats, cosmos_status, cadastros_automaticos)
+            _enviar_whatsapp_resumo_diario(cfg, pendentes, stats, cosmos_status, cadastros_automaticos, gemini_status)
             algum_sucesso = True
             logging.info("Resumo diário do sistema enviado por WhatsApp.")
         except Exception as e:
@@ -2732,6 +2896,9 @@ def enviar_resumo_diario_sistema():
         set_config('STATS_COSMOS_SUCESSOS', '0')
         set_config('STATS_COSMOS_ROTACOES', '0')
         set_config('STATS_CADASTROS_AUTOMATICOS', '0')
+        for chave in ('STATS_GEMINI_IMAGEM_SUCESSOS', 'STATS_GEMINI_IMAGEM_RATE_LIMIT', 'STATS_GEMINI_IMAGEM_ERROS',
+                      'STATS_GEMINI_TEXTO_SUCESSOS', 'STATS_GEMINI_TEXTO_RATE_LIMIT', 'STATS_GEMINI_TEXTO_ERROS'):
+            set_config(chave, '0')
         db.session.commit()
 
     return {'enviado': algum_sucesso, 'total_nao_encontradas': len(pendentes), 'erros': erros}
@@ -2783,4 +2950,5 @@ if __name__ == '__main__':
     with app.app_context():
         db.create_all()
     _iniciar_agendador_resumo()
+    _iniciar_worker_fila_arte()
     app.run('0.0.0.0', port=5050, debug=True, threaded=True)

@@ -41,6 +41,21 @@ Nota: o token do Cosmos (`KZSEuMgGjPb8d9gFztQHiw`, hardcoded em `fetch_product_f
 
 `compor_texto_na_arte` salva em WEBP (`quality=88`), não PNG — para uma foto (não um gráfico com poucas cores), isso dá ~90% de redução de tamanho com qualidade visualmente idêntica, e o app Android já reconverte tudo pra webp no cache local mesmo (evitava um retrabalho). `_arte_url` só reconhece `.webp` — artes antigas em `.png` viram órfãs automaticamente e regeneram sozinhas na próxima consulta (comportamento esperado, não é bug).
 
+### Fila única de geração de arte (protege contra rate limit do Gemini)
+
+Com vários terminais em lojas/clientes diferentes, gerar arte em paralelo (uma thread por request, como era antes) estourava o rate limit do Gemini (429 RESOURCE_EXHAUSTED). Agora existe **uma fila única processada por um único worker** (`_fila_arte`, `_worker_fila_arte`, `_enfileirar_geracao_arte`) — nunca há mais de uma chamada ao Gemini em andamento ao mesmo tempo, custe o que custar em latência sob carga.
+
+- `_enfileirar_geracao_arte(codbar, img_path, aguardar=False, forcar=False)` é o único ponto de entrada. `aguardar=True` bloqueia até o job terminar (usado onde a rota precisa devolver a `arte_url` na resposta); sem isso é fire-and-forget. `forcar=True` ignora a checagem de "arte já existe" (usado pelo botão de regenerar).
+- Os 3 pontos que geram arte no sistema passam todos pela mesma fila: o disparo automático em `GET /produto-imagem/<codbar>` (fire-and-forget), o botão "Gerar/Regenerar arte" do admin (`aguardar=True, forcar=True`) e a rota pública `POST /produto-imagem/<codbar>/gerar-arte` usada pelo app (`aguardar=True`). O contrato HTTP de cada uma **não mudou** — só a execução interna passou a ser serializada.
+- O worker refaz a consulta do `Produto` por conta própria dentro do seu próprio `app_context()`, em vez de reaproveitar o objeto SQLAlchemy que o request original carregou — evita problemas de sessão entre threads.
+- Sem persistência: se o Flask reiniciar com jobs na fila, eles se perdem, mas isso é inofensivo — a próxima consulta em `GET /produto-imagem/<codbar>` detecta que a arte ainda não existe e reenfileira sozinha (mesmo padrão de auto-recuperação que já existia antes da fila).
+- Testado com concorrência real (3 gerações disparadas juntas com `gerar_arte_publicitaria` mockado por um `time.sleep`) confirmando que a concorrência máxima observada é sempre 1, e com uma geração real via Gemini (`POST /admin/gerar-arte/<codbar>`) confirmando que o contrato da rota não mudou.
+- Visibilidade: `GET /admin/status-sistema` retorna `fila_arte.pendentes` e `fila_arte.em_processamento`, mostrado ao vivo (poll a cada 5s) num pequeno painel no topo da aba Consulta Rápida.
+
+### Consumo do Gemini (visibilidade, já que o console do Google não é prático pro dia a dia)
+
+Cada chamada real ao Gemini (`gerar_arte_publicitaria` — modelo de imagem — e `gerar_textos_arte_ia` — modelo de texto) é contabilizada via `_registrar_uso_gemini(categoria, sucesso, rate_limited)`, separando sucesso / bloqueio por limite de taxa (429/RESOURCE_EXHAUSTED, detectado pela string do erro) / outro erro, para cada categoria ('imagem'/'texto'). `_status_gemini()` lê esses contadores; aparecem tanto em `GET /admin/status-sistema` (ao vivo) quanto no resumo diário por e-mail/WhatsApp — resetados a cada resumo enviado com sucesso, igual aos contadores do Cosmos (reportam "desde o último resumo", não total histórico).
+
 **Resolução**: a foto crua (produto pequeno, lado a lado com texto) é cacheada a até 512px — ok pra thumbnail. A ARTE (vira fundo de tela cheia no app) precisa de resolução bem maior; isso é responsabilidade do **app Android** (`PriceQueryEngine.downloadProductImageIfNeeded` usa o maior lado da tela do próprio aparelho como teto, não 512px — ver CLAUDE.md do mplayer).
 
 **Cuidado ao mexer em `downloadProductImageIfNeeded` do lado do app**: a foto crua e a arte do mesmo EAN não podem dividir o mesmo nome de cache (`{ean}.webp`) — já causou um bug onde a arte "roubava" o arquivo da foto crua já baixada. A arte usa a chave `{ean}_arte`.
@@ -90,7 +105,12 @@ Diferença importante de comportamento: o resumo agora **sempre envia** quando a
 
 ## Cadastro manual de produto via fontes externas
 
-A aba "Consulta Rápida" já buscava produtos só no catálogo local. Quando a busca por um EAN (8 a 14 dígitos) não encontra nada localmente, aparece um botão "Cadastrar produto" que chama `GET /produto/<codbar>` — a mesma rota que já fazia esse cadastro automático em outros pontos do sistema (Cosmos → Open Food Facts → Zaffari, nessa ordem). Nenhuma rota nova foi criada para isso, só a exposição na UI. A imagem (thumbnail) que a fonte externa retorna já é baixada e salva automaticamente nesse fluxo (`register_product_in_database` + o bloco que salva `dados.get('thumbnail')` em `consultar_ou_cadastrar_produto`) — não precisou de nada novo pra isso.
+Duas formas de cadastrar um produto que não está no catálogo local, ambas na aba "Consulta Rápida":
+
+1. **Botão "+ Cadastrar produto"** (sempre visível, ao lado da busca do catálogo) — abre um formulário dedicado que pede só o EAN e busca **exclusivamente no Cosmos** (`POST /admin/cadastrar-produto-cosmos/<codbar>`, com a rotação de tokens de `fetch_product_from_cosmos`). Se o EAN já existir localmente, avisa e não duplica. Se não achar no Cosmos, retorna 404 sem tentar outras fontes — é um fluxo deliberadamente restrito ao Cosmos, pedido explicitamente pelo usuário.
+2. **Botão no estado vazio da busca** — quando a busca por um EAN (8 a 14 dígitos) no catálogo local não encontra nada, aparece um botão que chama `GET /produto/<codbar>` — a mesma rota que já fazia cadastro automático multi-fonte em outros pontos do sistema (Cosmos → Open Food Facts → Zaffari, nessa ordem). Esse é o caminho "genérico", mantido como estava.
+
+A imagem (thumbnail) que a fonte externa retorna já é baixada e salva automaticamente em ambos os fluxos (`register_product_in_database` + o bloco que salva `dados.get('thumbnail')`) — não precisou de nada novo pra isso.
 
 ### Rotação de tokens do Cosmos (plano free, cota por token)
 
@@ -101,7 +121,14 @@ O Cosmos free tem cota mensal por token. Em vez de um único `COSMOS_API_TOKEN`,
 - Ao ter sucesso ou esgotar todos os tokens, persiste o índice final em `COSMOS_TOKEN_INDEX_ATUAL` pra próxima chamada já começar dali.
 - Contadores `STATS_COSMOS_SUCESSOS` e `STATS_COSMOS_ROTACOES` (Config) acumulam desde o último resumo diário enviado (zerados lá, não aqui) — usados no e-mail/WhatsApp de resumo.
 
-Testado com tokens falsos direto contra a API real do Cosmos (confirma 401 em cada um → rotaciona → esgota → `None`) e com `smtplib`/`requests` mockados via monkeypatch pra validar o caminho de sucesso (token 2 funciona, índice persiste, chamada seguinte já pula direto pro token 2). Não testado ainda com tokens reais válidos — fazer isso assim que os tokens do usuário forem colados no painel.
+Testado com tokens falsos direto contra a API real do Cosmos (confirma 401 em cada um → rotaciona → esgota → `None`) e com `smtplib`/`requests` mockados via monkeypatch pra validar o caminho de sucesso (token 2 funciona, índice persiste, chamada seguinte já pula direto pro token 2).
+
+**Cuidado, API do Cosmos real é DIFERENTE da assumida inicialmente** — a primeira versão usava `https://api.cosmos.bluesoft.com.br/gtins/<ean>.json` com `Authorization: Bearer <token>` (formato copiado do código antigo/hardcoded já existente no projeto antes desta sessão). Com tokens reais do usuário, isso retornava 401 "Token Inválido" em TODOS os tokens — confirmado com `curl` direto que a causa não era token inválido de verdade, mas **endpoint e header errados**. O formato correto (confirmado pelo usuário rodando um `curl` que funcionou, e replicado com sucesso):
+```
+GET https://cosmos.bluesoft.com.br/api/gtins/<ean>.json
+Header: X-Cosmos-Token: <token>   (não é Authorization: Bearer!)
+```
+`fetch_product_from_cosmos` já foi corrigido pra usar essa URL/header. Testado com tokens reais após a correção — cadastro via `/admin/cadastrar-produto-cosmos/<ean>` funcionou (retornou produto real, HTTP 201).
 
 ## Gestão de imagem por produto (painel)
 

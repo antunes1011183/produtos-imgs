@@ -665,6 +665,17 @@
 
             <!-- ===== TAB: CONSULTA RÁPIDA (unifica busca + catálogo + arte + detalhes) ===== -->
             <div id="tab-consulta" class="tab-content" style="display:none;">
+                <div class="card" id="status-sistema-card" style="margin-bottom:1rem; padding:0.85rem 1.1rem;">
+                    <div style="display:flex; flex-wrap:wrap; gap:1.5rem; align-items:center; font-size:0.82rem;">
+                        <span style="display:flex; align-items:center; gap:0.4rem;">
+                            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                            Fila de arte: <b id="status-fila-pendentes">—</b> pendente(s), <b id="status-fila-processando">—</b> em processamento
+                        </span>
+                        <span>Gemini (desde o último resumo): <b id="status-gemini-imagem">—</b></span>
+                        <span>Cosmos: <b id="status-cosmos-token">—</b></span>
+                        <button class="btn btn-secondary btn-sm" id="btn-atualizar-status-sistema" style="margin-left:auto;">Atualizar</button>
+                    </div>
+                </div>
                 <div class="consulta-layout">
                     <div class="consulta-list-col">
                         <div class="card">
@@ -678,8 +689,29 @@
                                     <input type="text" id="consulta-q" placeholder="Ex: 7896116900050, KICALDO, FEIJÃO..." autocomplete="off" style="flex:1;">
                                     <button class="btn btn-primary" id="btn-consulta">Buscar</button>
                                     <button class="btn btn-secondary" id="btn-consulta-limpar">Limpar</button>
+                                    <button class="btn btn-secondary" id="btn-abrir-cadastro">+ Cadastrar produto</button>
                                 </div>
                             </div>
+
+                            <div class="card" id="form-cadastro-cosmos" style="display:none; margin:0 0 1rem; background:#fafbff;">
+                                <h2 style="font-size:0.9rem;">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                    Cadastrar produto pelo EAN (busca no Cosmos)
+                                </h2>
+                                <div id="alert-cadastro-cosmos"></div>
+                                <div class="form-row">
+                                    <label for="cadastro-ean">Código de barras (EAN)</label>
+                                    <div style="display:flex; gap:0.5rem;">
+                                        <input type="text" id="cadastro-ean" placeholder="Ex: 7896116900050" autocomplete="off" style="flex:1;">
+                                        <button class="btn btn-primary" id="btn-cadastrar-cosmos">Buscar no Cosmos e cadastrar</button>
+                                        <button class="btn btn-secondary" id="btn-cancelar-cadastro">Cancelar</button>
+                                    </div>
+                                </div>
+                                <p style="font-size:0.76rem; color:var(--muted); margin:0.5rem 0 0;">
+                                    Busca apenas no Cosmos (com rotação de tokens, se houver mais de um configurado). Se não encontrar lá, o produto não é cadastrado por este formulário — use a busca normal acima para tentar Open Food Facts / Zaffari também.
+                                </p>
+                            </div>
+
                             <div id="alert-consulta"></div>
                             <div id="consulta-list" style="overflow-x:auto;">
                                 <div class="empty-state">Carregando catálogo...</div>
@@ -978,7 +1010,8 @@ $$('.nav-tab').forEach(btn => {
         if (subtitleEl && btn.dataset.subtitle) subtitleEl.textContent = btn.dataset.subtitle;
 
         if (tab === 'estats') loadEstats();
-        if (tab === 'consulta') loadConsulta(1);
+        if (tab === 'consulta') { loadConsulta(1); iniciarPollingStatusSistema(); }
+        else pararPollingStatusSistema();
         if (tab === 'config') loadConfig();
         if (tab === 'historico') loadHistorico(1);
 
@@ -1349,6 +1382,38 @@ $('#historico-status').addEventListener('change', () => loadHistorico(1));
 $('#btn-historico-prev').addEventListener('click', () => { if (historicoPage > 1) loadHistorico(historicoPage - 1); });
 $('#btn-historico-next').addEventListener('click', () => loadHistorico(historicoPage + 1));
 
+// ===== Status do sistema (fila de arte + consumo Gemini/Cosmos) =====
+let statusSistemaTimer = null;
+
+async function loadStatusSistema() {
+    try {
+        const res = await fetch('/admin/status-sistema', { headers: authHeaders() });
+        if (!res.ok) return;
+        const data = await res.json();
+        $('#status-fila-pendentes').textContent = data.fila_arte.pendentes;
+        $('#status-fila-processando').textContent = data.fila_arte.em_processamento.length;
+        $('#status-gemini-imagem').textContent = `${data.gemini.imagem_sucessos} arte(s) geradas, ${data.gemini.imagem_rate_limit} bloqueada(s) por limite`;
+        $('#status-cosmos-token').textContent = data.cosmos.total_tokens > 0
+            ? `token #${data.cosmos.token_atual}/${data.cosmos.total_tokens}`
+            : 'nenhum token configurado';
+    } catch (e) { /* silencioso — é só um indicador, não vale poluir a UI com erro de polling */ }
+}
+
+function iniciarPollingStatusSistema() {
+    loadStatusSistema();
+    if (statusSistemaTimer) clearInterval(statusSistemaTimer);
+    statusSistemaTimer = setInterval(loadStatusSistema, 5000);
+}
+
+function pararPollingStatusSistema() {
+    if (statusSistemaTimer) {
+        clearInterval(statusSistemaTimer);
+        statusSistemaTimer = null;
+    }
+}
+
+$('#btn-atualizar-status-sistema').addEventListener('click', loadStatusSistema);
+
 // ===== TAB: CONSULTA RÁPIDA (catálogo unificado: busca + navegação + arte + detalhes) =====
 let consultaPage = 1;
 let consultaQ = '';
@@ -1458,6 +1523,54 @@ $('#btn-consulta-limpar').addEventListener('click', () => {
 });
 $('#btn-consulta-prev').addEventListener('click', () => loadConsulta(consultaPage - 1));
 $('#btn-consulta-next').addEventListener('click', () => loadConsulta(consultaPage + 1));
+
+// ===== Formulário: Cadastrar produto pelo EAN (busca no Cosmos) =====
+$('#btn-abrir-cadastro').addEventListener('click', () => {
+    const form = $('#form-cadastro-cosmos');
+    const abrindo = form.style.display === 'none';
+    form.style.display = abrindo ? 'block' : 'none';
+    if (abrindo) {
+        $('#cadastro-ean').value = '';
+        $('#alert-cadastro-cosmos').innerHTML = '';
+        $('#cadastro-ean').focus();
+    }
+});
+$('#btn-cancelar-cadastro').addEventListener('click', () => {
+    $('#form-cadastro-cosmos').style.display = 'none';
+});
+
+async function cadastrarProdutoViaCosmos() {
+    const ean = $('#cadastro-ean').value.trim();
+    if (!/^\d{8,14}$/.test(ean)) {
+        showAlert('alert-cadastro-cosmos', 'Informe um EAN válido (8 a 14 dígitos).', 'error');
+        return;
+    }
+    const btn = $('#btn-cadastrar-cosmos');
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner"></span> Buscando no Cosmos...`;
+    try {
+        const res = await fetch(`/admin/cadastrar-produto-cosmos/${encodeURIComponent(ean)}`, {
+            method: 'POST',
+            headers: authHeaders(),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+        showAlert('alert-cadastro-cosmos', data.message || 'Produto cadastrado com sucesso!', 'success');
+        toast(data.message || 'Produto cadastrado', 'success');
+        $('#consulta-q').value = ean;
+        loadConsulta(1);
+    } catch (e) {
+        showAlert('alert-cadastro-cosmos', `Erro: ${e.message}`, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+    }
+}
+$('#btn-cadastrar-cosmos').addEventListener('click', cadastrarProdutoViaCosmos);
+$('#cadastro-ean').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') cadastrarProdutoViaCosmos();
+});
 
 // ===== Geração de arte publicitária (IA) =====
 function renderArteCell(p) {
