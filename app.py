@@ -1718,7 +1718,7 @@ def configuracoes():
             for chave in NOTIFICACAO_CONFIG_KEYS:
                 if chave in data:
                     valor = data.get(chave)
-                    if chave in ('RESUMO_ATIVO', 'WHATSAPP_ATIVO'):
+                    if chave in ('RESUMO_ATIVO', 'WHATSAPP_ATIVO', 'STATUS_HORARIO_ATIVO'):
                         valor = str(valor == 'true' or valor is True).lower()
                     set_config(chave, (valor or '').strip() if isinstance(valor, str) else valor)
             return jsonify({'message': 'Configurações de notificação salvas com sucesso', 'saved': True})
@@ -1821,7 +1821,7 @@ Isto NÃO é uma tela informativa de consulta. É uma MICROEXPERIÊNCIA DE VENDA
 
 CONCEITO VISUAL:
 - Transforme o produto no protagonista de uma cena de consumo/uso aspiracional que conte uma pequena história visual — o shopper deve pensar "eu posso usar/fazer isso em casa", "isso vai ficar muito bom", "vale a pena levar".
-- Se o produto É alimento ou bebida: monte uma cena gastronômica extremamente apetitosa — ingredientes frescos, textura real (vapor, cremosidade, crocância, brilho, gotas), como se estivesse pronto para ser consumido agora mesmo. Se for uma bebida gelada (refrigerante, cerveja, água, suco): cubra a embalagem com GOTAS DE CONDENSAÇÃO realistas e abundantes (gotículas, filetes escorrendo, superfície molhada/brilhante), como se tivesse acabado de sair da geladeira — esse detalhe sozinho já comunica "gelado e refrescante".
+- Se o produto É alimento ou bebida: monte uma cena gastronômica extremamente apetitosa — ingredientes frescos, textura real (vapor, cremosidade, crocância, brilho, gotas), como se estivesse pronto para ser consumido agora mesmo. Se for uma bebida gelada (refrigerante, cerveja, água, suco): adicione um leve toque de condensação, sutil e discreto (algumas gotículas pequenas e esparsas, sem filetes escorrendo nem superfície toda molhada), só o suficiente para sugerir "gelado e refrescante" sem dominar a embalagem — a etiqueta e o design do produto continuam totalmente legíveis, sem áreas embaçadas ou cobertas de água.
 - Se o produto NÃO é alimento (higiene pessoal, perfumaria, cosmético, limpeza, eletrônico etc.): crie a mesma sensação de desejo e aspiração através do contexto de USO REAL da categoria (ex.: banheiro/spa moderno, rotina de cuidado pessoal, ambiente doméstico impecável) — nunca insira comida, ingredientes crus ou sobremesa só porque o nome do produto menciona um sabor/fragrância como "chocolate", "menta", "coco" etc.; isso descreve o AROMA do produto, não um alimento real a ser retratado.
 - Na dúvida sobre a categoria, prefira um cenário neutro e elegante (superfície premium, iluminação de estúdio) a arriscar um contexto tematicamente errado.
 - Padrão de qualidade: fotografia de still-life comercial de nível internacional, como uma campanha real de uma grande marca de bebidas/alimentos/consumo (ex.: o padrão visual usado por Coca-Cola, Nestlé, Ambev em suas peças de merchandising) — iluminação cinematográfica de estúdio, profundidade de campo bem controlada, texturas extremamente realistas (brilho, umidade, nitidez de superfície), composição sofisticada, cores vibrantes e convidativas, fundo levemente desfocado, detalhes nítidos e "apetitosos" no produto.
@@ -2970,7 +2970,7 @@ def admin_status_sistema():
 NOTIFICACAO_CONFIG_KEYS = [
     'RESEND_API_KEY', 'RESEND_REMETENTE', 'RESUMO_DESTINATARIOS', 'RESUMO_HORARIO', 'RESUMO_ATIVO',
     'WHATSAPP_ATIVO', 'WHATSAPP_BASE_URL', 'WHATSAPP_INSTANCE',
-    'WHATSAPP_TOKEN', 'WHATSAPP_NUMERO_DESTINO',
+    'WHATSAPP_TOKEN', 'WHATSAPP_NUMERO_DESTINO', 'STATUS_HORARIO_ATIVO',
 ]
 
 
@@ -3461,9 +3461,112 @@ def _iniciar_agendador_resumo():
     threading.Thread(target=_loop, daemon=True).start()
 
 
+def _montar_mensagem_status_horario(motivo='heartbeat horário'):
+    """Mensagem curta pro heartbeat horário via WhatsApp — bem mais enxuta que o resumo diário
+    (só o essencial pra confirmar rapidamente, num relance, que o sistema está de pé e
+    funcionando: fila de arte, uso do Gemini, status do Cosmos)."""
+    fila_pendentes = _fila_arte.qsize()
+    fila_processando = len(_gerando_arte_em_andamento)
+    gemini_status = _status_gemini()
+    cosmos_status = _status_tokens_cosmos()
+    agora = datetime.now().strftime('%d/%m/%Y %H:%M')
+    titulo = 'Sistema iniciado' if motivo == 'sistema iniciado' else 'Status horário'
+    emoji = '🟢' if motivo == 'sistema iniciado' else '🕐'
+    return (
+        f"{emoji} *Mupa Brain* - {titulo}\n"
+        f"{agora}\n\n"
+        f"Fila de arte: {fila_pendentes} pendente(s), {fila_processando} em processamento\n"
+        f"Gemini: {gemini_status['imagem_sucessos']} arte(s) geradas, {gemini_status['imagem_rate_limit']} bloqueada(s) por limite\n"
+        f"Cosmos: token #{cosmos_status['token_atual']}/{cosmos_status['total_tokens']}"
+    )
+
+
+def _enviar_status_horario_whatsapp(motivo='heartbeat horário'):
+    """Envia o heartbeat horário via Evolution API — mesma instância/número já usados pelo
+    resumo diário (WHATSAPP_BASE_URL/WHATSAPP_TOKEN/WHATSAPP_INSTANCE/WHATSAPP_NUMERO_DESTINO).
+    Levanta exceção em caso de falha; quem chama decide o que fazer (o agendador só loga e
+    tenta de novo na próxima hora, nunca deixa a falta de 1 envio derrubar o loop)."""
+    cfg = _ler_todas_config()
+    base_url = cfg.get('WHATSAPP_BASE_URL', '').strip().rstrip('/')
+    instancia = cfg.get('WHATSAPP_INSTANCE', '').strip()
+    apikey = cfg.get('WHATSAPP_TOKEN', '').strip()
+    numero = cfg.get('WHATSAPP_NUMERO_DESTINO', '').strip()
+    if not base_url or not apikey or not instancia or not numero:
+        raise ValueError('WhatsApp não configurado (servidor, instância ou número destino ausentes — ver aba WhatsApp)')
+
+    mensagem = _montar_mensagem_status_horario(motivo)
+    url = f"{base_url}/message/sendText/{instancia}"
+    headers = {'apikey': apikey, 'Content-Type': 'application/json'}
+    payload = {'number': numero, 'textMessage': {'text': mensagem}}
+
+    resposta = requests.post(url, json=payload, headers=headers, timeout=20)
+    resposta.raise_for_status()
+
+
+def _iniciar_agendador_status_horario():
+    """Thread em segundo plano que envia um heartbeat de status por WhatsApp uma vez por hora,
+    das 07:00 às 22:00 (horário comercial) — pedido explícito do usuário: "o sistema nunca deve
+    parar" e ele quer um jeito de perceber se parou. Um processo que já morreu não consegue
+    avisar sobre si mesmo, então a estratégia é a mesma usada em monitoramento de verdade
+    (heartbeat/dead man's switch): mensagens regulares e previsíveis (sempre na hora cheia,
+    XX:00) fazem da AUSÊNCIA de uma mensagem esperada o próprio aviso — se não chegou a
+    mensagem das 14h, alguma coisa parou entre as 13h e as 14h.
+
+    Duas robustezes deliberadas:
+    1. O `try/except` fica DENTRO do loop (por iteração), não ao redor da thread inteira — uma
+       falha de rede na Evolution API derruba só aquele envio específico, nunca o agendador; a
+       próxima hora tenta de novo normalmente. "Sistema nunca deve parar" vale pro agendador
+       também.
+    2. Na primeira execução (processo acabou de subir), se estiver dentro do horário comercial,
+       envia IMEDIATAMENTE com um texto diferenciado ("Sistema iniciado") em vez de esperar a
+       próxima hora cheia — isso funciona como um segundo sinal complementar ao heartbeat: se o
+       processo cair e for reiniciado (manualmente ou por um supervisor), essa mensagem fora do
+       padrão avisa que houve um restart, além do heartbeat regular continuar depois.
+
+    Fora da janela 07-22h, dorme direto até o início do expediente do dia seguinte (não acorda
+    de hora em hora à toa de madrugada). Controlado por STATUS_HORARIO_ATIVO (Config, default
+    'true' — ativo assim que configurado, sem precisar de opt-in extra)."""
+    HORA_INICIO = 7
+    HORA_FIM = 22
+
+    def _tentar_enviar(motivo):
+        try:
+            with app.app_context():
+                _enviar_status_horario_whatsapp(motivo)
+            logging.info(f"Status horário enviado por WhatsApp ({motivo}).")
+        except Exception as e:
+            logging.error(f"Falha ao enviar status horário por WhatsApp ({motivo}): {e}")
+
+    def _loop():
+        primeira_execucao = True
+        while True:
+            try:
+                agora = datetime.now()
+                with app.app_context():
+                    ativo = _ler_todas_config().get('STATUS_HORARIO_ATIVO', 'true') == 'true'
+                dentro_da_janela = HORA_INICIO <= agora.hour < HORA_FIM
+
+                if ativo and dentro_da_janela:
+                    _tentar_enviar('sistema iniciado' if primeira_execucao else 'heartbeat horário')
+                primeira_execucao = False
+
+                proxima = (agora + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
+                if not (HORA_INICIO <= proxima.hour < HORA_FIM):
+                    proxima = proxima.replace(hour=HORA_INICIO)
+                    if proxima <= agora:
+                        proxima += timedelta(days=1)
+                time.sleep(max(1.0, (proxima - agora).total_seconds()))
+            except Exception as e:
+                logging.error(f"Erro no loop do agendador de status horário: {e}")
+                time.sleep(300)
+
+    threading.Thread(target=_loop, daemon=True).start()
+
+
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
     _iniciar_agendador_resumo()
+    _iniciar_agendador_status_horario()
     _iniciar_worker_fila_arte()
     app.run('0.0.0.0', port=5050, debug=True, threaded=True)

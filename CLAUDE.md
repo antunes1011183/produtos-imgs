@@ -51,6 +51,8 @@ O cartão escuro semi-transparente original foi substituído por um **painel de 
 
 Testado gerando a arte do produto EXATO da referência do usuário (Coca-Cola Sabor Original Pet 600ml, EAN 7894900011609) — resultado visualmente muito próximo do exemplo mostrado: painel vermelho com curva, título em negrito com sublinhado, garrafa com condensação realista, cena de mesa/jardim apetitosa que a própria IA compôs dentro das regras.
 
+**Condensação suavizada depois** — a instrução original ("cubra a embalagem com GOTAS DE CONDENSAÇÃO realistas e **abundantes**... superfície molhada/brilhante") saía pesada demais em testes seguintes (garrafa toda molhada, filetes escorrendo, às vezes prejudicando a legibilidade do rótulo). Trocada por uma versão mais comedida: "leve toque de condensação, sutil e discreto (algumas gotículas pequenas e esparsas, sem filetes escorrendo nem superfície toda molhada)... a etiqueta e o design do produto continuam totalmente legíveis". Testado de novo na mesma Coca-Cola — poucas gotículas discretas, rótulo 100% legível, ainda comunica "gelado" sem dominar a cena.
+
 ### Ajustes seguintes (benefícios à direita, cor fiel ao produto, quantidade sempre visível)
 
 Depois do primeiro resultado, mais 4 ajustes pedidos pelo usuário:
@@ -212,6 +214,21 @@ Nova aba "WhatsApp" no painel faz a gestão completa de uma instância na [Evolu
 - `POST /message/sendText/{instanceName}` — body `{number, textMessage: {text}}` — **atenção**: o campo é `textMessage.text` (aninhado), não `text` solto na raiz. Esse era um bug real no código de envio do resumo diário (`_enviar_whatsapp_resumo_diario`) escrito antes de eu confirmar o contrato oficial — já corrigido.
 
 O painel faz polling de `GET /admin/whatsapp/status` a cada 4s enquanto uma instância está configurada, escondendo o QR automaticamente assim que o estado vira `open`. A opção de provedor "Z-API" (genérica, nunca testada) foi removida da UI — o sistema hoje só suporta Evolution API de verdade, com essa página dedicada.
+
+### Heartbeat horário por WhatsApp (07h-22h) — "avisar se o sistema parou"
+
+Pedido explícito do usuário: "o sistema nunca deve parar" + um jeito de perceber quando parar. Um processo que já morreu não consegue avisar sobre si mesmo (não existe hook de "estou caindo" confiável em qualquer falha — crash da JVM/CPython, máquina desligada, processo morto pelo SO), então a estratégia é a mesma de qualquer monitoramento por heartbeat/dead man's switch: mandar uma mensagem previsível a cada hora cheia (XX:00), das 07:00 às 22:00, e deixar a **ausência** de uma mensagem esperada ser o próprio aviso — se não chegou a mensagem das 14h, algo parou entre 13h e 14h.
+
+`_iniciar_agendador_status_horario()` (thread daemon, mesmo padrão de `_iniciar_agendador_resumo`):
+- Fora da janela 07-22h, dorme direto até o início do próximo expediente (não acorda de hora em hora à toa de madrugada) — testado com simulação dos horários de borda (00:10, 06:55, 21:45, 22:05) antes de rodar de verdade.
+- `try/except` **dentro** do loop, por iteração — uma falha de rede na Evolution API (ou qualquer outro erro) derruba só aquele envio específico, nunca o agendador; "nunca deve parar" vale pro próprio mecanismo de aviso também, não só pro resto do sistema.
+- Na primeira execução após o processo subir, se estiver dentro do horário comercial, envia IMEDIATAMENTE com texto diferenciado ("🟢 Sistema iniciado") em vez de esperar a próxima hora cheia — sinal extra e complementar ao heartbeat regular: se o processo cair e alguém (ou um supervisor) reiniciar, essa mensagem fora do padrão avisa que houve um restart.
+- Controlado por `STATUS_HORARIO_ATIVO` (Config, default `'true'` — ativo assim que o WhatsApp em si estiver configurado, sem precisar de opt-in extra; adicionado à mesma lista `NOTIFICACAO_CONFIG_KEYS`/rota `save_notificacoes` já usada pelos outros toggles de notificação).
+- Mensagem (`_montar_mensagem_status_horario`) é bem mais enxuta que o resumo diário — só fila de arte (pendentes/em processamento), uso do Gemini e status do token Cosmos atual, o suficiente pra confirmar num relance que o sistema está de pé.
+
+Testado enviando de verdade pro número configurado (`_enviar_status_horario_whatsapp` chamada manualmente) — mensagem chegou via Evolution API sem erro. Reaproveita a mesma instância (`bot_imgs`) e número (`WHATSAPP_NUMERO_DESTINO`) já usados pelo resumo diário — não é um canal novo, é o mesmo WhatsApp com uma cadência diferente.
+
+**Limite conhecido, deliberadamente fora de escopo por ora**: isso detecta parada por AUSÊNCIA de mensagem (o usuário percebe, mas só na próxima hora cheia esperada) — não é um alerta ativo e imediato de queda. Um alerta imediato de verdade exigiria um processo INDEPENDENTE (fora deste Flask) fazendo ping periódico e alertando via Evolution API diretamente se o servidor não responder — não implementado ainda porque não foi pedido explicitamente; se o heartbeat horário se mostrar insuficiente na prática, esse é o próximo passo natural.
 
 ## Gestão de imagem por produto (painel)
 
