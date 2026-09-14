@@ -5,6 +5,8 @@ import base64
 import threading
 import time
 import queue
+import math
+import colorsys
 import requests
 from io import StringIO, BytesIO
 from io import StringIO
@@ -1819,10 +1821,10 @@ Isto NÃO é uma tela informativa de consulta. É uma MICROEXPERIÊNCIA DE VENDA
 
 CONCEITO VISUAL:
 - Transforme o produto no protagonista de uma cena de consumo/uso aspiracional que conte uma pequena história visual — o shopper deve pensar "eu posso usar/fazer isso em casa", "isso vai ficar muito bom", "vale a pena levar".
-- Se o produto É alimento ou bebida: monte uma cena gastronômica extremamente apetitosa — ingredientes frescos, textura real (vapor, cremosidade, crocância, brilho, gotas), como se estivesse pronto para ser consumido agora mesmo.
+- Se o produto É alimento ou bebida: monte uma cena gastronômica extremamente apetitosa — ingredientes frescos, textura real (vapor, cremosidade, crocância, brilho, gotas), como se estivesse pronto para ser consumido agora mesmo. Se for uma bebida gelada (refrigerante, cerveja, água, suco): cubra a embalagem com GOTAS DE CONDENSAÇÃO realistas e abundantes (gotículas, filetes escorrendo, superfície molhada/brilhante), como se tivesse acabado de sair da geladeira — esse detalhe sozinho já comunica "gelado e refrescante".
 - Se o produto NÃO é alimento (higiene pessoal, perfumaria, cosmético, limpeza, eletrônico etc.): crie a mesma sensação de desejo e aspiração através do contexto de USO REAL da categoria (ex.: banheiro/spa moderno, rotina de cuidado pessoal, ambiente doméstico impecável) — nunca insira comida, ingredientes crus ou sobremesa só porque o nome do produto menciona um sabor/fragrância como "chocolate", "menta", "coco" etc.; isso descreve o AROMA do produto, não um alimento real a ser retratado.
 - Na dúvida sobre a categoria, prefira um cenário neutro e elegante (superfície premium, iluminação de estúdio) a arriscar um contexto tematicamente errado.
-- Fotografia com aparência de campanha de uma grande marca: iluminação cinematográfica, profundidade de campo, textura extremamente realista, composição sofisticada, sensação de produto premium, cores naturais e convidativas, fundo levemente desfocado, detalhes nítidos no produto.
+- Padrão de qualidade: fotografia de still-life comercial de nível internacional, como uma campanha real de uma grande marca de bebidas/alimentos/consumo (ex.: o padrão visual usado por Coca-Cola, Nestlé, Ambev em suas peças de merchandising) — iluminação cinematográfica de estúdio, profundidade de campo bem controlada, texturas extremamente realistas (brilho, umidade, nitidez de superfície), composição sofisticada, cores vibrantes e convidativas, fundo levemente desfocado, detalhes nítidos e "apetitosos" no produto.
 
 REGRAS PRINCIPAIS:
 - Use o produto da imagem original como elemento principal.
@@ -1849,15 +1851,15 @@ COMPOSIÇÃO:
 - Aparência de fotografia comercial de alto nível, como uma campanha publicitária real de uma grande marca — nunca aparência de panfleto promocional, ficha técnica ou tela informativa.
 
 LAYOUT (siga exatamente esta divisão, é uma regra rígida de posicionamento):
-- METADE DIREITA da imagem: o produto, grande, centralizado nessa metade, perfeitamente legível e totalmente integrado ao cenário (sem fundo branco/liso visível ao redor dele). Esta é a ÚNICA área da composição inteira onde o produto (ou qualquer parte reconhecível dele — embalagem, rótulo, tampa etc.) pode aparecer.
-- METADE ESQUERDA inteira (quarto superior e quarto inferior): mantenha essa área com composição visual simples — cenário, elementos decorativos leves suavemente desfocados — SEM nenhum texto, letra, número ou tipografia adicional, E SEM nenhuma parte do produto (nem borrada, nem cortada, nem ao fundo, nem em segundo plano). Um cenário genérico (parede, superfície, ambiente) preenche essa área; o produto nunca "vaza" pra esse lado. É ali que um sistema separado insere depois, com fonte real: o nome do produto, uma frase curta de benefício (o "motivo pra levar") e o preço — a hierarquia visual DESEJO → PRODUTO → BENEFÍCIO/PREÇO só funciona se essa área ficar completamente livre de texto e de qualquer elemento reconhecível do produto.
+- METADE DIREITA da imagem: o produto, grande, centralizado nessa metade, perfeitamente legível e totalmente integrado ao cenário (sem fundo branco/liso visível ao redor dele). Esta é a ÚNICA área da composição inteira onde o produto (ou qualquer parte reconhecível dele — embalagem, rótulo, tampa etc.) pode aparecer. REGRA CRÍTICA: o produto PRECISA aparecer sempre 100% visível e sem nenhum corte — nenhuma parte dele (rótulo, tampa, base) pode ficar cortada pela borda da imagem nem invadir a metade esquerda. Se necessário, afaste um pouco o produto ou ajuste seu tamanho para garantir que ele caiba inteiro, nítido e totalmente dentro da metade direita.
+- METADE ESQUERDA inteira (quarto superior e quarto inferior): mantenha essa área com composição visual simples — cenário, elementos decorativos leves suavemente desfocados — SEM nenhum texto, letra, número ou tipografia adicional, E SEM nenhuma parte do produto (nem borrada, nem cortada, nem ao fundo, nem em segundo plano). Um cenário genérico (parede, superfície, ambiente) preenche essa área; o produto nunca "vaza" pra esse lado. Um sistema separado cobre depois essa metade inteira com um painel gráfico de cor sólida (a cor de identidade do produto) com o nome, uma frase curta de benefício e o preço em fonte real — então essa área da FOTO gerada por você não precisa ficar "bonita" por si só, só limpa e sem elementos que atrapalhem (o painel vai cobrir completamente o que estiver aqui).
 - Use as cores da própria embalagem como referência para a identidade visual da arte.
 
 TEXTOS:
 - NÃO escreva NENHUM texto adicional na imagem — nem nome do produto, nem frases, nem números, nem preço, em nenhuma parte da composição. A única exceção é o texto que já vem impresso na embalagem original do produto (parte da foto de referência), que deve ser preservado normalmente.
 - A frase de benefício, o nome do produto e o preço são adicionados depois por um sistema separado, com fonte real (garante ortografia correta); a imagem gerada deve ficar totalmente livre de tipografia adicional — sua responsabilidade aqui é só a cena/fotografia.
 
-ESTILO: premium, comercial, moderno, clean, cinematográfico, aspiracional, apetitoso (quando o produto for alimento ou bebida), supermercado, digital signage, fotografia publicitária realista de grande marca, alta qualidade, visual impactante, sem pessoas.
+ESTILO: premium, comercial, moderno, clean, cinematográfico, aspiracional, apetitoso e "molhado/fresco" quando o produto for alimento ou bebida gelada, supermercado, digital signage, fotografia publicitária realista de grande marca (padrão Coca-Cola/Nestlé/Ambev), alta qualidade, visual impactante, sem pessoas.
 
 RESULTADO ESPERADO: a cena deve parecer uma campanha de merchandising digital criada por uma grande marca — nunca uma tela informativa de consulta de preço — vendendo o produto visualmente antes mesmo que o shopper leia qualquer texto. Produto fisicamente integrado ao cenário (nunca um recorte colado sobre fundo branco), sem nenhuma arte gráfica ou texto sobreposto.
 
@@ -1870,6 +1872,33 @@ def _montar_prompt_arte(produto):
     if produto.marca:
         descricao = f"{descricao} (marca {produto.marca})"
     return ARTE_PROMPT_TEMPLATE.format(descricao=descricao)
+
+
+_REGEX_QUANTIDADE_EMBALAGEM = re.compile(
+    r'\b\d+[.,]?\d*\s?(?:ML|L|KG|G|MG|UN|UNID\w*|CX|PCT|PACOTE\w*)\b',
+    re.IGNORECASE,
+)
+
+
+def _extrair_quantidade_embalagem(descricao_original, nome_atual):
+    """Rede de segurança: extrai a quantidade/tamanho da embalagem (ex.: '600ML', '2L', '1KG')
+    da descrição original via regex — o usuário quer a quantidade SEMPRE visível na arte, mas
+    a IA às vezes omite esse dado do nome (mesmo instruída a incluir) e, quando inclui, o nome
+    resultante às vezes quebra em mais linhas do que o limite desenhado permite, cortando
+    justamente essa parte. Por isso a quantidade nunca fica misturada dentro da string do nome:
+    esta função REMOVE a quantidade de dentro de `nome_atual` se a IA já tiver incluído ali, e
+    retorna o nome limpo + a quantidade separada — quem desenha (compor_texto_na_arte) sempre
+    põe a quantidade como uma linha PRÓPRIA e garantida, nunca disputando espaço com o resto do
+    nome dentro do limite de linhas do título.
+
+    Retorna (nome_sem_quantidade, quantidade_ou_None)."""
+    match = _REGEX_QUANTIDADE_EMBALAGEM.search(descricao_original or '')
+    if not match:
+        return nome_atual, None
+    quantidade = match.group(0).strip()
+    nome_limpo = re.sub(re.escape(quantidade), '', nome_atual or '', flags=re.IGNORECASE).strip()
+    nome_limpo = re.sub(r'\s{2,}', ' ', nome_limpo).rstrip(',- ')
+    return (nome_limpo or nome_atual), quantidade
 
 
 def _texto_corrompido(texto):
@@ -1889,21 +1918,29 @@ def gerar_textos_arte_ia(produto):
     a IA reconstrói o nome comercial correto a partir do contexto. Esse texto é sempre desenhado
     depois com fonte real (nunca pela IA de imagem), então não corre risco de erro de ortografia.
 
-    Quando há corrupção (caractere de substituição U+FFFD, '�'), a IA às vezes "adivinha" a
-    palavra errada (ex.: 'SOC�CO' virou 'Socaneco' numa geração, quando o certo era 'Sococo') —
-    ou usa uma marca cadastrada errada (esse mesmo produto tem marca='KELLOGG S' no banco, dado
-    de importação claramente errado). Nesses casos, busca uma descrição/marca ÍNTEGRAS pelo EAN
-    nas mesmas fontes públicas do cadastro automático (Cosmos -> Open Food Facts -> Zaffari)
-    ANTES de deixar a IA adivinhar — muito mais confiável que reconstruir de um texto corrompido.
+    Prioridade da fonte da descrição: nosso banco (produto.description) primeiro; se estiver
+    VAZIO ou CORROMPIDO (caractere de substituição U+FFFD, '�'), busca uma descrição/marca
+    ÍNTEGRAS pelo EAN em fontes externas, nessa ordem: Cosmos -> Open Food Facts -> Zaffari ->
+    Google — a primeira que responder com uma descrição válida (não vazia, não corrompida)
+    vence. só DEPOIS de resolvida a melhor fonte disponível é que a IA entra, pra reconstruir/
+    limpar o nome comercial final (ela às vezes "adivinha" errado a partir de texto corrompido —
+    ex.: 'SOC�CO' virou 'Socaneco' numa geração, quando o certo era 'Sococo' — ou usa uma marca
+    cadastrada errada, tipo marca='KELLOGG S' nesse mesmo produto, dado de importação errado —
+    por isso vale a pena buscar uma fonte íntegra ANTES de deixar a IA adivinhar).
 
-    Retorna (nome, headline); nome cai para produto.description em caixa normal se a IA falhar."""
+    Retorna (nome, headline, beneficios, quantidade, marca); nome cai para produto.description
+    em caixa normal se a IA falhar, beneficios é uma lista de até 3 bullets curtos (pode vir
+    vazia), quantidade é a unidade/tamanho da embalagem extraída por regex (ex.: '600ML') só
+    quando o nome gerado não já incluir esse dado (ou None), marca é a marca resolvida (produto
+    ou fonte externa) já em Title Case, usada pra destacar tipograficamente o nome da marca
+    separado do resto da descrição — ou None se não houver marca conhecida."""
     descricao_fonte = produto.description or ''
     marca_fonte = produto.marca or ''
     fallback_nome = (descricao_fonte or 'Produto').title()
     fonte_confiavel = False
 
-    if _texto_corrompido(descricao_fonte) or _texto_corrompido(marca_fonte):
-        for buscar in (fetch_product_from_cosmos, fetch_product_from_openfoodfacts, fetch_product_from_zaffari):
+    if not descricao_fonte.strip() or _texto_corrompido(descricao_fonte) or _texto_corrompido(marca_fonte):
+        for buscar in (fetch_product_from_cosmos, fetch_product_from_openfoodfacts, fetch_product_from_zaffari, fetch_product_from_google):
             dados = buscar(produto.codbar)
             if not dados:
                 continue
@@ -1913,30 +1950,40 @@ def gerar_textos_arte_ia(produto):
             descricao_fonte = desc_externa
             fallback_nome = desc_externa.title()
             fonte_confiavel = True
-            marca_externa = dados.get('brand', {}).get('name', '') if isinstance(dados.get('brand'), dict) else ''
+            marca_externa = dados.get('brand', {}).get('name', '') if isinstance(dados.get('brand'), dict) else (dados.get('marca') or '')
             if marca_externa and marca_externa != 'Marca não disponível':
                 marca_fonte = marca_externa
             break
 
     api_key = _ler_todas_config().get('GEMINI_API_KEY', '').strip()
     if not api_key:
-        return fallback_nome, None
+        return fallback_nome, None, [], None, (marca_fonte.title() if marca_fonte else None)
     try:
         client = genai.Client(vertexai=True, api_key=api_key)
+        instrucao_beneficios = (
+            "Gere também 3 BULLETS curtos de benefício/motivo de compra (máximo 3 palavras cada, "
+            "bem diretos, tipo legenda de ícone — ex.: 'Combina com seus momentos', 'Vai bem com "
+            "toda refeição', 'Mais sabor pra compartilhar'). Não repita a mesma ideia da HEADLINE, "
+            "cada bullet deve trazer um motivo diferente."
+        )
         if fonte_confiavel:
             # Descrição já vem íntegra de uma fonte externa (Cosmos/Open Food Facts/Zaffari) —
             # não vale a pena deixar a IA "reescrever" o nome de novo aqui: às vezes ela troca
             # uma letra ou erra a marca mesmo com um texto de entrada perfeito. Usa o nome exato
-            # dessa fonte (fallback_nome) e pede só a frase de benefício.
+            # dessa fonte (fallback_nome) e pede só a frase de benefício + os bullets.
             instrucao = (
                 f"Este produto de supermercado é: \"{descricao_fonte}\""
                 + (f" (marca {marca_fonte})" if marca_fonte else "")
-                + ". Gere apenas uma frase curta de BENEFÍCIO/motivo pra levar o produto (máximo "
+                + ". Gere uma frase curta de BENEFÍCIO/motivo pra levar o produto (máximo "
                 "5 palavras), tom emocional e comercial — não descreva o produto, diga o que ele "
                 "proporciona. Exemplos de tom (adapte pro produto, não copie): 'Mais sabor pro "
                 "seu dia', 'Leve para casa', 'Vale a pena experimentar', 'Um toque especial'.\n\n"
-                "Responda EXATAMENTE neste formato, sem mais nada:\n"
-                "HEADLINE: <frase>"
+                f"{instrucao_beneficios}\n\n"
+                "Responda EXATAMENTE neste formato, uma linha para cada, sem mais nada:\n"
+                "HEADLINE: <frase>\n"
+                "BULLET1: <bullet 1>\n"
+                "BULLET2: <bullet 2>\n"
+                "BULLET3: <bullet 3>"
             )
         else:
             instrucao = (
@@ -1949,14 +1996,21 @@ def gerar_textos_arte_ia(produto):
                 "a parte legível em vez de inventar uma palavra parecida.\n\n"
                 "Gere:\n"
                 "1. Um nome de produto limpo, comercial e curto, em capitalização normal (não "
-                "tudo maiúsculo), ex.: 'Coca-Cola Sem Açúcar 600ml'.\n"
+                "tudo maiúsculo), ex.: 'Coca-Cola Sem Açúcar 600ml'. IMPORTANTE: se a descrição "
+                "original tiver uma quantidade/tamanho de embalagem (ex.: 600ml, 2L, 1kg, 500g, "
+                "12 unidades, pacote com 3), SEMPRE inclua esse dado no nome, exatamente como "
+                "está na origem — nunca omita a quantidade só pra deixar o nome mais curto.\n"
                 "2. Uma frase curta de BENEFÍCIO/motivo pra levar o produto (máximo 5 palavras), "
                 "tom emocional e comercial — não descreva o produto, diga o que ele proporciona. "
                 "Exemplos de tom (adapte pro produto, não copie): 'Mais sabor pro seu dia', 'Leve "
-                "para casa', 'Vale a pena experimentar', 'Um toque especial'.\n\n"
+                "para casa', 'Vale a pena experimentar', 'Um toque especial'.\n"
+                f"3. {instrucao_beneficios}\n\n"
                 "Responda EXATAMENTE neste formato, uma linha para cada, sem mais nada:\n"
                 "NOME: <nome do produto>\n"
-                "HEADLINE: <frase>"
+                "HEADLINE: <frase>\n"
+                "BULLET1: <bullet 1>\n"
+                "BULLET2: <bullet 2>\n"
+                "BULLET3: <bullet 3>"
             )
         response = client.models.generate_content(
             model='gemini-2.5-flash-lite',
@@ -1965,19 +2019,26 @@ def gerar_textos_arte_ia(produto):
         _registrar_uso_gemini('texto', sucesso=True)
         texto = (response.text or '').strip()
         nome, headline = None, None
+        beneficios = []
         for linha in texto.splitlines():
             linha = linha.strip()
             if linha.upper().startswith('NOME:'):
                 nome = linha.split(':', 1)[1].strip()
             elif linha.upper().startswith('HEADLINE:'):
                 headline = linha.split(':', 1)[1].strip()
+            elif linha.upper().startswith('BULLET'):
+                valor = linha.split(':', 1)[1].strip() if ':' in linha else ''
+                if valor:
+                    beneficios.append(valor)
         nome_final = fallback_nome if fonte_confiavel else (nome or fallback_nome)
-        return nome_final, headline
+        nome_final, quantidade = _extrair_quantidade_embalagem(descricao_fonte, nome_final)
+        marca_exibicao = marca_fonte.title() if marca_fonte and marca_fonte != 'Marca não disponível' else None
+        return nome_final, headline, beneficios[:3], quantidade, marca_exibicao
     except Exception as e:
         rate_limited = '429' in str(e) or 'RESOURCE_EXHAUSTED' in str(e)
         _registrar_uso_gemini('texto', sucesso=False, rate_limited=rate_limited)
         logging.error(f"Erro ao gerar textos da arte via IA: {e}")
-        return fallback_nome, None
+        return fallback_nome, None, [], None, (marca_fonte.title() if marca_fonte else None)
 
 
 def _quebrar_texto(texto, font, max_width, draw):
@@ -2027,14 +2088,22 @@ def _cortar_tarjas_pretas(image_bytes, limiar=12):
     return output.getvalue()
 
 
-def _extrair_cor_acento(image_path, fallback=(200, 30, 30)):
-    """Extrai uma cor saturada e representativa da foto crua do produto, pra usar como
-    acento visual (a linha sob o texto) — aproxima a cor de marca do produto (ex.: vermelho
-    da Coca-Cola) sem precisar de um mapeamento manual por marca."""
+def _extrair_cor_acento(image_path, fallback=(45, 48, 56)):
+    """Extrai a cor DOMINANTE e representativa da foto crua do produto (a cor primária da
+    embalagem/marca — ex.: vermelho da Coca-Cola, azul de outra marca), pra usar como base do
+    painel gráfico da arte — sem precisar de um mapeamento manual por marca. Ordena por
+    contagem de pixels (mais frequente primeiro), então a primeira cor que passar no filtro de
+    'cor de verdade' (não cinza/branco/preto de fundo ou embalagem neutra) já é a mais
+    dominante entre as candidatas válidas — não só 'uma cor saturada qualquer'.
+
+    O fallback (quando a embalagem é genuinamente acromática — branco, preto, prata, sem
+    nenhuma cor viva) é um cinza-chumbo neutro, NÃO mais um vermelho fixo: um painel vermelho
+    'por padrão' ficava visivelmente errado/deslocado em produtos de outras cores quando a
+    extração falhava — um neutro escuro nunca destoa da imagem, seja qual for o produto."""
     try:
         img = Image.open(image_path).convert('RGB')
         img.thumbnail((150, 150))
-        paleta = img.quantize(colors=8, method=Image.MEDIANCUT).convert('RGB')
+        paleta = img.quantize(colors=12, method=Image.MEDIANCUT).convert('RGB')
         cores = paleta.getcolors(img.width * img.height) or []
         cores.sort(key=lambda c: c[0], reverse=True)
         for _contagem, (r, g, b) in cores:
@@ -2042,8 +2111,8 @@ def _extrair_cor_acento(image_path, fallback=(200, 30, 30)):
             saturacao = (maximo - minimo) / maximo if maximo else 0
             brilho = maximo / 255
             # Ignora tons quase brancos/pretos/cinzas (fundo/embalagem neutra) — fica só
-            # com cores vivas o suficiente pra funcionar como acento de marca.
-            if saturacao > 0.35 and 0.15 < brilho < 0.95:
+            # com cores vivas o suficiente pra funcionar como a cor primária da marca.
+            if saturacao > 0.28 and 0.15 < brilho < 0.95:
                 return (r, g, b)
     except Exception:
         pass
@@ -2064,6 +2133,44 @@ def _gradiente_borda_1d(tamanho, largura_pct, alpha_max):
             alpha = 0
         valores.append(alpha)
     return valores
+
+
+ARTE_LARGURA_HORIZONTAL = 1280
+ARTE_ALTURA_HORIZONTAL = 800
+
+
+def _normalizar_tamanho_arte(image, largura=ARTE_LARGURA_HORIZONTAL, altura=ARTE_ALTURA_HORIZONTAL):
+    """REGRA: a arte publicitária NUNCA pode sair do sistema em tamanho diferente de
+    1280x800 (dispositivo na horizontal — resolução real do terminal físico, medida via
+    `adb shell wm size`, não mais um valor 16:9 assumido) — sem essa normalização, o tamanho final variava a
+    cada geração porque _cortar_tarjas_pretas corta uma quantidade diferente de pixels
+    dependendo de quanto letterboxing o Gemini incluiu naquela chamada específica. Duas
+    consequências visuais ruins vinham disso: (1) o app faz CENTER_CROP pra cobrir a tela, e
+    uma fonte de tamanho variável fazia cada imagem ser escalada numa proporção diferente,
+    resultado imprevisível de dispositivo pra dispositivo e de produto pra produto; (2) a
+    vinheta (função abaixo) é desenhada em % da altura da imagem NESTE ponto do pipeline — se
+    o corte de letterboxing reduzisse a altura antes da vinheta ser aplicada, o app then escalava
+    essa imagem já menor de volta pro tamanho da tela, e esse reescalonamento fazia a faixa de
+    vinheta (proporcionalmente correta na arte, mas originada de uma imagem menor) ficar fina
+    demais ou sumir depois de esticada — parecia que o degradê tinha sido removido.
+
+    Normalizando aqui, ANTES da vinheta e do texto, os dois problemas desaparecem: a arte
+    sempre sai em 1344x768 exatos, então a vinheta (aplicada depois, sempre sobre essa mesma
+    resolução fixa) sempre resulta no mesmo efeito visual, e o CENTER_CROP do app sempre
+    escala a partir da mesma origem. Redimensiona preservando a proporção (sem esticar/
+    distorcer o produto) e corta o excedente pra cobrir exatamente largura x altura — o
+    equivalente a um CENTER_CROP feito aqui no servidor, em vez de depender de cada
+    dispositivo fazer isso de um jeito consistente."""
+    origem_largura, origem_altura = image.size
+    if origem_largura == largura and origem_altura == altura:
+        return image
+    escala = max(largura / origem_largura, altura / origem_altura)
+    nova_largura = max(largura, round(origem_largura * escala))
+    nova_altura = max(altura, round(origem_altura * escala))
+    image = image.resize((nova_largura, nova_altura), Image.LANCZOS)
+    esquerda = (nova_largura - largura) // 2
+    topo = (nova_altura - altura) // 2
+    return image.crop((esquerda, topo, esquerda + largura, topo + altura))
 
 
 def _aplicar_vinheta(image, largura_pct=0.14, altura_pct=0.14, alpha_max=110):
@@ -2088,65 +2195,230 @@ def _aplicar_vinheta(image, largura_pct=0.14, altura_pct=0.14, alpha_max=110):
     return Image.alpha_composite(image.convert('RGBA'), preto)
 
 
-def compor_texto_na_arte(image_bytes, nome_produto, headline, cor_acento=(200, 30, 30)):
-    """Desenha o nome do produto + headline sobre a imagem (sem texto) gerada pela IA,
-    usando fonte real — garante ortografia 100% correta, ao contrário de texto renderizado
-    diretamente pelo modelo de imagem. Cartão escuro com opacidade (padrão visual único pra
-    todas as artes) + linha de acento na cor do produto."""
+def _cor_painel_vibrante(cor_rgb, boost_saturacao=1.2, brilho_alvo=0.42, saturacao_minima=0.55):
+    """Deriva do 'cor_acento' extraído da foto do produto uma cor mais rica/saturada e num
+    brilho médio-escuro fixo — o acento puro (extraído pra combinar com quase qualquer produto)
+    às vezes sai claro/pálido demais pra funcionar como fundo sólido de um painel gráfico
+    grande; sem esse ajuste o painel perderia o efeito 'cor de marca forte' que peças
+    publicitárias reais (ex.: vermelho da Coca-Cola) sempre têm."""
+    r, g, b = (c / 255 for c in cor_rgb)
+    h, s, _v = colorsys.rgb_to_hsv(r, g, b)
+    s = min(1.0, max(s, saturacao_minima) * boost_saturacao)
+    r2, g2, b2 = colorsys.hsv_to_rgb(h, s, brilho_alvo)
+    return (round(r2 * 255), round(g2 * 255), round(b2 * 255))
+
+
+def _desenhar_painel_curvo(draw, width, height, cor_rgba, largura_base_pct=0.44, amplitude_pct=0.035):
+    """Desenha um painel de cor sólida cobrindo a metade esquerda, com a borda direita em uma
+    curva orgânica (uma onda suave) em vez de uma linha reta — o acabamento gráfico de
+    campanhas publicitárias reais (ex.: peças da Coca-Cola), bem mais bonito que um retângulo
+    simples. Retorna o x mais à esquerda que a curva alcança, usado como limite seguro pro
+    texto nunca colidir com a onda."""
+    largura_base = width * largura_base_pct
+    amplitude = width * amplitude_pct
+    passos = 48
+    pontos = [(0, 0)]
+    for i in range(passos + 1):
+        y = height * i / passos
+        x = largura_base + amplitude * math.sin((y / height) * math.pi * 1.4)
+        pontos.append((x, y))
+    pontos.append((0, height))
+    draw.polygon(pontos, fill=cor_rgba)
+    return largura_base - amplitude
+
+
+def _desenhar_texto_com_sombra(draw, pos, texto, font, fill=(255, 255, 255, 255), sombra=(0, 0, 0, 170), deslocamento=2):
+    """Desenha texto com uma sombra escura sutil por baixo — garante legibilidade em cima de
+    uma foto/cenário com brilho e cor variáveis (ao contrário do painel de cor sólida, essa
+    área não tem um fundo previsível para calcular contraste)."""
+    x, y = pos
+    draw.text((x + deslocamento, y + deslocamento), texto, font=font, fill=sombra)
+    draw.text((x, y), texto, font=font, fill=fill)
+
+
+def _desenhar_bullet_beneficio(draw, x, y, diametro, cor_marca, texto, font, largura_max_texto, alinhar_direita=False):
+    """Desenha um bullet de benefício: círculo na cor da marca com checkmark branco + texto ao
+    lado (referência: peças publicitárias reais com 2-3 ícones de benefício ao lado do
+    produto). Usa um checkmark genérico em vez de um ícone temático por benefício (copo,
+    talher, pessoas etc.) — evita ter que decidir programaticamente qual ícone combina com
+    qual frase gerada pela IA; o checkmark funciona pra qualquer benefício.
+
+    `alinhar_direita=True` desenha o texto à ESQUERDA do ícone em vez de à direita (usado do
+    lado direito da arte, sobre a foto do produto, pra manter o grupo ícone+texto encostado na
+    borda direita — mesmo layout da referência)."""
+    raio = diametro / 2
+    cx, cy = x + raio, y + raio
+    linha = _quebrar_texto(texto, font, largura_max_texto, draw)[0] if texto else ''
+    altura_texto = draw.textbbox((0, 0), linha, font=font)[3]
+    texto_y = y + (diametro - altura_texto) / 2
+    if alinhar_direita:
+        largura_linha = draw.textbbox((0, 0), linha, font=font)[2]
+        texto_x = x - int(diametro * 0.35) - largura_linha
+    else:
+        texto_x = x + diametro * 1.35
+
+    if alinhar_direita:
+        # Sobre a foto do produto (fundo imprevisível) — cápsula semitransparente atrás do
+        # grupo ícone+texto pra garantir legibilidade em qualquer parte da cena, mesmo quando
+        # o bullet cai em cima do próprio produto (mesmo recurso visual usado em peças
+        # publicitárias reais, não é só um workaround).
+        pad_v = int(diametro * 0.22)
+        pad_h = int(diametro * 0.35)
+        capsula = [texto_x - pad_h, y - pad_v, x + diametro + pad_h, y + diametro + pad_v]
+        raio_capsula = (capsula[3] - capsula[1]) / 2
+        draw.rounded_rectangle(capsula, radius=raio_capsula, fill=(20, 20, 24, 140))
+
+    draw.ellipse([x, y, x + diametro, y + diametro], fill=(*cor_marca, 255))
+    espessura = max(2, int(diametro * 0.14))
+    draw.line(
+        [(cx - raio * 0.45, cy), (cx - raio * 0.1, cy + raio * 0.35), (cx + raio * 0.5, cy - raio * 0.35)],
+        fill=(255, 255, 255, 255),
+        width=espessura,
+        joint='curve',
+    )
+    _desenhar_texto_com_sombra(draw, (texto_x, texto_y), linha, font)
+
+
+def _separar_marca_do_nome(nome, marca):
+    """Separa a marca do resto do nome pra hierarquia tipográfica em duas camadas (marca em
+    destaque, resto menor/mais leve — ex.: 'Coca-Cola' grande + 'Sabor Original' pequeno).
+    Quando o nome começa pela marca (caso comum, já que fallback_nome/nome gerado costuma
+    incluir a marca no início), remove a marca do resto pra não repetir; quando não bate
+    (fontes diferentes, formatação diferente), mantém o nome inteiro como 'resto' mesmo assim —
+    prefere uma pequena redundância a perder o destaque da marca."""
+    marca = (marca or '').strip()
+    nome = (nome or '').strip()
+    if not marca:
+        return None, nome
+    if nome.upper().startswith(marca.upper()):
+        resto = nome[len(marca):].strip(' -,')
+    else:
+        resto = nome
+    return marca, resto
+
+
+def compor_texto_na_arte(image_bytes, nome_produto, headline, cor_acento=(45, 48, 56), beneficios=None, quantidade=None, marca=None):
+    """Desenha o nome do produto + headline sobre a imagem (sem texto) gerada pela IA, usando
+    fonte real — garante ortografia 100% correta, ao contrário de texto renderizado diretamente
+    pelo modelo de imagem. Painel de cor sólida (identidade do produto) com borda em curva
+    orgânica cobrindo a metade esquerda + texto branco por cima — visual inspirado em campanhas
+    publicitárias reais (ex.: Coca-Cola). Hierarquia tipográfica em duas camadas: a MARCA em
+    destaque (fonte grande, peso Regular) e o RESTO do nome + quantidade numa fonte bem menor e
+    mais leve (peso ExtraLight) — pedido explícito do usuário, com tamanhos/pesos calibrados
+    (~80px/peso 400 pra marca, ~40px/peso 200 pro resto, escalados proporcionalmente à altura
+    da imagem do mesmo jeito que todo o resto do texto). Os bullets de benefício ficam do lado
+    DIREITO, sobre a foto do produto (não no painel esquerdo) — o painel esquerdo fica só com
+    marca/nome/quantidade/headline, deixando a faixa inferior livre para o card de preço que o
+    app Android sobrepõe depois."""
     image = Image.open(BytesIO(image_bytes)).convert('RGBA')
+    image = _normalizar_tamanho_arte(image)
     image = _aplicar_vinheta(image)
     width, height = image.size
 
     overlay = Image.new('RGBA', image.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
 
-    margin = int(width * 0.05)
-    card_width = int(width * 0.42)
-    card_top = margin
-    card_bottom = int(height * 0.46)
-    padding = int(width * 0.025)
-    radius = int(height * 0.03)
-    accent_height = max(4, int(height * 0.012))
+    cor_painel = _cor_painel_vibrante(cor_acento)
+    borda_segura = _desenhar_painel_curvo(draw, width, height, (*cor_painel, 255))
 
-    draw.rounded_rectangle(
-        [margin, card_top, margin + card_width, card_bottom],
-        radius=radius,
-        fill=(10, 12, 16, 175),
-    )
-    # Linha de acento na cor do produto, encostada na base do cartão.
-    draw.rounded_rectangle(
-        [margin, card_bottom - accent_height, margin + card_width, card_bottom],
-        radius=min(radius, accent_height),
-        fill=(*cor_acento, 255),
-    )
+    margin = int(width * 0.06)
+    max_text_width = int(borda_segura - margin - width * 0.04)
 
     # Proporções calibradas (e testadas de verdade) num tablet 10" 1280x800 na horizontal — o
     # dispositivo real usado nos testes de consulta de preço. Continuam relativas à altura da
     # própria imagem (não um valor fixo em pixels) porque a IA às vezes devolve uma resolução
     # um pouco diferente; a proporção é o que garante que o texto sempre saia no mesmo tamanho
-    # visual nessa tela, independente disso.
-    font_nome = ImageFont.truetype(FONT_PATH, int(height * 0.075))
+    # visual nessa tela, independente disso. Texto começa numa faixa alta do painel (não colado
+    # no topo) — o painel é full-height pra cobrir toda a metade esquerda, mas o preço
+    # (sobreposto depois pelo app Android) ocupa a faixa perto da base, então o conteúdo do
+    # painel (nome + quantidade + headline, sem mais os bullets) precisa parar bem antes disso.
+    marca_destaque, resto_nome = _separar_marca_do_nome(nome_produto, marca)
+
+    # Marca em destaque: fonte grande, peso Regular (não Bold — pedido explícito do usuário,
+    # ~80px de referência). O resto do nome (+ quantidade) usa uma fonte bem menor e mais leve
+    # (~40px, peso ExtraLight) — metade do tamanho da marca, é a hierarquia "marca chama a
+    # atenção, o resto é só complemento". Quando não há marca identificável, cai pro estilo
+    # antigo (nome inteiro grande e em negrito) — mais seguro que não destacar nada.
+    font_marca = ImageFont.truetype(FONT_PATH, int(height * 0.095))
+    font_marca.set_variation_by_name('Regular')
+    font_resto = ImageFont.truetype(FONT_PATH, max(10, int(height * 0.048)))
+    font_resto.set_variation_by_name('ExtraLight')
+    font_nome = ImageFont.truetype(FONT_PATH, int(height * 0.09))
     font_nome.set_variation_by_name('Bold')
-    font_headline = ImageFont.truetype(FONT_PATH, int(height * 0.0255))
+    # Fonte da headline 40% menor que antes (pedido do usuário) — o painel ficou mais discreto
+    # abaixo do nome, dando mais destaque relativo ao título e sobrando espaço pro preço.
+    font_headline = ImageFont.truetype(FONT_PATH, max(10, int(height * 0.03 * 0.6)))
     font_headline.set_variation_by_name('Medium')
 
-    text_x = margin + padding
-    text_y = card_top + padding
-    max_text_width = card_width - (padding * 2)
+    text_x = margin
+    text_y = int(height * 0.13)
     text_color = (255, 255, 255, 255)
-    muted_color = (222, 226, 232, 235)
-    line_height_nome = int(height * 0.085)
-    line_height_headline = int(height * 0.0323)
+    muted_color = (255, 255, 255, 215)
+    resto_color = (255, 255, 255, 225)
+    line_height_nome = int(height * 0.095)
+    line_height_marca = int(height * 0.1)
+    line_height_resto = int(height * 0.052)
+    line_height_headline = int(height * 0.026)
+    accent_height = max(4, int(height * 0.01))
 
-    for linha in _quebrar_texto(nome_produto, font_nome, max_text_width, draw)[:3]:
-        draw.text((text_x, text_y), linha, font=font_nome, fill=text_color)
-        text_y += line_height_nome
+    if marca_destaque:
+        for linha in _quebrar_texto(marca_destaque, font_marca, max_text_width, draw)[:2]:
+            draw.text((text_x, text_y), linha, font=font_marca, fill=text_color)
+            text_y += line_height_marca
+        text_y += int(height * 0.008)
+        # Resto do nome + quantidade juntos na fonte pequena/leve — a quantidade não precisa
+        # mais de uma linha garantida em fonte grande aqui, ela já cabe tranquilamente junto
+        # com o resto do nome nesse tamanho reduzido.
+        texto_resto = f"{resto_nome} {quantidade}".strip() if quantidade else resto_nome
+        for linha in _quebrar_texto(texto_resto, font_resto, max_text_width, draw)[:2]:
+            draw.text((text_x, text_y), linha, font=font_resto, fill=resto_color)
+            text_y += line_height_resto
+    else:
+        # Sem marca identificável: mantém o nome inteiro grande e em negrito (comportamento
+        # anterior), com a quantidade como linha garantida à parte.
+        for linha in _quebrar_texto(nome_produto, font_nome, max_text_width, draw)[:3]:
+            draw.text((text_x, text_y), linha, font=font_nome, fill=text_color)
+            text_y += line_height_nome
+        if quantidade:
+            draw.text((text_x, text_y), quantidade, font=font_nome, fill=text_color)
+            text_y += line_height_nome
+
+    text_y += int(height * 0.015)
+    linha_underline_largura = min(max_text_width, int(width * 0.2))
+    draw.rounded_rectangle(
+        [text_x, text_y, text_x + linha_underline_largura, text_y + accent_height],
+        radius=accent_height // 2,
+        fill=(255, 255, 255, 230),
+    )
+    text_y += accent_height + int(height * 0.025)
 
     if headline:
-        text_y += int(height * 0.015)
         for linha in _quebrar_texto(headline, font_headline, max_text_width, draw)[:2]:
             draw.text((text_x, text_y), linha, font=font_headline, fill=muted_color)
             text_y += line_height_headline
+
+    if beneficios:
+        # Bullets do lado DIREITO, sobre a foto do produto — encostados na borda direita, uma
+        # embaixo da outra, ancorados na BASE da imagem (não mais centralizados verticalmente,
+        # pedido do usuário) com uma margem de segurança pra não encostar na borda inferior.
+        # Ícone com fundo sólido + texto com sombra (em vez do texto branco liso usado no
+        # painel) porque aqui não há uma cor de fundo previsível atrás do texto, só a cena
+        # gerada pela IA.
+        font_beneficio = ImageFont.truetype(FONT_PATH, int(height * 0.026))
+        font_beneficio.set_variation_by_name('Medium')
+        diametro_icone = int(height * 0.05)
+        espaco_linha = int(height * 0.075)
+        beneficios_usados = beneficios[:3]
+        altura_bloco = espaco_linha * (len(beneficios_usados) - 1) + diametro_icone
+        icone_x = int(width * 0.965) - diametro_icone
+        margem_inferior = int(height * 0.08)
+        bloco_y = height - margem_inferior - altura_bloco
+        largura_max_beneficio = int(width * 0.22)
+        for i, texto_beneficio in enumerate(beneficios_usados):
+            _desenhar_bullet_beneficio(
+                draw, icone_x, bloco_y + i * espaco_linha, diametro_icone, cor_painel,
+                texto_beneficio, font_beneficio, largura_max_beneficio, alinhar_direita=True,
+            )
 
     final_image = Image.alpha_composite(image, overlay).convert('RGB')
     output = BytesIO()
@@ -2203,9 +2475,9 @@ def gerar_arte_publicitaria(produto, image_path):
         raise RuntimeError('A API Gemini não retornou uma imagem gerada (verifique se o modelo de imagem está disponível para sua chave).')
 
     output_bytes = _cortar_tarjas_pretas(output_bytes)
-    nome_produto, headline = gerar_textos_arte_ia(produto)
+    nome_produto, headline, beneficios, quantidade, marca = gerar_textos_arte_ia(produto)
     cor_acento = _extrair_cor_acento(image_path)
-    output_bytes = compor_texto_na_arte(output_bytes, nome_produto, headline, cor_acento)
+    output_bytes = compor_texto_na_arte(output_bytes, nome_produto, headline, cor_acento, beneficios, quantidade, marca)
 
     output_path = os.path.join(ARTES_FOLDER, f'{produto.codbar}.webp')
     with open(output_path, 'wb') as out_file:
@@ -2686,7 +2958,7 @@ def admin_status_sistema():
 
 NOTIFICACAO_CONFIG_KEYS = [
     'RESEND_API_KEY', 'RESEND_REMETENTE', 'RESUMO_DESTINATARIOS', 'RESUMO_HORARIO', 'RESUMO_ATIVO',
-    'WHATSAPP_ATIVO', 'WHATSAPP_PROVEDOR', 'WHATSAPP_BASE_URL', 'WHATSAPP_INSTANCE',
+    'WHATSAPP_ATIVO', 'WHATSAPP_BASE_URL', 'WHATSAPP_INSTANCE',
     'WHATSAPP_TOKEN', 'WHATSAPP_NUMERO_DESTINO',
 ]
 
@@ -2790,17 +3062,14 @@ def _enviar_email_resumo_diario(cfg, pendentes, stats, cosmos_status, cadastros_
 
 
 def _enviar_whatsapp_resumo_diario(cfg, pendentes, stats, cosmos_status, cadastros_automaticos, gemini_status):
-    """Envia um resumo diário curto por WhatsApp via Z-API ou Evolution API (gateways
-    self-hosted comuns no Brasil, ambos recebem um POST simples com token/instância). Formato
-    ainda não testado contra uma conta real — ajustar o corpo/endpoint aqui se o provedor
-    específico usar um contrato diferente. Levanta exceção em caso de falha."""
+    """Envia um resumo diário curto por WhatsApp via Evolution API (self-hosted) — mesma
+    instância criada/gerenciada na aba WhatsApp do painel. Levanta exceção em caso de falha."""
     base_url = cfg.get('WHATSAPP_BASE_URL', '').strip().rstrip('/')
     instancia = cfg.get('WHATSAPP_INSTANCE', '').strip()
-    token = cfg.get('WHATSAPP_TOKEN', '').strip()
+    apikey = cfg.get('WHATSAPP_TOKEN', '').strip()
     numero = cfg.get('WHATSAPP_NUMERO_DESTINO', '').strip()
-    provedor = cfg.get('WHATSAPP_PROVEDOR', 'zapi').strip()
-    if not base_url or not token or not numero:
-        raise ValueError('WhatsApp não configurado (URL, token ou número destino ausentes)')
+    if not base_url or not apikey or not instancia or not numero:
+        raise ValueError('WhatsApp não configurado (servidor, instância ou número destino ausentes — ver aba WhatsApp)')
 
     mensagem = (
         "*Mupa Brain* - Resumo diário\n\n"
@@ -2811,14 +3080,9 @@ def _enviar_whatsapp_resumo_diario(cfg, pendentes, stats, cosmos_status, cadastr
         f"Imagens não encontradas pendentes: {len(pendentes)}"
     )
 
-    if provedor == 'evolution':
-        url = f"{base_url}/message/sendText/{instancia}"
-        headers = {'apikey': token, 'Content-Type': 'application/json'}
-        payload = {'number': numero, 'text': mensagem}
-    else:  # zapi (padrão)
-        url = f"{base_url}/instances/{instancia}/token/{token}/send-text"
-        headers = {'Content-Type': 'application/json'}
-        payload = {'phone': numero, 'message': mensagem}
+    url = f"{base_url}/message/sendText/{instancia}"
+    headers = {'apikey': apikey, 'Content-Type': 'application/json'}
+    payload = {'number': numero, 'textMessage': {'text': mensagem}}
 
     resposta = requests.post(url, json=payload, headers=headers, timeout=20)
     resposta.raise_for_status()
@@ -2920,6 +3184,246 @@ def admin_enviar_resumo_diario():
     if not resultado['enviado']:
         return jsonify({'message': 'Falha ao enviar em todos os canais ativos.', **resultado}), 500
     return jsonify({'message': f"Resumo enviado ({resultado['total_nao_encontradas']} imagem(ns) pendente(s)).", **resultado}), 200
+
+
+# =====================================================================
+# WhatsApp — gestão de instância via Evolution API (self-hosted)
+# =====================================================================
+# Documentação: https://docs.evolutionfoundation.com.br/evolution-api/installation
+# Reaproveita as mesmas chaves de Config já usadas pelo resumo diário
+# (WHATSAPP_BASE_URL, WHATSAPP_TOKEN, WHATSAPP_INSTANCE, WHATSAPP_NUMERO_DESTINO) — criar uma
+# instância aqui é o que torna esses campos funcionais para o envio do resumo.
+
+
+def _evolution_config():
+    """Lê a config da Evolution API; lança ValueError com mensagem amigável se faltar algo
+    essencial (URL do servidor ou apikey)."""
+    cfg = _ler_todas_config()
+    base_url = cfg.get('WHATSAPP_BASE_URL', '').strip().rstrip('/')
+    apikey = cfg.get('WHATSAPP_TOKEN', '').strip()
+    instancia = cfg.get('WHATSAPP_INSTANCE', '').strip()
+    if not base_url or not apikey:
+        raise ValueError('Configure a URL do servidor e a API Key da Evolution API antes de continuar.')
+    return base_url, apikey, instancia
+
+
+@app.route('/admin/whatsapp/criar-instancia', methods=['POST'])
+@jwt_required()
+def admin_whatsapp_criar_instancia():
+    """Cria uma nova instância na Evolution API e retorna o QR code (base64) pra escanear no
+    WhatsApp. A instância criada vira a 'ativa' (salva em WHATSAPP_INSTANCE) — é ela que o
+    resumo diário usa pra enviar mensagem."""
+    try:
+        base_url, apikey, _ = _evolution_config()
+    except ValueError as e:
+        return jsonify({'message': str(e)}), 400
+
+    data = request.form or request.json or {}
+    nome_instancia = (data.get('instance_name') or '').strip()
+    if not nome_instancia:
+        return jsonify({'message': 'Informe um nome para a instância.'}), 400
+    numero = (data.get('number') or '').strip()
+
+    payload = {
+        'instanceName': nome_instancia,
+        'qrcode': True,
+        'integration': 'WHATSAPP-BAILEYS',
+    }
+    if numero:
+        payload['number'] = numero
+
+    try:
+        resposta = requests.post(
+            f'{base_url}/instance/create',
+            headers={'apikey': apikey, 'Content-Type': 'application/json'},
+            json=payload,
+            timeout=30,
+        )
+    except requests.RequestException as e:
+        return jsonify({'message': f'Erro de rede ao falar com a Evolution API: {e}'}), 502
+
+    if resposta.status_code >= 400:
+        return jsonify({'message': f'Evolution API retornou HTTP {resposta.status_code}: {resposta.text[:300]}'}), 502
+
+    corpo = resposta.json()
+    set_config('WHATSAPP_INSTANCE', nome_instancia)
+    if numero:
+        set_config('WHATSAPP_NUMERO_DESTINO', numero)
+
+    qrcode = corpo.get('qrcode') or {}
+    return jsonify({
+        'message': f'Instância "{nome_instancia}" criada. Escaneie o QR code com o WhatsApp.',
+        'instance_name': nome_instancia,
+        'status': (corpo.get('instance') or {}).get('status'),
+        'qrcode_base64': qrcode.get('base64'),
+        'pairing_code': qrcode.get('pairingCode'),
+    }), 201
+
+
+@app.route('/admin/whatsapp/qrcode', methods=['GET'])
+@jwt_required()
+def admin_whatsapp_qrcode():
+    """Busca um QR code novo pra instância já configurada (ex.: o código anterior expirou
+    antes de escanear, ou a instância desconectou e precisa reconectar)."""
+    try:
+        base_url, apikey, instancia = _evolution_config()
+    except ValueError as e:
+        return jsonify({'message': str(e)}), 400
+    if not instancia:
+        return jsonify({'message': 'Nenhuma instância configurada ainda — crie uma primeiro.'}), 400
+
+    try:
+        resposta = requests.get(
+            f'{base_url}/instance/connect/{instancia}',
+            headers={'apikey': apikey},
+            timeout=20,
+        )
+    except requests.RequestException as e:
+        return jsonify({'message': f'Erro de rede ao falar com a Evolution API: {e}'}), 502
+
+    if resposta.status_code >= 400:
+        return jsonify({'message': f'Evolution API retornou HTTP {resposta.status_code}: {resposta.text[:300]}'}), 502
+
+    corpo = resposta.json()
+    return jsonify({
+        'qrcode_base64': corpo.get('base64'),
+        'pairing_code': corpo.get('pairingCode'),
+    }), 200
+
+
+@app.route('/admin/whatsapp/status', methods=['GET'])
+@jwt_required()
+def admin_whatsapp_status():
+    """Estado atual da conexão da instância configurada: 'open' (conectado), 'close'
+    (desconectado) ou 'connecting'. Usado pelo painel pra saber quando parar de mostrar o QR
+    code (assim que o usuário escaneia, o estado vira 'open')."""
+    try:
+        base_url, apikey, instancia = _evolution_config()
+    except ValueError as e:
+        return jsonify({'message': str(e), 'state': 'unconfigured'}), 200
+    if not instancia:
+        return jsonify({'state': 'no_instance'}), 200
+
+    try:
+        resposta = requests.get(
+            f'{base_url}/instance/connectionState/{instancia}',
+            headers={'apikey': apikey},
+            timeout=15,
+        )
+    except requests.RequestException as e:
+        return jsonify({'state': 'error', 'message': str(e)}), 200
+
+    if resposta.status_code == 404:
+        return jsonify({'state': 'not_found'}), 200
+    if resposta.status_code >= 400:
+        return jsonify({'state': 'error', 'message': f'HTTP {resposta.status_code}'}), 200
+
+    corpo = resposta.json()
+    estado = (corpo.get('instance') or {}).get('state', 'unknown')
+    return jsonify({'state': estado, 'instance_name': instancia}), 200
+
+
+@app.route('/admin/whatsapp/instancias', methods=['GET'])
+@jwt_required()
+def admin_whatsapp_instancias():
+    """Lista todas as instâncias cadastradas no servidor Evolution API (não só a configurada
+    aqui) — útil pra ver o que já existe no servidor antes de criar uma nova."""
+    try:
+        base_url, apikey, _ = _evolution_config()
+    except ValueError as e:
+        return jsonify({'message': str(e)}), 400
+
+    try:
+        resposta = requests.get(f'{base_url}/instance/fetchInstances', headers={'apikey': apikey}, timeout=20)
+    except requests.RequestException as e:
+        return jsonify({'message': f'Erro de rede ao falar com a Evolution API: {e}'}), 502
+
+    if resposta.status_code >= 400:
+        return jsonify({'message': f'Evolution API retornou HTTP {resposta.status_code}: {resposta.text[:300]}'}), 502
+
+    bruto = resposta.json()
+    instancias = [{
+        'instance_name': (item.get('instance') or {}).get('instanceName'),
+        'status': (item.get('instance') or {}).get('status'),
+        'state': ((item.get('instance') or {}).get('connectionStatus') or {}).get('state'),
+    } for item in bruto] if isinstance(bruto, list) else []
+    return jsonify({'instancias': instancias}), 200
+
+
+@app.route('/admin/whatsapp/desconectar', methods=['POST'])
+@jwt_required()
+def admin_whatsapp_desconectar():
+    """Desconecta (logout) a instância configurada sem apagá-la — o número sai do WhatsApp Web
+    vinculado, mas a instância continua existindo no servidor pra reconectar depois."""
+    try:
+        base_url, apikey, instancia = _evolution_config()
+    except ValueError as e:
+        return jsonify({'message': str(e)}), 400
+    if not instancia:
+        return jsonify({'message': 'Nenhuma instância configurada.'}), 400
+
+    try:
+        resposta = requests.delete(f'{base_url}/instance/logout/{instancia}', headers={'apikey': apikey}, timeout=20)
+    except requests.RequestException as e:
+        return jsonify({'message': f'Erro de rede ao falar com a Evolution API: {e}'}), 502
+
+    if resposta.status_code >= 400:
+        return jsonify({'message': f'Evolution API retornou HTTP {resposta.status_code}: {resposta.text[:300]}'}), 502
+    return jsonify({'message': f'Instância "{instancia}" desconectada.'}), 200
+
+
+@app.route('/admin/whatsapp/excluir-instancia', methods=['POST'])
+@jwt_required()
+def admin_whatsapp_excluir_instancia():
+    """Apaga a instância configurada no servidor Evolution API e limpa WHATSAPP_INSTANCE."""
+    try:
+        base_url, apikey, instancia = _evolution_config()
+    except ValueError as e:
+        return jsonify({'message': str(e)}), 400
+    if not instancia:
+        return jsonify({'message': 'Nenhuma instância configurada.'}), 400
+
+    try:
+        resposta = requests.delete(f'{base_url}/instance/delete/{instancia}', headers={'apikey': apikey}, timeout=20)
+    except requests.RequestException as e:
+        return jsonify({'message': f'Erro de rede ao falar com a Evolution API: {e}'}), 502
+
+    if resposta.status_code >= 400:
+        return jsonify({'message': f'Evolution API retornou HTTP {resposta.status_code}: {resposta.text[:300]}'}), 502
+
+    set_config('WHATSAPP_INSTANCE', '')
+    return jsonify({'message': f'Instância "{instancia}" excluída.'}), 200
+
+
+@app.route('/admin/whatsapp/testar-envio', methods=['POST'])
+@jwt_required()
+def admin_whatsapp_testar_envio():
+    """Envia uma mensagem de teste pro número configurado (WHATSAPP_NUMERO_DESTINO), pra
+    validar que a instância está mesmo conectada e funcionando de ponta a ponta."""
+    try:
+        base_url, apikey, instancia = _evolution_config()
+    except ValueError as e:
+        return jsonify({'message': str(e)}), 400
+    if not instancia:
+        return jsonify({'message': 'Nenhuma instância configurada.'}), 400
+
+    numero = _ler_todas_config().get('WHATSAPP_NUMERO_DESTINO', '').strip()
+    if not numero:
+        return jsonify({'message': 'Configure um número de destino primeiro.'}), 400
+
+    try:
+        resposta = requests.post(
+            f'{base_url}/message/sendText/{instancia}',
+            headers={'apikey': apikey, 'Content-Type': 'application/json'},
+            json={'number': numero, 'textMessage': {'text': 'Mupa Brain: mensagem de teste — conexão OK!'}},
+            timeout=20,
+        )
+    except requests.RequestException as e:
+        return jsonify({'message': f'Erro de rede ao falar com a Evolution API: {e}'}), 502
+
+    if resposta.status_code >= 400:
+        return jsonify({'message': f'Evolution API retornou HTTP {resposta.status_code}: {resposta.text[:300]}'}), 502
+    return jsonify({'message': f'Mensagem de teste enviada para {numero}.'}), 200
 
 
 def _iniciar_agendador_resumo():

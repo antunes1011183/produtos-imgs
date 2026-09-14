@@ -23,6 +23,74 @@ Cada regra existe por causa de um bug real observado:
 - **Sem pessoas/rostos/mãos**: regra de compliance, não decoração.
 - **Sem logo de terceiro duplicado**: um selo já impresso na embalagem (ex.: FIFA, campeonato licenciado) não pode ser recriado como elemento gráfico separado na composição.
 
+### REGRA FIXA: a arte sempre sai em 1280x800 (dispositivo na horizontal) — nunca mudar
+
+`_normalizar_tamanho_arte` (chamada em `compor_texto_na_arte`, logo depois de abrir a imagem e ANTES da vinheta/texto) força a arte final a sair **sempre** em `ARTE_LARGURA_HORIZONTAL x ARTE_ALTURA_HORIZONTAL` = **1280x800**, redimensionando com preservação de proporção e cortando o excedente (mesma lógica de um `CENTER_CROP`, feita aqui no servidor). Isso é uma regra explícita pedida pelo usuário, não uma escolha arbitrária — **nunca remover essa normalização ou deixar o tamanho variar**.
+
+Por quê isso importa tanto: antes dessa normalização, `_cortar_tarjas_pretas` cortava uma quantidade *variável* de pixels a cada geração (dependendo de quanto letterboxing o Gemini incluiu naquela chamada específica), então o arquivo final saía com um tamanho ligeiramente diferente toda vez. Isso causava dois problemas visuais concretos, ambos reportados pelo usuário e confirmados durante a investigação:
+1. O app faz `CENTER_CROP`/`FIT_CENTER` (ver histórico abaixo) pra exibir a arte — uma fonte de tamanho variável fazia cada imagem ser escalada numa proporção diferente, resultado imprevisível de produto pra produto.
+2. A vinheta (`_aplicar_vinheta`) é desenhada em % da altura da imagem *nesse ponto do pipeline* — se o corte de letterboxing reduzia a altura antes da vinheta ser aplicada, o app depois escalava essa imagem (já menor) de volta pro tamanho da tela, e esse reescalonamento fazia a faixa de vinheta ficar fina demais ou sumir visualmente — parecia que o degradê tinha sido removido, mas o código nunca deixou de chamar `_aplicar_vinheta`; o efeito só ficava inconsistente por causa do tamanho variável de entrada.
+
+**Por que 1280x800 e não 1344x768 (valor original, um 16:9 genérico "arredondado")**: o usuário mediu a resolução real do terminal físico via `adb shell wm size` (`Physical size: 1280x800`) e pediu pra usar esse valor exato em vez de uma suposição de proporção. Antes da troca, a arte (1344x768, proporção 1.75:1) não batia com a tela real (1280x800, proporção 1.6:1) — o app usava `FIT_CENTER` (ver seção do app abaixo) pra nunca cortar a arte, mas isso deixava uma tarja (letterbox) visível no topo/base por causa do descompasso de proporção. Com a arte gerada EXATAMENTE na resolução real do terminal, `FIT_CENTER` escala 1:1 e cobre a tela inteira sem cortar nada E sem nenhuma tarja — as duas exigências (nunca cortar / preencher a tela) deixam de ser conflitantes.
+
+Isso significa que, **se a loja/terminal físico tiver uma resolução de tela diferente de 1280x800, esse valor precisa ser atualizado** (não é mais um 16:9 universal, é a resolução exata de um hardware específico) — rodar `adb shell wm size` no terminal em questão antes de mudar. Se um dia existirem terminais com resoluções diferentes ao mesmo tempo, essa constante única deixa de fazer sentido — seria necessário um `ARTE_LARGURA_HORIZONTAL`/`ARTE_ALTURA_HORIZONTAL` por perfil de dispositivo, não implementado ainda porque não foi pedido.
+
+Se um dia existir suporte a terminal em modo retrato, ele precisa de uma constante de tamanho fixa própria (resolução real do terminal em pé, medida do mesmo jeito) — mas seguindo a mesma regra: nunca variável, sempre a resolução física real.
+
+Verificado após a correção: art regenerada via `/admin/gerar-arte/<codbar>` saiu em exatamente `(1280, 800)` (`PIL.Image.size`), e testada de ponta a ponta no terminal físico (`SK100_Mupa`, serial `4001442606003389`) — arte cobrindo a tela inteira, sem corte nas bordas e sem tarja.
+
+### Painel gráfico de cor sólida com borda em curva (redesign do texto, referência: campanhas reais tipo Coca-Cola)
+
+O cartão escuro semi-transparente original foi substituído por um **painel de cor sólida cobrindo a metade esquerda inteira**, com a borda direita em curva orgânica (uma onda suave, `_desenhar_painel_curvo`) em vez de uma linha reta — visual bem mais forte, de campanha publicitária de verdade, pedido explicitamente pelo usuário mostrando uma peça real da Coca-Cola como referência.
+
+- `_cor_painel_vibrante(cor_acento)`: a cor extraída da embalagem (`_extrair_cor_acento`) às vezes sai clara/pálida demais pra um painel grande de cor sólida — essa função força saturação mínima e um brilho médio-escuro fixo (via HSV) pra sempre ter aquele efeito "cor de marca forte" (tipo o vermelho da Coca-Cola), sem depender de sorte na extração.
+- `_desenhar_painel_curvo`: desenha o painel como um polígono cujo lado direito segue uma curva senoidal suave, não uma linha reta — e retorna o x mais à esquerda que a curva alcança, usado como limite seguro pro texto nunca colidir com a onda.
+- O painel é **totalmente opaco** (alpha 255, não semi-transparente como o cartão antigo) — cobre completamente o cenário nessa metade, então o prompt (`LAYOUT`) foi ajustado pra deixar claro que a IA não precisa caprichar visualmente nessa área, só mantê-la limpa (sem texto/produto), porque o painel cobre tudo depois.
+- Texto (nome + sublinhado branco + headline) fica na faixa superior do painel (começa ~13% da altura) — deixa espaço vazio na faixa inferior (~92% da altura) porque é ali que o app Android sobrepõe o preço depois (`PlayerActivity.updatePriceBadge`); o painel sendo full-height serve de fundo bonito pro preço também, não só pro texto.
+- Prompt também ganhou ênfase em **gotas de condensação realistas** pra bebidas geladas (regra nova em CONCEITO VISUAL) e uma referência explícita de padrão de qualidade ("campanha real de grandes marcas como Coca-Cola/Nestlé/Ambev") em vez de só "premium genérico".
+
+Testado gerando a arte do produto EXATO da referência do usuário (Coca-Cola Sabor Original Pet 600ml, EAN 7894900011609) — resultado visualmente muito próximo do exemplo mostrado: painel vermelho com curva, título em negrito com sublinhado, garrafa com condensação realista, cena de mesa/jardim apetitosa que a própria IA compôs dentro das regras.
+
+### Ajustes seguintes (benefícios à direita, cor fiel ao produto, quantidade sempre visível)
+
+Depois do primeiro resultado, mais 4 ajustes pedidos pelo usuário:
+
+1. **Cor do painel sempre combinando com o produto**: `_extrair_cor_acento` tinha um fallback fixo vermelho (200,30,30) — funcionava bem pra produtos vermelhos por coincidência, mas ficava visualmente ERRADO pra qualquer outro produto quando a extração falhava (embalagem muito neutra/acromática). Trocado pra um cinza-chumbo neutro (45,48,56), que nunca destoa de nenhum produto. Também afrouxado o limiar de saturação (0.35→0.28) e aumentada a granularidade do quantize (8→12 cores) pra achar a cor dominante com mais precisão. Testado num produto verde (Dove Men+Care) — painel saiu verde, não mais vermelho por padrão.
+2. **Produto sempre 100% visível**: reduzido o alcance máximo da curva do painel (base 0.47→0.44, amplitude 0.045→0.035 da LARGURA, não da altura — era um bug de unidade) pra nunca chegar perto dos 50% e arriscar cobrir o produto; e reforçada a regra no prompt (`ARTE_PROMPT_TEMPLATE`) proibindo qualquer corte do produto pelas bordas.
+3. **Quantidade/tamanho da embalagem sempre visível** (ex.: 600ml, 1kg, 2L): a IA recebeu instrução explícita pra sempre incluir esse dado no nome gerado, mas ainda assim omitia às vezes — e mesmo quando incluía, o nome ficava tão longo que a linha com a quantidade era cortada pelo limite de linhas do título. Solução definitiva: `_extrair_quantidade_embalagem` (regex) SEMPRE remove a quantidade de dentro da string do nome (se a IA tiver incluído) e retorna ela separada; `compor_texto_na_arte` desenha a quantidade como uma linha PRÓPRIA e garantida logo após o nome (até 3 linhas) — nunca mais disputando espaço/sendo cortada junto com o resto do nome.
+4. **Bullets de benefício movidos pro lado direito** (sobre a foto do produto, não mais no painel esquerdo) + **fonte da headline 40% menor**: o painel esquerdo agora só tem nome + quantidade + headline (bem mais compacto), deixando a maior parte da faixa inferior vazia pro card de preço que o app Android sobrepõe depois — era isso que "os benefícios no painel esquerdo" estava disputando espaço com. Do lado direito, os 3 bullets ficam encostados na borda direita, empilhados e centralizados verticalmente, cada um com um círculo na cor do painel + checkmark branco + texto com sombra escura (`_desenhar_texto_com_sombra`) — sombra necessária porque, ao contrário do painel de cor sólida, aqui o texto fica sobre a cena gerada pela IA, sem uma cor de fundo previsível atrás.
+
+Retorno de `gerar_textos_arte_ia` mudou de `(nome, headline)` para `(nome, headline, beneficios, quantidade, marca)` — qualquer código futuro que chame essa função direto (fora de `gerar_arte_publicitaria`) precisa desempacotar os 5 valores.
+
+### Prioridade da fonte da descrição: banco → Cosmos → Open Food Facts → Zaffari → Google (sempre, não só quando corrompido)
+
+Cogitamos primeiro usar o nome que a API de preço PRÓPRIA de cada cliente/loja retorna (mais específico por estabelecimento, mas tipicamente abreviado — ex.: "REFRIG COCA COLA 600ML") como fonte pro nome da arte, e cheguei a implementar isso (mplayer enviando `nome_cliente` na query string pro `produto-imagem/<ean>/gerar-arte`). **O usuário pediu pra reverter** — decisão final foi manter a fonte só no lado do produtos-imgs, sem depender do app enviar nada extra:
+
+1. `produto.description` (nosso banco) primeiro.
+2. Se estiver **vazio OU corrompido** (antes só disparava por corrupção — `not descricao_fonte.strip()` foi adicionado como segundo gatilho), busca pelo EAN nessa ordem: Cosmos → Open Food Facts → Zaffari → **Google** (`fetch_product_from_google`, adicionado à lista — usa uma busca de imagem com Custom Search API que às vezes retorna um título de produto útil; nota: o dict que essa função retorna tem `marca` como string solta, não `brand: {name}` aninhado como as outras fontes — o código já trata os dois formatos).
+3. Só DEPOIS de resolvida a melhor descrição bruta disponível é que a IA entra pra reconstruir/limpar o nome comercial final.
+
+Nenhuma mudança foi mantida no mplayer por causa disso (a tentativa de passar `nome_cliente` foi revertida por completo).
+
+### Hierarquia tipográfica: marca em destaque + resto do nome pequeno/leve
+
+Pedido explícito do usuário com valores de referência (~80px peso 400 pra marca, ~40px peso 200 pro resto — escalados proporcionalmente à altura da imagem, não em pixels fixos, como todo o resto do texto). A fonte variável Montserrat já tem os pesos nomeados certos: `Regular` ≈ peso 400, `ExtraLight` ≈ peso 200 (confirmado via `font.get_variation_names()`).
+
+- `_separar_marca_do_nome(nome, marca)`: separa a marca do resto do nome (remove o prefixo se o nome já começar pela marca, ex. `nome='Coca-Cola Sabor Original'` + `marca='Coca-Cola'` → `('Coca-Cola', 'Sabor Original')`); se não bater o prefixo, mantém o nome inteiro como "resto" mesmo assim (prefere uma pequena redundância a perder o destaque da marca).
+- Quando há marca identificável: marca desenhada grande (peso Regular), resto do nome + quantidade juntos numa fonte ~metade do tamanho (peso ExtraLight) — a quantidade não precisa mais de uma linha garantida em fonte grande nesse tamanho reduzido, cabe tranquilamente junto com o resto.
+- Sem marca identificável: cai pro estilo antigo (nome inteiro grande e em negrito, quantidade como linha garantida) — mais seguro que não destacar nada.
+- Testado com marca de 1 palavra (Coca-Cola) e 3 palavras (Dove Men Care) — quebra de linha e proporção funcionam bem nos dois casos.
+
+Também reduzida a fonte da headline em 40% (pedido do usuário) — o painel esquerdo ficou visivelmente mais enxuto (marca + resto + headline, tudo mais compacto), sobrando bem mais espaço vazio na faixa inferior pro card de preço.
+
+### Bullets de benefício: cápsula translúcida + ancorados na BASE (não mais centralizados)
+
+Pedido do usuário pra "baixar um pouco mais" o bloco de bullets expôs um problema que antes passava despercebido: o bloco de bullets é sempre encostado na borda direita (`icone_x = int(width * 0.965) - diametro_icone`), então o texto (que cresce pra ESQUERDA do ícone, `alinhar_direita=True`) cai onde quer que a garrafa/produto esteja naquela altura — quando centralizado verticalmente, o texto caía direto em cima do rótulo do produto, ilegível mesmo com a sombra (`_desenhar_texto_com_sombra` sozinha não é suficiente contra um fundo com textura/contraste, só contra fundo liso).
+
+Duas correções, na ordem em que foram pedidas:
+1. **Cápsula translúcida** em `_desenhar_bullet_beneficio`: quando `alinhar_direita=True` (sempre o caso do lado direito, sobre a foto), desenha uma cápsula semitransparente (`fill=(20,20,24,140)`, `rounded_rectangle` com raio = metade da altura) atrás do grupo ícone+texto, ANTES do ícone e do texto. Garante legibilidade em qualquer parte da cena, inclusive sobre o rótulo do produto — mesmo recurso usado em peças publicitárias reais (badge/tarja atrás de texto sobre foto), não é só um workaround. Não usar essa cápsula do lado não-`alinhar_direita` (painel esquerdo) — lá o fundo já é sólido, cápsula seria redundante.
+2. **Ancorado na base em vez de centralizado**: usuário pediu explicitamente ("os benefícios fiquem na base, com uma margem pra não encostar na base") — `bloco_y` deixou de ser `(height - altura_bloco) / 2 + offset` (cálculo a partir do centro) e passou a ser `height - margem_inferior - altura_bloco` (`margem_inferior = int(height * 0.08)`), ancorado a partir da borda inferior. Fica na mesma faixa vertical inferior onde a cena costuma ter menos elementos importantes (chão/mesa/gelo), e não compete mais com a parte superior do produto.
+
 ### Risco residual conhecido (não totalmente resolvido)
 
 O modelo de imagem às vezes **recria o texto já impresso na própria embalagem** com erro de grafia (ex.: "HARPIC" virou "HARIC", "PASTILHA" virou "PASTITILA") — isso não é a IA "escrevendo" texto novo (proibido e evitado via PIL), é ela **redesenhando** a embalagem de referência de forma levemente imperfeita. Diferente do nome/headline (que são 100% PIL), esse texto faz parte da foto do produto em si e não tem uma solução equivalente ainda. Se voltar a acontecer com frequência, considerar: reforçar ainda mais a instrução de fidelidade, ou testar `gemini-2.5-flash-image` com temperatura mais baixa.
@@ -129,6 +197,21 @@ GET https://cosmos.bluesoft.com.br/api/gtins/<ean>.json
 Header: X-Cosmos-Token: <token>   (não é Authorization: Bearer!)
 ```
 `fetch_product_from_cosmos` já foi corrigido pra usar essa URL/header. Testado com tokens reais após a correção — cadastro via `/admin/cadastrar-produto-cosmos/<ean>` funcionou (retornou produto real, HTTP 201).
+
+## WhatsApp — gestão de instância via Evolution API (aba dedicada)
+
+Nova aba "WhatsApp" no painel faz a gestão completa de uma instância na [Evolution API](https://docs.evolutionfoundation.com.br/evolution-api/installation) (servidor self-hosted) — criar instância, mostrar QR code pra escanear, checar status de conexão, listar todas as instâncias do servidor, desconectar, excluir e testar envio. Reaproveita as mesmas chaves de Config já usadas pelo resumo diário (`WHATSAPP_BASE_URL`, `WHATSAPP_TOKEN`, `WHATSAPP_INSTANCE`, `WHATSAPP_NUMERO_DESTINO`) — criar/conectar uma instância aqui é o que torna o canal WhatsApp do resumo diário funcional.
+
+**Contrato real da Evolution API** (confirmado contra um servidor real do usuário, não documentação genérica assumida):
+- `POST /instance/create` — header `apikey`, body `{instanceName, qrcode: true, integration: "WHATSAPP-BAILEYS", number?}`. **Não mandar `token` no body** — se for igual ao apikey global (ou de outra instância já existente), a API rejeita com `"Token already exists"`; deixar a Evolution gerar o hash da instância sozinha. Resposta traz `qrcode.base64` (data URI, pronta pra `<img src>`) e `qrcode.pairingCode`.
+- `GET /instance/connect/{instanceName}` — regenera o QR (útil quando o anterior expira antes de escanear). Resposta: `{base64, pairingCode, code}` (sem o wrapper `qrcode.`, direto na raiz — diferente do `/create`).
+- `GET /instance/connectionState/{instanceName}` — resposta `{instance: {state}}`, `state` ∈ `open` (conectado) / `close` (desconectado) / `connecting`.
+- `GET /instance/fetchInstances` — lista todas as instâncias do servidor (array de `{instance: {instanceName, status, connectionStatus: {state}}}`).
+- `DELETE /instance/logout/{instanceName}` — desconecta sem apagar a instância.
+- `DELETE /instance/delete/{instanceName}` — apaga a instância.
+- `POST /message/sendText/{instanceName}` — body `{number, textMessage: {text}}` — **atenção**: o campo é `textMessage.text` (aninhado), não `text` solto na raiz. Esse era um bug real no código de envio do resumo diário (`_enviar_whatsapp_resumo_diario`) escrito antes de eu confirmar o contrato oficial — já corrigido.
+
+O painel faz polling de `GET /admin/whatsapp/status` a cada 4s enquanto uma instância está configurada, escondendo o QR automaticamente assim que o estado vira `open`. A opção de provedor "Z-API" (genérica, nunca testada) foi removida da UI — o sistema hoje só suporta Evolution API de verdade, com essa página dedicada.
 
 ## Gestão de imagem por produto (painel)
 

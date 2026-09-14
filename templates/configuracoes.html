@@ -462,6 +462,10 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                 Histórico
             </button>
+            <button class="nav-tab" data-tab="whatsapp" data-title="WhatsApp" data-subtitle="Conecte um número via Evolution API para receber o resumo diário">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+                WhatsApp
+            </button>
 
             <span class="nav-section-label">Desenvolvedor</span>
             <button class="nav-tab" data-tab="apitest" data-title="Testar API" data-subtitle="Envie requisições para qualquer rota da API e veja a resposta">
@@ -595,31 +599,9 @@
                     <div class="toggle-row">
                         <div class="toggle-label">
                             <span class="name">Resumo diário por WhatsApp</span>
-                            <span class="desc">Via Z-API ou Evolution API (gateways self-hosted). Formato genérico, ajustar se necessário após o primeiro teste.</span>
+                            <span class="desc">Configure o servidor/instância na aba "WhatsApp" — aqui só liga ou desliga o envio do resumo diário por esse canal.</span>
                         </div>
                         <div class="toggle" id="toggle-whatsapp-ativo" data-key="WHATSAPP_ATIVO"></div>
-                    </div>
-                    <div class="form-row">
-                        <label for="notif-whatsapp-provedor">Provedor</label>
-                        <select id="notif-whatsapp-provedor" style="max-width:220px;">
-                            <option value="zapi">Z-API</option>
-                            <option value="evolution">Evolution API</option>
-                        </select>
-                    </div>
-                    <div class="form-row">
-                        <label for="notif-whatsapp-base-url">URL base do gateway</label>
-                        <input type="text" id="notif-whatsapp-base-url" placeholder="https://api.z-api.io">
-                    </div>
-                    <div class="form-row">
-                        <label for="notif-whatsapp-instance">Instância / ID</label>
-                        <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
-                            <input type="text" id="notif-whatsapp-instance" placeholder="ID da instância" style="flex:1; min-width:160px;">
-                            <input type="password" id="notif-whatsapp-token" placeholder="Token" autocomplete="off" style="flex:1; min-width:160px;">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <label for="notif-whatsapp-numero">Número de destino (com DDI, ex: 5551999998888)</label>
-                        <input type="text" id="notif-whatsapp-numero" placeholder="5551999998888">
                     </div>
 
                     <div class="form-row" style="flex-direction:row; gap:0.6rem; align-items:center; flex-wrap:wrap; margin-top:0.5rem;">
@@ -852,6 +834,85 @@
                 </div>
             </div>
 
+            <!-- ===== TAB: WHATSAPP (Evolution API) ===== -->
+            <div id="tab-whatsapp" class="tab-content" style="display:none;">
+                <div class="card">
+                    <h2>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+                        Servidor Evolution API
+                    </h2>
+                    <div id="alert-whatsapp-config"></div>
+                    <p style="font-size:0.82rem; color:var(--muted); margin-top:0;">
+                        Servidor self-hosted da <a href="https://docs.evolutionfoundation.com.br/evolution-api/installation" target="_blank" rel="noopener">Evolution API</a>. Precisa estar rodando e acessível antes de criar uma instância aqui.
+                    </p>
+                    <div class="form-row">
+                        <label for="wa-base-url">URL do servidor</label>
+                        <input type="text" id="wa-base-url" placeholder="https://seu-servidor.exemplo.com">
+                    </div>
+                    <div class="form-row">
+                        <label for="wa-apikey">API Key (header "apikey", global do servidor)</label>
+                        <input type="password" id="wa-apikey" placeholder="sua-chave-segura" autocomplete="off">
+                    </div>
+                    <div class="form-row" style="flex-direction:row; gap:0.6rem; align-items:center; flex-wrap:wrap;">
+                        <button class="btn btn-primary" id="btn-wa-save-config">Salvar servidor</button>
+                        <button class="btn btn-secondary" id="btn-wa-listar-instancias">Ver instâncias no servidor</button>
+                    </div>
+                    <div id="wa-lista-instancias" style="margin-top:0.75rem;"></div>
+                </div>
+
+                <div class="card">
+                    <h2>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                        Instância WhatsApp
+                        <span class="badge" id="wa-status-badge">verificando...</span>
+                    </h2>
+                    <div id="alert-whatsapp-instancia"></div>
+
+                    <div id="wa-sem-instancia">
+                        <p style="font-size:0.85rem; color:var(--muted); margin-top:0;">Nenhuma instância configurada ainda. Crie uma abaixo — o número escaneia um QR code e fica vinculado a ela.</p>
+                        <div class="form-row">
+                            <label for="wa-nome-instancia">Nome da instância</label>
+                            <input type="text" id="wa-nome-instancia" placeholder="Ex: bot_imgs" autocomplete="off">
+                        </div>
+                        <div class="form-row">
+                            <label for="wa-numero-opcional">Número (opcional, com DDI)</label>
+                            <input type="text" id="wa-numero-opcional" placeholder="5551999998888">
+                        </div>
+                        <button class="btn btn-primary" id="btn-wa-criar-instancia">Criar instância e gerar QR Code</button>
+                    </div>
+
+                    <div id="wa-com-instancia" style="display:none;">
+                        <div class="form-row" style="flex-direction:row; gap:1.5rem; flex-wrap:wrap; align-items:center;">
+                            <span style="font-size:0.85rem;">Instância: <b id="wa-nome-atual">—</b></span>
+                            <span style="font-size:0.85rem;">Número de envio: <b id="wa-numero-atual">—</b></span>
+                        </div>
+
+                        <div id="wa-qrcode-area" style="display:none; text-align:center; margin:1rem 0; padding:1rem; background:#fafbff; border-radius:10px;">
+                            <p style="font-size:0.85rem; color:var(--muted); margin-top:0;">Escaneie com o WhatsApp (Aparelhos conectados → Conectar um aparelho):</p>
+                            <img id="wa-qrcode-img" src="" alt="QR Code do WhatsApp" style="max-width:260px; width:100%; border-radius:8px; border:1px solid var(--border);">
+                        </div>
+
+                        <div class="form-row" style="flex-direction:row; gap:0.6rem; align-items:center; flex-wrap:wrap;">
+                            <button class="btn btn-secondary btn-sm" id="btn-wa-atualizar-qrcode">Gerar novo QR Code</button>
+                            <button class="btn btn-secondary btn-sm" id="btn-wa-checar-status">Checar status</button>
+                            <button class="btn btn-danger btn-sm" id="btn-wa-desconectar">Desconectar</button>
+                            <button class="btn btn-danger btn-sm" id="btn-wa-excluir">Excluir instância</button>
+                        </div>
+
+                        <hr style="border:none; border-top:1px solid var(--border); margin:1.25rem 0;">
+
+                        <h2 style="font-size:0.9rem;">Testar envio</h2>
+                        <div class="form-row">
+                            <label for="wa-numero-teste">Número de destino (com DDI)</label>
+                            <div style="display:flex; gap:0.5rem;">
+                                <input type="text" id="wa-numero-teste" placeholder="5551999998888" style="flex:1;">
+                                <button class="btn btn-primary btn-sm" id="btn-wa-testar-envio">Enviar teste</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- ===== TAB: TESTAR API ===== -->
             <div id="tab-apitest" class="tab-content" style="display:none;">
                 <div class="card">
@@ -1014,6 +1075,7 @@ $$('.nav-tab').forEach(btn => {
         else pararPollingStatusSistema();
         if (tab === 'config') loadConfig();
         if (tab === 'historico') loadHistorico(1);
+        if (tab === 'whatsapp') loadWhatsapp();
 
         closeSidebarMobile();
     });
@@ -1055,11 +1117,6 @@ async function loadConfig() {
         $('#notif-resend-key').value = notif.RESEND_API_KEY || '';
         $('#notif-resend-remetente').value = notif.RESEND_REMETENTE || '';
         $('#notif-resumo-destinatarios').value = notif.RESUMO_DESTINATARIOS || '';
-        $('#notif-whatsapp-provedor').value = notif.WHATSAPP_PROVEDOR || 'zapi';
-        $('#notif-whatsapp-base-url').value = notif.WHATSAPP_BASE_URL || '';
-        $('#notif-whatsapp-instance').value = notif.WHATSAPP_INSTANCE || '';
-        $('#notif-whatsapp-token').value = notif.WHATSAPP_TOKEN || '';
-        $('#notif-whatsapp-numero').value = notif.WHATSAPP_NUMERO_DESTINO || '';
         setToggle('toggle-resumo-ativo', notif.RESUMO_ATIVO === 'true');
         setToggle('toggle-whatsapp-ativo', notif.WHATSAPP_ATIVO === 'true');
 
@@ -1280,11 +1337,6 @@ $('#btn-save-notificacoes').addEventListener('click', async () => {
             RESEND_API_KEY: $('#notif-resend-key').value.trim(),
             RESEND_REMETENTE: $('#notif-resend-remetente').value.trim(),
             RESUMO_DESTINATARIOS: $('#notif-resumo-destinatarios').value.trim(),
-            WHATSAPP_PROVEDOR: $('#notif-whatsapp-provedor').value,
-            WHATSAPP_BASE_URL: $('#notif-whatsapp-base-url').value.trim(),
-            WHATSAPP_INSTANCE: $('#notif-whatsapp-instance').value.trim(),
-            WHATSAPP_TOKEN: $('#notif-whatsapp-token').value,
-            WHATSAPP_NUMERO_DESTINO: $('#notif-whatsapp-numero').value.trim(),
         });
         const res = await fetch('/configuracoes', {
             method: 'POST',
@@ -1413,6 +1465,194 @@ function pararPollingStatusSistema() {
 }
 
 $('#btn-atualizar-status-sistema').addEventListener('click', loadStatusSistema);
+
+// ===== TAB: WHATSAPP (Evolution API) =====
+let waStatusTimer = null;
+
+async function loadWhatsapp() {
+    try {
+        const res = await fetch('/configuracoes', { headers: { ...authHeaders(), 'Accept': 'application/json' } });
+        const cfg = await res.json();
+        const notif = cfg.notificacoes || {};
+        $('#wa-base-url').value = notif.WHATSAPP_BASE_URL || '';
+        $('#wa-apikey').value = notif.WHATSAPP_TOKEN || '';
+        $('#wa-numero-teste').value = notif.WHATSAPP_NUMERO_DESTINO || '';
+
+        if (notif.WHATSAPP_INSTANCE) {
+            $('#wa-sem-instancia').style.display = 'none';
+            $('#wa-com-instancia').style.display = 'block';
+            $('#wa-nome-atual').textContent = notif.WHATSAPP_INSTANCE;
+            $('#wa-numero-atual').textContent = notif.WHATSAPP_NUMERO_DESTINO || '—';
+            await checarStatusWhatsapp();
+            iniciarPollingStatusWhatsapp();
+        } else {
+            $('#wa-sem-instancia').style.display = 'block';
+            $('#wa-com-instancia').style.display = 'none';
+            $('#wa-status-badge').textContent = 'sem instância';
+            pararPollingStatusWhatsapp();
+        }
+    } catch (e) {
+        showAlert('alert-whatsapp-config', `Erro ao carregar: ${e.message}`, 'error');
+    }
+}
+
+function pararPollingStatusWhatsapp() {
+    if (waStatusTimer) { clearInterval(waStatusTimer); waStatusTimer = null; }
+}
+
+function iniciarPollingStatusWhatsapp() {
+    pararPollingStatusWhatsapp();
+    waStatusTimer = setInterval(checarStatusWhatsapp, 4000);
+}
+
+async function checarStatusWhatsapp() {
+    try {
+        const res = await fetch('/admin/whatsapp/status', { headers: authHeaders() });
+        const data = await res.json();
+        const badge = $('#wa-status-badge');
+        const rotulos = { open: 'conectado', close: 'desconectado', connecting: 'conectando...', no_instance: 'sem instância', not_found: 'instância não encontrada', error: 'erro', unconfigured: 'não configurado' };
+        badge.textContent = rotulos[data.state] || data.state || 'desconhecido';
+        badge.style.background = data.state === 'open' ? '#dcfce7' : data.state === 'connecting' ? '#fef9c3' : '#fee2e2';
+        badge.style.color = data.state === 'open' ? '#166534' : data.state === 'connecting' ? '#854d0e' : '#991b1b';
+        // Assim que conectar, esconde o QR (não precisa mais escanear) e para o polling rápido.
+        if (data.state === 'open') {
+            $('#wa-qrcode-area').style.display = 'none';
+            pararPollingStatusWhatsapp();
+        }
+    } catch (e) { /* silencioso, é só um indicador */ }
+}
+
+$('#btn-wa-save-config').addEventListener('click', async () => {
+    try {
+        const body = new URLSearchParams({
+            action: 'save_notificacoes',
+            WHATSAPP_BASE_URL: $('#wa-base-url').value.trim(),
+            WHATSAPP_TOKEN: $('#wa-apikey').value,
+        });
+        const res = await fetch('/configuracoes', { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/x-www-form-urlencoded' }, body });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.saved) throw new Error(data.message || `HTTP ${res.status}`);
+        showAlert('alert-whatsapp-config', 'Servidor salvo com sucesso!', 'success');
+    } catch (e) {
+        showAlert('alert-whatsapp-config', `Erro: ${e.message}`, 'error');
+    }
+});
+
+$('#btn-wa-listar-instancias').addEventListener('click', async () => {
+    const container = $('#wa-lista-instancias');
+    container.innerHTML = '<div class="empty-state">Carregando...</div>';
+    try {
+        const res = await fetch('/admin/whatsapp/instancias', { headers: authHeaders() });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+        if (!data.instancias || !data.instancias.length) {
+            container.innerHTML = '<div class="empty-state">Nenhuma instância no servidor.</div>';
+            return;
+        }
+        container.innerHTML = `<table><thead><tr><th>Instância</th><th>Status</th><th>Estado</th></tr></thead><tbody>` +
+            data.instancias.map(i => `<tr><td>${escHtml(i.instance_name || '—')}</td><td>${escHtml(i.status || '—')}</td><td>${escHtml(i.state || '—')}</td></tr>`).join('') +
+            `</tbody></table>`;
+    } catch (e) {
+        container.innerHTML = '';
+        showAlert('alert-whatsapp-config', `Erro: ${e.message}`, 'error');
+    }
+});
+
+$('#btn-wa-criar-instancia').addEventListener('click', async () => {
+    const nome = $('#wa-nome-instancia').value.trim();
+    if (!nome) {
+        showAlert('alert-whatsapp-instancia', 'Informe um nome para a instância.', 'error');
+        return;
+    }
+    const btn = $('#btn-wa-criar-instancia');
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner"></span> Criando...`;
+    try {
+        const body = new URLSearchParams({ instance_name: nome, number: $('#wa-numero-opcional').value.trim() });
+        const res = await fetch('/admin/whatsapp/criar-instancia', { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/x-www-form-urlencoded' }, body });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+        showAlert('alert-whatsapp-instancia', data.message, 'success');
+        await loadWhatsapp();
+        if (data.qrcode_base64) {
+            $('#wa-qrcode-area').style.display = 'block';
+            $('#wa-qrcode-img').src = data.qrcode_base64;
+        }
+    } catch (e) {
+        showAlert('alert-whatsapp-instancia', `Erro: ${e.message}`, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+    }
+});
+
+$('#btn-wa-atualizar-qrcode').addEventListener('click', async () => {
+    try {
+        const res = await fetch('/admin/whatsapp/qrcode', { headers: authHeaders() });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+        if (data.qrcode_base64) {
+            $('#wa-qrcode-area').style.display = 'block';
+            $('#wa-qrcode-img').src = data.qrcode_base64;
+            iniciarPollingStatusWhatsapp();
+        } else {
+            showAlert('alert-whatsapp-instancia', 'A instância não retornou um QR code novo (pode já estar conectada).', 'info');
+        }
+    } catch (e) {
+        showAlert('alert-whatsapp-instancia', `Erro: ${e.message}`, 'error');
+    }
+});
+
+$('#btn-wa-checar-status').addEventListener('click', checarStatusWhatsapp);
+
+$('#btn-wa-desconectar').addEventListener('click', async () => {
+    if (!confirm('Desconectar esta instância do WhatsApp? A instância continua existindo, só precisa escanear o QR de novo.')) return;
+    try {
+        const res = await fetch('/admin/whatsapp/desconectar', { method: 'POST', headers: authHeaders() });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+        showAlert('alert-whatsapp-instancia', data.message, 'success');
+        checarStatusWhatsapp();
+    } catch (e) {
+        showAlert('alert-whatsapp-instancia', `Erro: ${e.message}`, 'error');
+    }
+});
+
+$('#btn-wa-excluir').addEventListener('click', async () => {
+    if (!confirm('Excluir esta instância do servidor Evolution API? Essa ação não pode ser desfeita.')) return;
+    try {
+        const res = await fetch('/admin/whatsapp/excluir-instancia', { method: 'POST', headers: authHeaders() });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+        showAlert('alert-whatsapp-config', data.message, 'success');
+        pararPollingStatusWhatsapp();
+        await loadWhatsapp();
+    } catch (e) {
+        showAlert('alert-whatsapp-instancia', `Erro: ${e.message}`, 'error');
+    }
+});
+
+$('#btn-wa-testar-envio').addEventListener('click', async () => {
+    const numero = $('#wa-numero-teste').value.trim();
+    if (!numero) {
+        showAlert('alert-whatsapp-instancia', 'Informe um número de destino.', 'error');
+        return;
+    }
+    try {
+        await fetch('/configuracoes', {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ action: 'save_notificacoes', WHATSAPP_NUMERO_DESTINO: numero }),
+        });
+        const res = await fetch('/admin/whatsapp/testar-envio', { method: 'POST', headers: authHeaders() });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+        showAlert('alert-whatsapp-instancia', data.message, 'success');
+    } catch (e) {
+        showAlert('alert-whatsapp-instancia', `Erro: ${e.message}`, 'error');
+    }
+});
 
 // ===== TAB: CONSULTA RÁPIDA (catálogo unificado: busca + navegação + arte + detalhes) =====
 let consultaPage = 1;
