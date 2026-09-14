@@ -78,8 +78,8 @@ Pedido explícito do usuário com valores de referência (~80px peso 400 pra mar
 
 - `_separar_marca_do_nome(nome, marca)`: separa a marca do resto do nome (remove o prefixo se o nome já começar pela marca, ex. `nome='Coca-Cola Sabor Original'` + `marca='Coca-Cola'` → `('Coca-Cola', 'Sabor Original')`); se não bater o prefixo, mantém o nome inteiro como "resto" mesmo assim (prefere uma pequena redundância a perder o destaque da marca).
 - Quando há marca identificável: marca desenhada grande (peso Regular), resto do nome + quantidade juntos numa fonte ~metade do tamanho (peso ExtraLight) — a quantidade não precisa mais de uma linha garantida em fonte grande nesse tamanho reduzido, cabe tranquilamente junto com o resto.
-- Sem marca identificável: cai pro estilo antigo (nome inteiro grande e em negrito, quantidade como linha garantida) — mais seguro que não destacar nada.
-- Testado com marca de 1 palavra (Coca-Cola) e 3 palavras (Dove Men Care) — quebra de linha e proporção funcionam bem nos dois casos.
+- Sem marca identificável: usa a **1ª palavra do nome** como destaque (mesma regra de peso/tamanho da marca de verdade) em vez de cair pro estilo antigo (nome inteiro grande e uniforme, sem hierarquia). Mudado depois que um requeijão Vigor saiu com "Requeijão cremoso tradicional 400G" tudo do mesmo tamanho porque nenhuma fonte (banco/Cosmos/OFF/Zaffari/Google/AI) resolveu a marca daquela vez — não é a marca de verdade, mas garante que SEMPRE haja hierarquia tipográfica, nunca um bloco de texto uniforme. Só cai pro `None` (nome inteiro, sem split) quando o nome é uma única palavra sem "resto" possível.
+- Testado com marca de 1 palavra (Coca-Cola), 3 palavras (Dove Men Care) e sem marca identificável (Requeijão Vigor, usando "Requeijão" como palavra de destaque) — quebra de linha e proporção funcionam bem nos três casos.
 
 Também reduzida a fonte da headline em 40% (pedido do usuário) — o painel esquerdo ficou visivelmente mais enxuto (marca + resto + headline, tudo mais compacto), sobrando bem mais espaço vazio na faixa inferior pro card de preço.
 

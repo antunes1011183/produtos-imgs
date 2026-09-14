@@ -2285,10 +2285,21 @@ def _separar_marca_do_nome(nome, marca):
     Quando o nome começa pela marca (caso comum, já que fallback_nome/nome gerado costuma
     incluir a marca no início), remove a marca do resto pra não repetir; quando não bate
     (fontes diferentes, formatação diferente), mantém o nome inteiro como 'resto' mesmo assim —
-    prefere uma pequena redundância a perder o destaque da marca."""
+    prefere uma pequena redundância a perder o destaque da marca.
+
+    Quando NÃO há marca identificada (nenhuma fonte — banco/Cosmos/OFF/Zaffari/Google/AI —
+    conseguiu resolver uma), usa a 1ª palavra do nome como destaque em vez de cair pro estilo
+    antigo (nome inteiro grande e uniforme, sem hierarquia nenhuma) — pedido do usuário depois
+    de ver um requeijão Vigor sair com "Requeijão cremoso tradicional 400G" tudo do mesmo
+    tamanho porque a marca não veio identificada daquela vez. Não é a marca de verdade, mas
+    aplica a mesma regra visual (1ª palavra grande/Regular, resto pequeno/ExtraLight) — melhor
+    que nome inteiro sem hierarquia."""
     marca = (marca or '').strip()
     nome = (nome or '').strip()
     if not marca:
+        partes = nome.split(' ', 1)
+        if len(partes) == 2 and partes[0]:
+            return partes[0], partes[1]
         return None, nome
     if nome.upper().startswith(marca.upper()):
         resto = nome[len(marca):].strip(' -,')
