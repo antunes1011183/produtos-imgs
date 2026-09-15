@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -25,8 +25,30 @@
             --success: #10b981;
             --success-soft: #ecfdf5;
             --warn: #f59e0b;
+            --hover: #f8fafc;
             --radius: 12px;
             --shadow: 0 1px 2px rgba(15,23,42,.04), 0 4px 10px rgba(15,23,42,.04);
+        }
+        /* Tema escuro (padrão do sistema, pedido do usuário) — só redefine os tokens; o resto
+           do CSS já usa var(--bg)/var(--card)/var(--border)/var(--text)/var(--muted) etc., então
+           herda a troca automaticamente. --sidebar-* não muda (a barra lateral já era escura nos
+           dois temas). Alternado via [data-theme] no <html>, ver #btn-theme-toggle no JS. */
+        html[data-theme="dark"] {
+            --bg: #0b1120;
+            --card: #131b2e;
+            --border: #263349;
+            --text: #e5e7eb;
+            --muted: #94a3b8;
+            --accent: #6366f1;
+            --accent-hover: #818cf8;
+            --accent-soft: rgba(99,102,241,0.16);
+            --danger: #f87171;
+            --danger-soft: rgba(248,113,113,0.14);
+            --success: #34d399;
+            --success-soft: rgba(52,211,153,0.14);
+            --warn: #fbbf24;
+            --hover: #1b2438;
+            --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 14px rgba(0,0,0,.35);
         }
         * { box-sizing: border-box; }
         html, body { height: 100%; }
@@ -147,13 +169,13 @@
             justify-content: center;
             width: 36px; height: 36px;
             border: 1px solid var(--border);
-            background: #fff;
+            background: var(--card);
             border-radius: 8px;
             cursor: pointer;
             color: var(--text);
             flex-shrink: 0;
         }
-        .menu-toggle:hover { background: #f8fafc; }
+        .menu-toggle:hover { background: var(--hover); }
         .menu-toggle svg { width: 18px; height: 18px; }
         .topbar-titles h1 { font-size: 1.15rem; margin: 0; font-weight: 700; }
         .topbar-titles p { margin: 1px 0 0; color: var(--muted); font-size: 0.82rem; }
@@ -224,7 +246,7 @@
             border-radius: 8px;
             font-size: 0.88rem;
             font-family: inherit;
-            background: #fff;
+            background: var(--card);
             transition: border-color 0.15s, box-shadow 0.15s;
         }
         input:focus, select:focus {
@@ -248,8 +270,8 @@
         .btn:active { transform: scale(0.98); }
         .btn-primary { background: var(--accent); color: white; }
         .btn-primary:hover { background: var(--accent-hover); }
-        .btn-secondary { background: #fff; color: var(--text); border-color: var(--border); }
-        .btn-secondary:hover { background: #f8fafc; }
+        .btn-secondary { background: var(--card); color: var(--text); border-color: var(--border); }
+        .btn-secondary:hover { background: var(--hover); }
         .btn-danger { background: var(--danger); color: white; }
         .btn-danger:hover { background: #dc2626; }
         .btn-success { background: var(--success); color: white; }
@@ -308,7 +330,7 @@
         table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
         th, td { text-align: left; padding: 0.55rem 0.65rem; border-bottom: 1px solid var(--border); }
         th { font-weight: 600; color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; }
-        tbody tr:hover { background: #fafbff; }
+        tbody tr:hover { background: var(--bg); }
         td .ean { font-family: "SF Mono", "Cascadia Code", Consolas, monospace; font-size: 0.8rem; color: var(--muted); }
 
         .empty-state { text-align: center; padding: 2rem; color: var(--muted); font-size: 0.86rem; }
@@ -519,6 +541,10 @@
                 <h1 id="page-title">Configurações</h1>
                 <p id="page-subtitle">Tokens e flags de funcionamento do sistema</p>
             </div>
+            <button id="btn-theme-toggle" title="Alternar tema claro/escuro" style="margin-left:auto; background:none; border:1px solid var(--border); border-radius:8px; width:36px; height:36px; display:flex; align-items:center; justify-content:center; color:var(--text); cursor:pointer; flex-shrink:0;">
+                <svg id="theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:17px; height:17px;"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                <svg id="theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:17px; height:17px; display:none;"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+            </button>
         </header>
 
         <div class="content" id="content">
@@ -706,7 +732,7 @@
                                 </div>
                             </div>
 
-                            <div class="card" id="form-cadastro-cosmos" style="display:none; margin:0 0 1rem; background:#fafbff;">
+                            <div class="card" id="form-cadastro-cosmos" style="display:none; margin:0 0 1rem; background:var(--bg);">
                                 <h2 style="font-size:0.9rem;">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                                     Cadastrar produto pelo EAN (busca no Cosmos)
@@ -766,7 +792,7 @@
                                         <button class="btn btn-danger btn-sm" id="detail-btn-excluir-imagem">Excluir imagem</button>
                                     </div>
 
-                                    <div class="card" style="margin:0; background:#fafbff;">
+                                    <div class="card" style="margin:0; background:var(--bg);">
                                         <h2 style="font-size:0.9rem;">
                                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 0-4 12.75V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.25A7 7 0 0 0 12 2z"/><line x1="9" y1="21" x2="15" y2="21"/><line x1="10" y1="18" x2="14" y2="18"/></svg>
                                             Sugestão inteligente (IA)
@@ -831,36 +857,70 @@
 
             <!-- ===== TAB: HISTÓRICO DE BUSCAS ===== -->
             <div id="tab-historico" class="tab-content" style="display:none;">
-                <div class="card">
-                    <h2>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                        Histórico de Buscas de Imagem <span class="badge" id="historico-count-badge">carregando...</span>
-                    </h2>
-                    <div id="alert-historico"></div>
-                    <div class="form-row" style="flex-direction:row; gap:0.5rem; flex-wrap:wrap; align-items:flex-end; margin-bottom:0.85rem;">
-                        <div style="flex:1; min-width:180px;">
-                            <label for="historico-codbar" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">Filtrar por EAN</label>
-                            <input type="text" id="historico-codbar" placeholder="Ex: 7896116900050" autocomplete="off">
+                <div class="consulta-layout">
+                    <div class="consulta-list-col">
+                        <div class="card">
+                            <h2>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                                Histórico de Buscas de Imagem <span class="badge" id="historico-count-badge">carregando...</span>
+                            </h2>
+                            <div id="alert-historico"></div>
+                            <div class="form-row" style="flex-direction:row; gap:0.5rem; flex-wrap:wrap; align-items:flex-end; margin-bottom:0.85rem;">
+                                <div style="flex:1; min-width:180px;">
+                                    <label for="historico-codbar" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">Filtrar por EAN</label>
+                                    <input type="text" id="historico-codbar" placeholder="Ex: 7896116900050" autocomplete="off">
+                                </div>
+                                <div>
+                                    <label for="historico-status" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">Status</label>
+                                    <select id="historico-status">
+                                        <option value="todos">Todos</option>
+                                        <option value="nao_encontrado" selected>Não encontrados</option>
+                                        <option value="encontrado">Encontrados</option>
+                                    </select>
+                                </div>
+                                <button class="btn btn-primary" id="btn-historico-filtrar">Filtrar</button>
+                            </div>
+                            <div id="historico-list" style="overflow-x:auto;">
+                                <div class="empty-state">Carregando histórico...</div>
+                            </div>
+                            <div id="historico-pagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:0.85rem; font-size:0.82rem; color:var(--muted);">
+                                <span id="historico-info">—</span>
+                                <span style="display:flex; gap:0.4rem;">
+                                    <button class="btn btn-secondary btn-sm" id="btn-historico-prev">← Anterior</button>
+                                    <button class="btn btn-secondary btn-sm" id="btn-historico-next">Próximo →</button>
+                                </span>
+                            </div>
                         </div>
-                        <div>
-                            <label for="historico-status" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">Status</label>
-                            <select id="historico-status">
-                                <option value="todos">Todos</option>
-                                <option value="nao_encontrado" selected>Não encontrados</option>
-                                <option value="encontrado">Encontrados</option>
-                            </select>
+                    </div>
+
+                    <div class="consulta-detail-col">
+                        <div class="card detail-panel" id="hist-detail-panel">
+                            <div id="hist-detail-empty" class="empty-state" style="padding:2.5rem 1.25rem;">
+                                Clique num produto na lista para ver os detalhes.
+                            </div>
+                            <div id="hist-detail-content" style="display:none;">
+                                <button class="detail-modal-close" id="hist-detail-panel-close" aria-label="Fechar detalhes">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                </button>
+                                <div class="detail-modal-image" id="hist-detail-modal-image"></div>
+                                <div class="detail-modal-body">
+                                    <h2 id="hist-detail-nome" style="margin:0 0 0.25rem;">—</h2>
+                                    <p id="hist-detail-marca-cat" style="margin:0 0 1rem; color:var(--muted); font-size:0.85rem;">—</p>
+
+                                    <div class="detail-field"><span class="label">EAN</span><span class="value" id="hist-detail-ean">—</span></div>
+                                    <div class="detail-field"><span class="label">Preço médio</span><span class="value" id="hist-detail-preco">—</span></div>
+                                    <div class="detail-field"><span class="label">NCM</span><span class="value" id="hist-detail-ncm">—</span></div>
+
+                                    <div style="display:flex; flex-wrap:wrap; gap:0.6rem; margin:1.25rem 0;">
+                                        <button class="btn btn-secondary btn-sm" id="hist-detail-btn-buscar-imagem">Buscar imagem</button>
+                                        <button class="btn btn-primary btn-sm" id="hist-detail-btn-gerar-arte">Gerar arte</button>
+                                        <button class="btn btn-secondary btn-sm" id="hist-detail-btn-ver-arte" style="display:none;">Ver arte em tela cheia</button>
+                                        <button class="btn btn-secondary btn-sm" id="hist-detail-btn-trocar-imagem">Enviar/Trocar imagem</button>
+                                        <input type="file" id="hist-detail-input-imagem" accept="image/png,image/jpeg,image/webp" style="display:none;">
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                        <button class="btn btn-primary" id="btn-historico-filtrar">Filtrar</button>
-                    </div>
-                    <div id="historico-list" style="overflow-x:auto;">
-                        <div class="empty-state">Carregando histórico...</div>
-                    </div>
-                    <div id="historico-pagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:0.85rem; font-size:0.82rem; color:var(--muted);">
-                        <span id="historico-info">—</span>
-                        <span style="display:flex; gap:0.4rem;">
-                            <button class="btn btn-secondary btn-sm" id="btn-historico-prev">← Anterior</button>
-                            <button class="btn btn-secondary btn-sm" id="btn-historico-next">Próximo →</button>
-                        </span>
                     </div>
                 </div>
             </div>
@@ -918,7 +978,7 @@
                             <span style="font-size:0.85rem;">Número de envio: <b id="wa-numero-atual">—</b></span>
                         </div>
 
-                        <div id="wa-qrcode-area" style="display:none; text-align:center; margin:1rem 0; padding:1rem; background:#fafbff; border-radius:10px;">
+                        <div id="wa-qrcode-area" style="display:none; text-align:center; margin:1rem 0; padding:1rem; background:var(--bg); border-radius:10px;">
                             <p style="font-size:0.85rem; color:var(--muted); margin-top:0;">Escaneie com o WhatsApp (Aparelhos conectados → Conectar um aparelho):</p>
                             <img id="wa-qrcode-img" src="" alt="QR Code do WhatsApp" style="max-width:260px; width:100%; border-radius:8px; border:1px solid var(--border);">
                         </div>
@@ -995,7 +1055,7 @@
                     <div id="api-shortcuts" style="display:flex; flex-wrap:wrap; gap:0.4rem; margin-bottom:1.1rem;"></div>
 
                     <div class="form-row" style="flex-direction:row; gap:0.5rem;">
-                        <select id="api-method" style="width:110px; flex-shrink:0; padding:0.55rem 0.5rem; border:1px solid var(--border); border-radius:8px; font-size:0.88rem; font-family:inherit; background:#fff;">
+                        <select id="api-method" style="width:110px; flex-shrink:0; padding:0.55rem 0.5rem; border:1px solid var(--border); border-radius:8px; font-size:0.88rem; font-family:inherit; background:var(--card);">
                             <option>GET</option>
                             <option>POST</option>
                             <option>PUT</option>
@@ -1038,6 +1098,31 @@
 // ===== Utilidades =====
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
+
+// ===== Tema (dark por padrão, pedido do usuário — com toggle pra claro) =====
+// O <html> já nasce com data-theme="dark" (renderizado assim pelo servidor, evita flash de
+// tema claro antes do JS rodar); aqui só aplicamos a preferência salva, se o usuário já tiver
+// trocado pra claro antes, e ligamos o botão de alternância.
+const THEME_STORAGE_KEY = 'mupa_painel_tema';
+
+function aplicarTema(tema) {
+    document.documentElement.setAttribute('data-theme', tema);
+    $('#theme-icon-moon').style.display = tema === 'dark' ? 'block' : 'none';
+    $('#theme-icon-sun').style.display = tema === 'dark' ? 'none' : 'block';
+}
+
+(() => {
+    let salvo = null;
+    try { salvo = localStorage.getItem(THEME_STORAGE_KEY); } catch (e) {}
+    aplicarTema(salvo === 'light' ? 'light' : 'dark');
+})();
+
+$('#btn-theme-toggle').addEventListener('click', () => {
+    const atual = document.documentElement.getAttribute('data-theme');
+    const novo = atual === 'dark' ? 'light' : 'dark';
+    aplicarTema(novo);
+    try { localStorage.setItem(THEME_STORAGE_KEY, novo); } catch (e) {}
+});
 
 const CAMERA_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>';
 
@@ -1168,7 +1253,7 @@ $$('.nav-tab').forEach(btn => {
         const tab = btn.dataset.tab;
         $$('.tab-content').forEach(tc => tc.style.display = 'none');
         $(`#tab-${tab}`).style.display = 'block';
-        $('#content')?.classList.toggle('wide', tab === 'consulta');
+        $('#content')?.classList.toggle('wide', tab === 'consulta' || tab === 'historico');
 
         const titleEl = $('#page-title');
         const subtitleEl = $('#page-subtitle');
@@ -1512,7 +1597,7 @@ async function loadHistorico(page = 1) {
                 const ultimaFmt = new Date(r.ultima_tentativa).toLocaleString('pt-BR');
                 const descricao = r.descricao || 'Descrição não disponível';
                 return `<tr data-codbar="${escHtml(r.codbar)}">
-                    <td>
+                    <td data-action="hist-detalhes" data-codbar="${escHtml(r.codbar)}" style="cursor:pointer;" title="Ver detalhes">
                         <div style="font-weight:500; font-size:0.85rem;">${escHtml(descricao)}</div>
                         <span class="ean">${escHtml(r.codbar)}</span>
                     </td>
@@ -1547,8 +1632,8 @@ async function loadHistorico(page = 1) {
                 ? (r.notificado ? '<span style="color:var(--muted);">Já notificado</span>' : '<span style="color:var(--warn);">Pendente</span>')
                 : '—';
             return `<tr>
-                <td><span class="ean">${escHtml(r.codbar)}</span></td>
-                <td>${escHtml(r.descricao || '—')}</td>
+                <td data-action="hist-detalhes" data-codbar="${escHtml(r.codbar)}" style="cursor:pointer;" title="Ver detalhes"><span class="ean">${escHtml(r.codbar)}</span></td>
+                <td data-action="hist-detalhes" data-codbar="${escHtml(r.codbar)}" style="cursor:pointer;" title="Ver detalhes">${escHtml(r.descricao || '—')}</td>
                 <td>${statusBadge}</td>
                 <td>${viaBadge}</td>
                 <td>${notifBadge}</td>
@@ -1569,8 +1654,12 @@ async function loadHistorico(page = 1) {
 // Remove a linha resolvida da lista (sem recarregar a página toda) e ajusta os contadores —
 // feedback imediato de que a ação funcionou, sem esperar um novo fetch.
 function removerLinhaHistorico(codbar) {
+    // Só existe uma linha com data-codbar no <tr> na vista agrupada ('não encontrados') — na
+    // vista de log bruto ('todos'/'encontrados') não há o que remover (nem faz sentido: é
+    // histórico, não fila de pendências), então sai sem mexer no contador.
     const row = $(`#historico-list tr[data-codbar="${CSS.escape(codbar)}"]`);
-    if (row) row.remove();
+    if (!row) return;
+    row.remove();
     const restantes = $('#historico-list tbody')?.children.length ?? 0;
     if (restantes === 0) {
         $('#historico-list').innerHTML = '<div class="empty-state">Nenhum registro encontrado.</div>';
@@ -1582,6 +1671,12 @@ function removerLinhaHistorico(codbar) {
 }
 
 $('#historico-list').addEventListener('click', async (e) => {
+    const detalhesCell = e.target.closest('[data-action="hist-detalhes"]');
+    if (detalhesCell) {
+        openHistDetailPanel(detalhesCell.dataset.codbar);
+        return;
+    }
+
     const buscarBtn = e.target.closest('[data-action="hist-buscar"]');
     if (buscarBtn) {
         const codbar = buscarBtn.dataset.codbar;
@@ -1651,6 +1746,126 @@ $('#historico-codbar').addEventListener('keydown', (e) => { if (e.key === 'Enter
 $('#historico-status').addEventListener('change', () => loadHistorico(1));
 $('#btn-historico-prev').addEventListener('click', () => { if (historicoPage > 1) loadHistorico(historicoPage - 1); });
 $('#btn-historico-next').addEventListener('click', () => loadHistorico(historicoPage + 1));
+
+// ===== Painel de detalhes do Histórico (lateral direita, ao clicar num produto) =====
+// Mesma ideia do painel de detalhes da Consulta Rápida (openDetailModal) — reaproveita as
+// mesmas rotas de backend (Buscar imagem, Gerar arte, Enviar/Trocar imagem), mas com seus
+// próprios ids ('hist-detail-*') porque vive numa coluna própria dentro da aba Histórico, e
+// atualiza loadHistorico(historicoPage) em vez de loadConsulta ao final de cada ação.
+let histDetailEan = null;
+
+function closeHistDetailPanel() {
+    histDetailEan = null;
+    $('#hist-detail-content').style.display = 'none';
+    $('#hist-detail-empty').style.display = 'block';
+}
+
+$('#hist-detail-panel-close').addEventListener('click', closeHistDetailPanel);
+
+async function openHistDetailPanel(ean) {
+    histDetailEan = ean;
+    $('#hist-detail-empty').style.display = 'none';
+    $('#hist-detail-content').style.display = 'block';
+    $('#hist-detail-nome').textContent = 'Carregando...';
+    $('#hist-detail-marca-cat').textContent = '—';
+    $('#hist-detail-ean').textContent = ean;
+    $('#hist-detail-preco').textContent = '—';
+    $('#hist-detail-ncm').textContent = '—';
+    $('#hist-detail-modal-image').innerHTML = `<span style="width:40px;height:40px;color:#94a3b8;display:inline-flex;">${CAMERA_ICON}</span>`;
+    $('#hist-detail-btn-ver-arte').style.display = 'none';
+
+    const gerarBtn = $('#hist-detail-btn-gerar-arte');
+    gerarBtn.disabled = false;
+    gerarBtn.textContent = 'Gerar arte';
+    gerarBtn.onclick = () => gerarArteParaBotao(gerarBtn, ean, (data) => {
+        if (data.arte_url) {
+            $('#hist-detail-modal-image').innerHTML = `<img src="${escHtml(data.arte_url)}?t=${Date.now()}" alt="Arte gerada">`;
+            const verBtn = $('#hist-detail-btn-ver-arte');
+            verBtn.style.display = 'inline-flex';
+            verBtn.onclick = () => openLightbox(data.arte_url);
+            gerarBtn.textContent = 'Regenerar arte';
+        }
+    });
+
+    const buscarImgBtn = $('#hist-detail-btn-buscar-imagem');
+    buscarImgBtn.disabled = false;
+    buscarImgBtn.textContent = 'Buscar imagem';
+    buscarImgBtn.onclick = async () => {
+        const originalHtml = buscarImgBtn.innerHTML;
+        buscarImgBtn.disabled = true;
+        buscarImgBtn.innerHTML = `<span class="spinner"></span> Buscando...`;
+        try {
+            const res = await fetch(`/admin/buscar-imagem/${encodeURIComponent(ean)}`, {
+                method: 'POST',
+                headers: authHeaders(),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+            toast(data.message || 'Imagem encontrada', 'success');
+            if (data.imagem_url && histDetailEan === ean) {
+                $('#hist-detail-modal-image').innerHTML = `<img src="${escHtml(data.imagem_url)}?t=${Date.now()}" alt="Foto do produto">`;
+            }
+            removerLinhaHistorico(ean);
+        } catch (e2) {
+            toast('Erro ao buscar imagem: ' + e2.message, 'error');
+        } finally {
+            buscarImgBtn.disabled = false;
+            buscarImgBtn.innerHTML = originalHtml;
+        }
+    };
+
+    const trocarImgBtn = $('#hist-detail-btn-trocar-imagem');
+    const inputImagem = $('#hist-detail-input-imagem');
+    trocarImgBtn.onclick = () => inputImagem.click();
+    inputImagem.value = '';
+    inputImagem.onchange = async () => {
+        const file = inputImagem.files[0];
+        if (!file) return;
+        const originalHtml = trocarImgBtn.innerHTML;
+        trocarImgBtn.disabled = true;
+        trocarImgBtn.innerHTML = `<span class="spinner"></span> Enviando...`;
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            const res = await fetch(`/upload-imagem-produto/${encodeURIComponent(ean)}`, {
+                method: 'POST',
+                headers: authHeaders(),
+                body: formData,
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+            toast('Imagem enviada com sucesso', 'success');
+            if (histDetailEan === ean) {
+                $('#hist-detail-modal-image').innerHTML = `<img src="${escHtml(data.path ? '/' + data.path.replace(/\\/g, '/') : '')}?t=${Date.now()}" alt="Foto do produto">`;
+            }
+            removerLinhaHistorico(ean);
+        } catch (e2) {
+            toast('Erro ao enviar imagem: ' + e2.message, 'error');
+        } finally {
+            trocarImgBtn.disabled = false;
+            trocarImgBtn.innerHTML = originalHtml;
+            inputImagem.value = '';
+        }
+    };
+
+    try {
+        const res = await fetch(`/produto/${encodeURIComponent(ean)}`, { headers: authHeaders() });
+        if (!res.ok) {
+            const errBody = await res.json().catch(() => ({}));
+            throw new Error(errBody.message || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        if (histDetailEan !== ean) return; // usuário já trocou de produto enquanto carregava
+
+        $('#hist-detail-nome').textContent = data.description || 'Produto sem descrição';
+        $('#hist-detail-marca-cat').textContent = `${data.marca || 'Marca não informada'} · ${data.categoriaText || 'Categoria não informada'}`;
+        $('#hist-detail-preco').textContent = data.preco_medio && data.preco_medio > 0 ? `R$ ${data.preco_medio.toFixed(2)}` : '—';
+        $('#hist-detail-ncm').textContent = data.ncm || '—';
+    } catch (e) {
+        if (histDetailEan !== ean) return;
+        $('#hist-detail-nome').textContent = 'Erro ao carregar detalhes';
+    }
+}
 
 // ===== Status do sistema (fila de arte + consumo Gemini/Cosmos) =====
 let statusSistemaTimer = null;

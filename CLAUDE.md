@@ -2,6 +2,24 @@
 
 API Flask de gestão de produtos/imagens para o app de consulta de preço da Mupa (`mplayer`). Roda na porta **5050**. Painel admin em `/configuracoes`.
 
+## Tema escuro por padrão, com toggle pra claro
+
+Pedido do usuário. `<html>` já nasce com `data-theme="dark"` (renderizado assim pelo servidor — evita flash de tema claro antes do JS rodar). Botão no topbar (`#btn-theme-toggle`, ícone lua/sol) alterna `data-theme` entre `"dark"`/`"light"` e persiste em `localStorage` (`mupa_painel_tema`); sem preferência salva, sempre abre escuro.
+
+Implementado quase inteiramente via CSS custom properties: `html[data-theme="dark"] { --bg: ...; --card: ...; --border: ...; --text: ...; --muted: ...; --accent: ...; ... }` redefine os mesmos tokens que o `:root` já usa em claro — como o resto do CSS já era escrito em cima de `var(--bg)`/`var(--card)`/etc. (não cores literais), a troca de tema se propaga sozinha pro resto do painel sem precisar duplicar regras. Alguns lugares tinham cor **literal** hardcoded em vez de variável (`background:#fff` em inputs/botões/menu-toggle, `background:#f8fafc` no hover de botão secundário, `background:#fafbff` em 4 cards aninhados) — trocados por `var(--card)`/`var(--hover)`/`var(--bg)` pra também respeitarem o tema. A barra lateral (`--sidebar-*`) não precisou de bloco novo — já era escura nos dois temas.
+
+**Não perseguido nesta leva** (aceito como inconsistência menor, não um bug): badges de status gerados via JS com cor pastel literal (ex. verde/vermelho claro dos badges "Encontrado"/"Não encontrado" no Histórico, âmbar do badge de tentativas) continuam com o mesmo hex em ambos os temas — ainda legíveis no escuro (fundo pastel + texto escuro), só não foram re-otimizados pixel a pixel pro tema escuro.
+
+## Aba Histórico: painel de detalhes lateral (clicar no produto)
+
+Pedido do usuário: clicar num produto da lista (qualquer filtro — agrupado "não encontrados" ou log bruto "todos"/"encontrados") abre um painel de detalhes na coluna direita, igual ao que já existia na Consulta Rápida. Em vez de generalizar o painel único da Consulta Rápida (`#detail-panel`/`openDetailModal`, fortemente acoplado a `loadConsulta`/`consultaPage`/`ultimoConsultaData`), criei um painel **paralelo e independente** pro Histórico (`#hist-detail-panel`/`openHistDetailPanel`, ids prefixados `hist-detail-*`) — mesmo HTML/CSS (`.consulta-layout`/`.consulta-detail-col`/`.detail-panel`/`.detail-modal-*`/`.detail-field`, todos genéricos o bastante pra reaproveitar), mesmas 3 rotas de backend (Buscar imagem, Gerar arte, Enviar/Trocar imagem), mas atualizando `loadHistorico(historicoPage)`/`removerLinhaHistorico` no lugar de `loadConsulta`. Evita acoplar os dois painéis e reduz risco de regressão na Consulta Rápida, ao custo de ~130 linhas de JS duplicadas (aceitável — mesmo padrão que `loadHistorico`/`loadConsulta` já coexistindo como implementações paralelas).
+
+A aba Histórico ganhou o mesmo tratamento de layout largo que a Consulta Rápida (`$('#content')?.classList.toggle('wide', tab === 'consulta' || tab === 'historico')`).
+
+`removerLinhaHistorico(codbar)` (já existia, das ideias 1-5) só encontra e remove `<tr data-codbar>` na vista **agrupada** — na vista de log bruto não há esse atributo no `<tr>` (só nos `<td>`, pra abrir o painel), então chamar a função ali é um no-op seguro. Corrigido um bug real encontrado ao ligar o painel de detalhes na vista de log: a função decrementava o contador "N registros" mesmo quando não achava/removia linha nenhuma — agora só decrementa se `row` existir.
+
+**Pegadinha de teste, não bug**: `GET /produto/<ean>` (usado tanto pela Consulta Rápida quanto por este painel novo) monta a resposta com uma sugestão via Gemini (`gemini-2.5-flash-lite`) **síncrona** — a chamada inteira leva uns 15-25s. Ao testar/depurar esse painel, esperar tempo suficiente antes de checar o resultado (já aconteceu de eu achar, num primeiro momento, que o clique não funcionava — só estava sendo verificado cedo demais).
+
 ## Login real do painel (substituiu um bypass sério que existia antes)
 
 Até esta sessão o painel **não tinha login de verdade**: `configuracoes.html` se autenticava sozinho no carregamento via `GET /painel/login`, uma rota que emitia um JWT válido pra `antunes@mupa.app` **sem checar senha nenhuma** — e, se essa rota falhasse, caía num fallback com as credenciais reais **hardcoded no próprio JavaScript** (visível a qualquer um vendo o código-fonte da página). Ou seja: `/configuracoes` era, na prática, uma página pública. Pedido do usuário pra corrigir isso ("adiciona um login" + "altere o index pra carregar o login"):
