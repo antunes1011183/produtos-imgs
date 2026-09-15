@@ -3739,12 +3739,24 @@ def _verificar_e_aplicar_atualizacao_github():
             return
         branch = branch_res.stdout.strip()
 
+        # Só considera "suja" a árvore se houver mudança em arquivo RASTREADO (modificado,
+        # deletado, staged etc.) — um arquivo solto e nunca versionado (`??` no --porcelain,
+        # ex.: um script de teste esquecido na raiz) não é risco nenhum pra um `git pull`
+        # (só bloquearia de verdade se o commit remoto tentasse criar um arquivo exatamente
+        # nesse mesmo caminho, caso raro). A primeira versão bloqueava em QUALQUER `??`
+        # também — na prática isso deixava o auto-update permanentemente travado nesta
+        # máquina por causa de ~12 arquivos avulsos pré-existentes, sem relação com o
+        # trabalho de verdade sendo versionado.
         status_res = subprocess.run(
             ['git', 'status', '--porcelain'],
             capture_output=True, text=True, cwd=BASE_DIR, timeout=15,
         )
-        if status_res.stdout.strip():
-            logging.warning("Atualização automática pulada: há mudanças locais não commitadas.")
+        tem_mudanca_rastreada = any(
+            linha.strip() and not linha.startswith('??')
+            for linha in status_res.stdout.splitlines()
+        )
+        if tem_mudanca_rastreada:
+            logging.warning("Atualização automática pulada: há mudanças locais não commitadas em arquivo rastreado.")
             return
 
         fetch_res = subprocess.run(
