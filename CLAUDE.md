@@ -197,10 +197,27 @@ Cada chamada real ao Gemini (`gerar_arte_publicitaria` — modelo de imagem — 
 
 Aba "Consulta Rápida" unifica busca + catálogo + geração de arte + detalhes num painel lateral (não modal) — layout com `.content.wide` pra ocupar a tela toda nessa aba especificamente.
 
-## Débito técnico conhecido (não mexido, fora de escopo até ser pedido)
+## Atualização automática via GitHub (polling, não webhook)
 
-- `venv/` está parcialmente rastreado no git (deveria estar 100% no `.gitignore`) — **nunca usar `git add -A` ou `git commit -a`** neste repo, sempre `git add <arquivo>` explícito.
+Pedido do usuário: "quero que o sistema se atualize quando o github receber um push/commit". `_iniciar_agendador_atualizacao()` (thread daemon, mesmo padrão dos outros agendadores) confere a cada 5 minutos se há commit novo em `origin/<branch atual>` e, se houver, aplica sozinho: `git pull` + reinício do processo via `os.execv(sys.executable, [sys.executable] + sys.argv)`.
+
+**Por que polling, não webhook**: essa máquina (e qualquer outra rodando isso numa loja/rede local) não tem garantia de estar acessível publicamente pra receber a chamada HTTP que o GitHub faria num push — então em vez de "o GitHub me avisa", o sistema "pergunta sozinho de tempos em tempos". Teto de 5 minutos entre um push e o sistema notar, não é instantâneo.
+
+**Proteção principal, testada de verdade**: só faz `git pull` se `git status --porcelain` vier **vazio** (working tree limpa) — nunca arrisca sobrescrever mudança local não commitada. Testado nesta própria máquina: com a árvore suja (antes da correção do `.gitignore`, ver seção de débito técnico acima), a função corretamente detectou e pulou, sem tentar nada. Sem essa correção do `.gitignore`, a árvore desta máquina de dev NUNCA ficava limpa de verdade (o `venv` sempre "mudava" alguma coisa) — então o auto-update, embora implementado corretamente, nunca teria efeito prático aqui até o `.gitignore` ser consertado.
+
+**`os.execv` pra reiniciar, testado isoladamente**: confirmado funcionando no Windows com um script de teste que se reinicia sozinho 2x em sequência via `os.execv` antes de terminar — a abordagem funciona tanto rodando `python app.py` quanto no `.exe` compilado pelo PyInstaller (`sys.executable` aponta pro lugar certo nos dois casos, ver seção de packaging), sem precisar de nenhum supervisor externo (NSSM, serviço do Windows) pra "trazer de volta" o processo depois do restart — ele se relança sozinho.
+
+Se o pull for aplicado com sucesso, dispara um aviso por WhatsApp antes de reiniciar (`_notificar_atualizacao_whatsapp`, reaproveita `_enviar_texto_whatsapp` — o mesmo helper genérico que o heartbeat horário usa, extraído dele nesta mesma leva). Controlado por `AUTO_UPDATE_ATIVO` (Config, default `'true'`, sem toggle na UI ainda — só setável direto no banco se precisar desligar).
+
+**Não testado**: o caminho completo "árvore limpa + commit novo remoto → pull → restart" de ponta a ponta (tentei clonar uma cópia limpa do repo pra testar isolado, mas o Windows recusou por causa de caminhos longos demais dentro do `venv` rastreado — outro sintoma do mesmo problema do `.gitignore`). O que FOI verificado individualmente: (1) a guarda de árvore suja funciona, (2) `git fetch`/`rev-parse`/`pull` funcionam via subprocess a partir do Python nativo do venv, (3) `os.execv` reinicia o processo corretamente. A composição completa desses três pedaços é o que ainda falta ver rodando de verdade — vai acontecer naturalmente no primeiro push real depois desta sessão.
+
 - A API do Bing Image Search (`buscar_e_salvar_imagem_bing`) está retornando `410 Gone` — a Microsoft descontinuou essa API. Na prática a cadeia de busca de foto crua (local → Bing → Google → Zaffari) pula direto pro Google na maioria dos casos. Não corrigido ainda; considerar remover o passo do Bing ou trocar por outra fonte se isso virar um problema real.
+
+### RESOLVIDO: `.gitignore` corrompido causava `venv/` (16.6k arquivos!) rastreado por engano
+
+Ficava documentado aqui como "`venv/` parcialmente rastreado, nunca usar `git add -A`" — investigando por causa do auto-update automático (seção "Atualização automática via GitHub" abaixo), achei a causa raiz: o `.gitignore` tinha as regras certas (`venv/`, `static/`, `instance/`) mas **metade do arquivo estava em UTF-16**, escrita por cima de um arquivo que começou em UTF-8 (bytes confirmados com `xxd`: cada caractere virava "letra + `0x00`" a partir de certo ponto) — git nunca conseguiu interpretar essas linhas como padrões válidos, então elas nunca funcionaram.
+
+Corrigido: `.gitignore` reescrito do zero em UTF-8 puro (`venv/`, `__pycache__/`, `*.pyc`, `static/`, `instance/`, `*.log`, `build/`/`dist/`/`*.spec` do PyInstaller) + `git rm -r --cached` nos ~16.8k arquivos afetados (venv + static + pycache) — **só tira do índice do git, não apaga nada do disco**, os arquivos continuam exatamente onde estavam. A regra "nunca usar `git add -A`/`git commit -a`" neste repo pode ser reavaliada agora que o `.gitignore` funciona de verdade, mas por precaução (não testado a fundo ainda com um `git add -A` real) continue preferindo `git add <arquivo>` explícito por enquanto.
 
 ## Histórico de buscas e resumo diário do sistema
 

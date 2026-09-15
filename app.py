@@ -6,6 +6,7 @@ import base64
 import threading
 import time
 import queue
+import subprocess
 import math
 import colorsys
 import requests
@@ -3610,11 +3611,12 @@ def _montar_mensagem_status_horario(motivo='heartbeat horário'):
     )
 
 
-def _enviar_status_horario_whatsapp(motivo='heartbeat horário'):
-    """Envia o heartbeat horário via Evolution API — mesma instância/número já usados pelo
-    resumo diário (WHATSAPP_BASE_URL/WHATSAPP_TOKEN/WHATSAPP_INSTANCE/WHATSAPP_NUMERO_DESTINO).
-    Levanta exceção em caso de falha; quem chama decide o que fazer (o agendador só loga e
-    tenta de novo na próxima hora, nunca deixa a falta de 1 envio derrubar o loop)."""
+def _enviar_texto_whatsapp(mensagem):
+    """Envia uma mensagem de texto livre via Evolution API, usando a mesma instância/número já
+    configurados na aba WhatsApp (WHATSAPP_BASE_URL/WHATSAPP_TOKEN/WHATSAPP_INSTANCE/
+    WHATSAPP_NUMERO_DESTINO). Levanta exceção em caso de falha ou config ausente — quem chama
+    decide o que fazer. Ponto único de envio, reaproveitado pelo heartbeat horário e pela
+    notificação de atualização automática (ver _notificar_atualizacao_whatsapp)."""
     cfg = _ler_todas_config()
     base_url = cfg.get('WHATSAPP_BASE_URL', '').strip().rstrip('/')
     instancia = cfg.get('WHATSAPP_INSTANCE', '').strip()
@@ -3623,13 +3625,19 @@ def _enviar_status_horario_whatsapp(motivo='heartbeat horário'):
     if not base_url or not apikey or not instancia or not numero:
         raise ValueError('WhatsApp não configurado (servidor, instância ou número destino ausentes — ver aba WhatsApp)')
 
-    mensagem = _montar_mensagem_status_horario(motivo)
     url = f"{base_url}/message/sendText/{instancia}"
     headers = {'apikey': apikey, 'Content-Type': 'application/json'}
     payload = {'number': numero, 'textMessage': {'text': mensagem}}
 
     resposta = requests.post(url, json=payload, headers=headers, timeout=20)
     resposta.raise_for_status()
+
+
+def _enviar_status_horario_whatsapp(motivo='heartbeat horário'):
+    """Envia o heartbeat horário via Evolution API. Levanta exceção em caso de falha; quem
+    chama decide o que fazer (o agendador só loga e tenta de novo na próxima hora, nunca deixa
+    a falta de 1 envio derrubar o loop)."""
+    _enviar_texto_whatsapp(_montar_mensagem_status_horario(motivo))
 
 
 def _iniciar_agendador_status_horario():
@@ -3692,11 +3700,126 @@ def _iniciar_agendador_status_horario():
     threading.Thread(target=_loop, daemon=True).start()
 
 
+def _notificar_atualizacao_whatsapp(commit_antigo, commit_novo):
+    """Avisa por WhatsApp que uma atualização automática via GitHub foi aplicada e o processo
+    vai reiniciar — mesmo espírito do heartbeat horário (visibilidade sem precisar checar log
+    manualmente), mas disparado pelo evento, não por horário."""
+    mensagem = (
+        "🔄 *Mupa Brain* - Atualização aplicada\n"
+        f"{datetime.now().strftime('%d/%m/%Y %H:%M')}\n\n"
+        f"{commit_antigo[:8]} → {commit_novo[:8]}\n"
+        "Reiniciando o processo com o código novo..."
+    )
+    _enviar_texto_whatsapp(mensagem)
+
+
+def _verificar_e_aplicar_atualizacao_github():
+    """Confere se há commits novos no GitHub (origin/<branch atual>) e, se houver E a working
+    tree estiver limpa, aplica sozinha: `git pull` seguido de reinício do processo via
+    `os.execv` (recarrega o mesmo interpretador com os mesmos argumentos — funciona tanto
+    rodando `python app.py` quanto no .exe compilado pelo PyInstaller, sem precisar de nenhum
+    supervisor externo tipo NSSM/serviço do Windows).
+
+    Nunca faz `git pull` se `git status --porcelain` não vier vazio — proteção deliberada:
+    puxar por cima de mudanças locais não commitadas podia gerar conflito de merge ou, pior,
+    sobrescrever trabalho em andamento (esse repositório já tem histórico de arquivos
+    modificados fora de commit, ver seção de débito técnico no CLAUDE.md). Nesse caso só loga
+    um aviso e sai — precisa de intervenção manual (commitar, descartar ou stash).
+
+    Roda inteiramente via subprocess chamando o `git` do PATH — testado que o Python nativo do
+    venv (não só o Git Bash) enxerga o `git` normalmente nesta máquina. Não faz nada (retorna
+    cedo, em silêncio) se não for um repositório git — cobre o caso de alguém rodar a partir de
+    um pacote zipado sem pasta .git (ver seção de empacotamento no CLAUDE.md)."""
+    try:
+        branch_res = subprocess.run(
+            ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+            capture_output=True, text=True, cwd=BASE_DIR, timeout=15,
+        )
+        if branch_res.returncode != 0:
+            return
+        branch = branch_res.stdout.strip()
+
+        status_res = subprocess.run(
+            ['git', 'status', '--porcelain'],
+            capture_output=True, text=True, cwd=BASE_DIR, timeout=15,
+        )
+        if status_res.stdout.strip():
+            logging.warning("Atualização automática pulada: há mudanças locais não commitadas.")
+            return
+
+        fetch_res = subprocess.run(
+            ['git', 'fetch', 'origin', branch],
+            capture_output=True, text=True, cwd=BASE_DIR, timeout=60,
+        )
+        if fetch_res.returncode != 0:
+            logging.error(f"Falha ao buscar atualizações do GitHub: {fetch_res.stderr.strip()}")
+            return
+
+        local = subprocess.run(
+            ['git', 'rev-parse', 'HEAD'], capture_output=True, text=True, cwd=BASE_DIR, timeout=15,
+        ).stdout.strip()
+        remoto = subprocess.run(
+            ['git', 'rev-parse', f'origin/{branch}'], capture_output=True, text=True, cwd=BASE_DIR, timeout=15,
+        ).stdout.strip()
+        if not remoto or local == remoto:
+            return  # já está na última versão
+
+        logging.info(f"Nova versão detectada no GitHub ({local[:8]} -> {remoto[:8]}) — aplicando...")
+        pull_res = subprocess.run(
+            ['git', 'pull', 'origin', branch],
+            capture_output=True, text=True, cwd=BASE_DIR, timeout=120,
+        )
+        if pull_res.returncode != 0:
+            logging.error(f"Falha ao aplicar atualização (git pull): {pull_res.stderr.strip()}")
+            return
+
+        logging.info("Atualização aplicada com sucesso — reiniciando o processo...")
+        try:
+            _notificar_atualizacao_whatsapp(local, remoto)
+        except Exception as e:
+            logging.warning(f"Não foi possível notificar a atualização por WhatsApp: {e}")
+
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+    except Exception as e:
+        logging.error(f"Erro no verificador de atualização automática: {e}")
+
+
+def _iniciar_agendador_atualizacao():
+    """Thread em segundo plano que confere a cada 5 minutos se há commits novos no GitHub e
+    aplica sozinha (ver _verificar_e_aplicar_atualizacao_github). Pedido do usuário: "quero que
+    o sistema se atualize quando o github receber um push/commit".
+
+    Por POLLING, não webhook: esta máquina não tem garantia de estar acessível publicamente pra
+    receber uma chamada do GitHub no momento do push, então a checagem é sempre "puxar" (fetch
+    periódico), nunca "receber um aviso" — o intervalo de 5 minutos é o teto de quanto tempo
+    leva até o sistema notar um push novo, não é instantâneo. Controlado por
+    AUTO_UPDATE_ATIVO (Config, default 'true' — ativo sem precisar de opt-in, mas pode ser
+    desligado setando essa chave como 'false' direto no banco se um dia for preciso).
+
+    Nunca morre por exceção — mesmo padrão dos outros agendadores: erro numa iteração não
+    impede a próxima."""
+    INTERVALO_SEGUNDOS = 300
+
+    def _loop():
+        while True:
+            try:
+                with app.app_context():
+                    ativo = _ler_todas_config().get('AUTO_UPDATE_ATIVO', 'true') == 'true'
+                    if ativo:
+                        _verificar_e_aplicar_atualizacao_github()
+            except Exception as e:
+                logging.error(f"Erro no loop do agendador de atualização automática: {e}")
+            time.sleep(INTERVALO_SEGUNDOS)
+
+    threading.Thread(target=_loop, daemon=True).start()
+
+
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
     _iniciar_agendador_resumo()
     _iniciar_agendador_status_horario()
+    _iniciar_agendador_atualizacao()
     _iniciar_worker_fila_arte()
     # debug=True usa o reloader do Werkzeug, que re-executa o processo (sys.executable + argv)
     # pra vigiar mudança de arquivo — dentro de um .exe compilado (PyInstaller) isso reabre o
