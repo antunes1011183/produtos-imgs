@@ -541,10 +541,19 @@
                 <h1 id="page-title">Configurações</h1>
                 <p id="page-subtitle">Tokens e flags de funcionamento do sistema</p>
             </div>
-            <button id="btn-theme-toggle" title="Alternar tema claro/escuro" style="margin-left:auto; background:none; border:1px solid var(--border); border-radius:8px; width:36px; height:36px; display:flex; align-items:center; justify-content:center; color:var(--text); cursor:pointer; flex-shrink:0;">
-                <svg id="theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:17px; height:17px;"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-                <svg id="theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:17px; height:17px; display:none;"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
-            </button>
+            <div style="margin-left:auto; display:flex; align-items:center; gap:0.6rem;">
+                {% if versao %}
+                <div id="versao-info" title="{{ versao.mensagem }}" data-iso="{{ versao.data_iso }}" style="display:flex; align-items:center; gap:0.4rem; font-size:0.74rem; color:var(--muted); background:var(--bg); border:1px solid var(--border); padding:0.36rem 0.65rem; border-radius:8px; white-space:nowrap;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:13px; height:13px; flex-shrink:0;"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+                    <span id="versao-data">—</span>
+                    <code style="font-family:'SF Mono',Consolas,monospace; font-size:0.72rem; color:var(--accent);">{{ versao.hash }}</code>
+                </div>
+                {% endif %}
+                <button id="btn-theme-toggle" title="Alternar tema claro/escuro" style="background:none; border:1px solid var(--border); border-radius:8px; width:36px; height:36px; display:flex; align-items:center; justify-content:center; color:var(--text); cursor:pointer; flex-shrink:0;">
+                    <svg id="theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:17px; height:17px;"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                    <svg id="theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:17px; height:17px; display:none;"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+                </button>
+            </div>
         </header>
 
         <div class="content" id="content">
@@ -1123,6 +1132,16 @@ $('#btn-theme-toggle').addEventListener('click', () => {
     aplicarTema(novo);
     try { localStorage.setItem(THEME_STORAGE_KEY, novo); } catch (e) {}
 });
+
+// Badge de versão no topbar (commit atual + data), pedido do usuário pra conferir num relance
+// se a atualização automática via GitHub aplicou algo — ver _info_versao_git/versao no app.py.
+// A data vem em ISO do servidor (data-iso), formatada aqui igual todo o resto do painel.
+(() => {
+    const versaoEl = $('#versao-data');
+    if (!versaoEl) return; // sem info de versão (não é um repositório git nesta instância)
+    const iso = $('#versao-info')?.dataset.iso;
+    if (iso) versaoEl.textContent = new Date(iso).toLocaleString('pt-BR');
+})();
 
 const CAMERA_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>';
 

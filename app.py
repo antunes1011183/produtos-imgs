@@ -1713,12 +1713,41 @@ def set_config(key, value):
 # Painel de Configurações e Gestão
 # =====================================================================
 
+def _git(*args, timeout=15):
+    """Roda um comando git no diretório do projeto (BASE_DIR) e retorna o CompletedProcess.
+    `encoding='utf-8'` explícito é o que importa aqui: sem isso, `subprocess.run(text=True)`
+    usa o encoding padrão do locale do Windows (geralmente cp1252, não UTF-8) pra decodificar
+    a saída — mensagens de commit com acento (ex.: "árvore") saíam como mojibake ("Ã¡rvore").
+    `errors='replace'` evita quebrar tudo por causa de 1 byte estranho isolado."""
+    return subprocess.run(
+        ['git', *args],
+        capture_output=True, text=True, encoding='utf-8', errors='replace',
+        cwd=BASE_DIR, timeout=timeout,
+    )
+
+
+def _info_versao_git():
+    """Commit atual (hash curto + data + mensagem) pra mostrar no cabeçalho do painel — dá pra
+    conferir num relance se/quando a atualização automática (ver _iniciar_agendador_atualizacao)
+    aplicou algo, sem precisar abrir o log do servidor. Retorna None se não for um repositório
+    git (ex.: rodando a partir de um pacote/zip sem pasta .git — ver seção de packaging no
+    CLAUDE.md) ou qualquer outra falha; o header simplesmente omite o bloco de versão nesse caso."""
+    try:
+        res = _git('log', '-1', '--format=%h|%cI|%s', timeout=10)
+        if res.returncode != 0 or not res.stdout.strip():
+            return None
+        hash_curto, data_iso, mensagem = res.stdout.strip().split('|', 2)
+        return {'hash': hash_curto, 'data_iso': data_iso, 'mensagem': mensagem}
+    except Exception:
+        return None
+
+
 @app.route('/configuracoes', methods=['GET', 'POST'])
 def configuracoes():
     """Painel de configurações: página HTML (pública, sem segredos) + API JSON (requer JWT)."""
-    # GET sem Accept: application/json → renderiza o shell HTML. A própria página
-    # se autentica via /painel/login e busca os dados reais por fetch autenticado,
-    # então nenhum segredo é embutido neste HTML público.
+    # GET sem Accept: application/json → renderiza o shell HTML. A própria página mostra a tela
+    # de login (POST /login) e busca os dados reais por fetch autenticado depois, então nenhum
+    # segredo é embutido neste HTML público.
     if request.method == 'GET' and 'application/json' not in request.headers.get('Accept', ''):
         try:
             cfg = _ler_todas_config()
@@ -1734,6 +1763,7 @@ def configuracoes():
                 rembg_enabled=rembg_enabled,
                 openai_key_full='',
                 gemini_key_full='',
+                versao=_info_versao_git(),
             )
         except Exception as e:
             logging.error(f"Erro ao renderizar painel: {e}")
@@ -3731,10 +3761,7 @@ def _verificar_e_aplicar_atualizacao_github():
     cedo, em silêncio) se não for um repositório git — cobre o caso de alguém rodar a partir de
     um pacote zipado sem pasta .git (ver seção de empacotamento no CLAUDE.md)."""
     try:
-        branch_res = subprocess.run(
-            ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
-            capture_output=True, text=True, cwd=BASE_DIR, timeout=15,
-        )
+        branch_res = _git('rev-parse', '--abbrev-ref', 'HEAD')
         if branch_res.returncode != 0:
             return
         branch = branch_res.stdout.strip()
@@ -3747,10 +3774,7 @@ def _verificar_e_aplicar_atualizacao_github():
         # também — na prática isso deixava o auto-update permanentemente travado nesta
         # máquina por causa de ~12 arquivos avulsos pré-existentes, sem relação com o
         # trabalho de verdade sendo versionado.
-        status_res = subprocess.run(
-            ['git', 'status', '--porcelain'],
-            capture_output=True, text=True, cwd=BASE_DIR, timeout=15,
-        )
+        status_res = _git('status', '--porcelain')
         tem_mudanca_rastreada = any(
             linha.strip() and not linha.startswith('??')
             for linha in status_res.stdout.splitlines()
@@ -3759,28 +3783,29 @@ def _verificar_e_aplicar_atualizacao_github():
             logging.warning("Atualização automática pulada: há mudanças locais não commitadas em arquivo rastreado.")
             return
 
-        fetch_res = subprocess.run(
-            ['git', 'fetch', 'origin', branch],
-            capture_output=True, text=True, cwd=BASE_DIR, timeout=60,
-        )
+        fetch_res = _git('fetch', 'origin', branch, timeout=60)
         if fetch_res.returncode != 0:
             logging.error(f"Falha ao buscar atualizações do GitHub: {fetch_res.stderr.strip()}")
             return
 
-        local = subprocess.run(
-            ['git', 'rev-parse', 'HEAD'], capture_output=True, text=True, cwd=BASE_DIR, timeout=15,
-        ).stdout.strip()
-        remoto = subprocess.run(
-            ['git', 'rev-parse', f'origin/{branch}'], capture_output=True, text=True, cwd=BASE_DIR, timeout=15,
-        ).stdout.strip()
+        local = _git('rev-parse', 'HEAD').stdout.strip()
+        remoto = _git('rev-parse', f'origin/{branch}').stdout.strip()
         if not remoto or local == remoto:
             return  # já está na última versão
 
-        logging.info(f"Nova versão detectada no GitHub ({local[:8]} -> {remoto[:8]}) — aplicando...")
-        pull_res = subprocess.run(
-            ['git', 'pull', 'origin', branch],
-            capture_output=True, text=True, cwd=BASE_DIR, timeout=120,
-        )
+        # Não basta "diferente de local" — precisa ser efetivamente uma atualização (origin
+        # contém commit(s) que local não tem). Sem essa checagem, um caso real aconteceu no
+        # teste: local estava À FRENTE do remoto (commit feito aqui mas ainda não enviado ao
+        # GitHub) e a função tratou isso como "atualização disponível", tentando um pull
+        # desnecessário. `--count` = 0 quando origin não tem nada de novo (local igual ou à
+        # frente); > 0 só quando origin realmente tem commit(s) que local ainda não possui.
+        atras_res = _git('rev-list', '--count', f'HEAD..origin/{branch}')
+        commits_atras = int(atras_res.stdout.strip() or '0') if atras_res.returncode == 0 else 0
+        if commits_atras == 0:
+            return  # local já tem tudo que o remoto tem (igual ou à frente) — nada a puxar
+
+        logging.info(f"Nova versão detectada no GitHub ({local[:8]} -> {remoto[:8]}, {commits_atras} commit(s) novo(s)) — aplicando...")
+        pull_res = _git('pull', 'origin', branch, timeout=120)
         if pull_res.returncode != 0:
             logging.error(f"Falha ao aplicar atualização (git pull): {pull_res.stderr.strip()}")
             return
