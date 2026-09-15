@@ -432,7 +432,31 @@
     </style>
 </head>
 <body>
-<div class="app">
+<div id="login-screen" style="min-height:100vh; display:flex; align-items:center; justify-content:center; background:var(--bg); padding:1.5rem;">
+    <div class="card" style="width:100%; max-width:360px; margin-bottom:0;">
+        <div style="display:flex; flex-direction:column; align-items:center; gap:0.6rem; margin-bottom:1.4rem;">
+            <div class="brand-mark" style="width:44px; height:44px; font-size:1.05rem;">MB</div>
+            <div style="text-align:center;">
+                <div style="font-weight:700; font-size:1.05rem;">Mupa Brain</div>
+                <div style="color:var(--muted); font-size:0.82rem;">Painel de Gestão</div>
+            </div>
+        </div>
+        <div id="alert-login"></div>
+        <form id="login-form">
+            <div class="form-row">
+                <label for="login-email">E-mail</label>
+                <input type="email" id="login-email" autocomplete="username" required placeholder="voce@mupa.app">
+            </div>
+            <div class="form-row">
+                <label for="login-senha">Senha</label>
+                <input type="password" id="login-senha" autocomplete="current-password" required placeholder="••••••••">
+            </div>
+            <button type="submit" class="btn btn-primary" id="btn-login" style="width:100%; justify-content:center;">Entrar</button>
+        </form>
+    </div>
+</div>
+
+<div class="app" id="app-shell" style="display:none;">
     <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
 
     <aside class="sidebar" id="sidebar">
@@ -466,6 +490,10 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
                 WhatsApp
             </button>
+            <button class="nav-tab" data-tab="removerfundo" data-title="Remover Fundo" data-subtitle="Remove o fundo de uma imagem, por upload ou URL">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>
+                Remover Fundo
+            </button>
 
             <span class="nav-section-label">Desenvolvedor</span>
             <button class="nav-tab" data-tab="apitest" data-title="Testar API" data-subtitle="Envie requisições para qualquer rota da API e veja a resposta">
@@ -474,8 +502,11 @@
             </button>
         </nav>
 
-        <div class="sidebar-footer">
+        <div class="sidebar-footer" style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem;">
             <span class="status-pill"><span class="dot"></span>Servidor local ativo</span>
+            <button id="btn-logout" title="Sair" style="background:none; border:none; color:#64748b; cursor:pointer; padding:0.3rem; display:flex; align-items:center;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:16px; height:16px;"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            </button>
         </div>
     </aside>
 
@@ -815,7 +846,7 @@
                             <label for="historico-status" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">Status</label>
                             <select id="historico-status">
                                 <option value="todos">Todos</option>
-                                <option value="nao_encontrado">Não encontrados</option>
+                                <option value="nao_encontrado" selected>Não encontrados</option>
                                 <option value="encontrado">Encontrados</option>
                             </select>
                         </div>
@@ -913,6 +944,46 @@
                 </div>
             </div>
 
+            <!-- ===== TAB: REMOVER FUNDO ===== -->
+            <div id="tab-removerfundo" class="tab-content" style="display:none;">
+                <div class="card">
+                    <h2>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>
+                        Remover fundo da imagem
+                    </h2>
+                    <p style="color:var(--muted); font-size:0.85rem; margin-top:-0.6rem; margin-bottom:1.1rem;">
+                        Ferramenta avulsa (rembg) — não é o fluxo automático de produtos, é só um utilitário rápido pra tirar o fundo de qualquer imagem.
+                    </p>
+                    <div id="alert-removerfundo"></div>
+
+                    <h3>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                        Enviar arquivo
+                    </h3>
+                    <div class="form-row" style="flex-direction:row; align-items:center; gap:0.6rem;">
+                        <input type="file" id="rf-file-input" accept="image/*" style="flex:1;">
+                        <button class="btn btn-primary" id="btn-rf-upload">Remover fundo</button>
+                    </div>
+
+                    <h3>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7.07 0l-2.83 2.83a5 5 0 0 0 7.07 7.07l1.5-1.5"/></svg>
+                        Ou cole a URL da imagem
+                    </h3>
+                    <div class="form-row" style="flex-direction:row; align-items:center; gap:0.6rem;">
+                        <input type="text" id="rf-url-input" placeholder="https://exemplo.com/produto.jpg" style="flex:1;">
+                        <button class="btn btn-primary" id="btn-rf-url">Remover fundo</button>
+                    </div>
+
+                    <div id="rf-resultado" style="display:none; margin-top:1.3rem; padding-top:1.2rem; border-top:1px solid var(--border);">
+                        <h3 style="margin-top:0;">Resultado</h3>
+                        <img id="rf-resultado-img" src="" alt="Imagem sem fundo" style="max-width:100%; max-height:420px; border-radius:8px; border:1px solid var(--border); background:repeating-conic-gradient(#f1f2f6 0% 25%, #fff 0% 50%) 50% / 20px 20px;">
+                        <div style="margin-top:0.7rem;">
+                            <a id="rf-resultado-link" href="#" target="_blank" class="btn btn-secondary btn-sm">Abrir imagem em nova aba</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- ===== TAB: TESTAR API ===== -->
             <div id="tab-apitest" class="tab-content" style="display:none;">
                 <div class="card">
@@ -989,61 +1060,95 @@ function escHtml(s) {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// Pedido do usuário: a Zaffari continua funcionando como fonte normalmente (imagem e
+// descrição) — só o nome dela não deve aparecer em nenhum rótulo/toast do painel. Não mexe em
+// nenhum dado nem desativa a fonte, só suprime o texto exibido nesses pontos específicos.
+function rotuloFonte(fonte) {
+    return fonte && fonte !== 'zaffari' ? fonte : null;
+}
+
 // ===== Login =====
+// Antes disso o painel se autenticava sozinho (GET /painel/login, sem checar senha nenhuma —
+// removido) ou caía num fallback com credenciais fixas no próprio JS (também removido). Agora
+// é login de verdade: sem sessão salva válida, mostra #login-screen e espera alguém digitar
+// e-mail/senha reais — só então o conteúdo do painel (#app-shell) aparece.
+const TOKEN_STORAGE_KEY = 'mupa_painel_token';
+const TOKEN_EXPIRA_STORAGE_KEY = 'mupa_painel_token_expira';
 let token = null;
 
-async function login() {
-    // Tenta usar endpoint público de login do painel primeiro
+function salvarSessao(tok, expiraEmMs) {
+    token = tok;
     try {
-        const res = await fetch('/painel/login');
-        if (res.ok) {
-            const data = await res.json();
-            token = data.token;
-            return token;
-        }
+        localStorage.setItem(TOKEN_STORAGE_KEY, tok);
+        localStorage.setItem(TOKEN_EXPIRA_STORAGE_KEY, String(expiraEmMs));
     } catch (e) {}
+}
 
-    // Fallback: login com credenciais
+function limparSessao() {
+    token = null;
+    try {
+        localStorage.removeItem(TOKEN_STORAGE_KEY);
+        localStorage.removeItem(TOKEN_EXPIRA_STORAGE_KEY);
+    } catch (e) {}
+}
+
+function sessaoSalvaValida() {
+    try {
+        const tok = localStorage.getItem(TOKEN_STORAGE_KEY);
+        const expira = parseInt(localStorage.getItem(TOKEN_EXPIRA_STORAGE_KEY) || '0', 10);
+        if (tok && expira && Date.now() < expira) return tok;
+    } catch (e) {}
+    return null;
+}
+
+function mostrarApp() {
+    $('#login-screen').style.display = 'none';
+    $('#app-shell').style.display = 'flex';
+}
+
+function mostrarTelaLogin() {
+    $('#app-shell').style.display = 'none';
+    $('#login-screen').style.display = 'flex';
+}
+
+async function iniciarPainelAutenticado() {
+    mostrarApp();
+    loadConfig();
+    loadEstats();
+    loadConsulta(1);
+}
+
+$('#login-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = $('#login-email').value.trim();
+    const senha = $('#login-senha').value;
+    const btn = $('#btn-login');
+    btn.disabled = true;
+    btn.textContent = 'Entrando…';
     try {
         const res = await fetch('/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({
-                username: 'antunes@mupa.app',
-                password: '#Mupa04051623$'
-            })
+            body: new URLSearchParams({ username: email, password: senha }),
         });
+        const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-            const errBody = await res.json().catch(() => ({}));
-            throw new Error(errBody.message || errBody.error || `HTTP ${res.status}: falha no login`);
+            throw new Error(data.message || data.error || 'Credenciais inválidas.');
         }
-        const data = await res.json();
-        if (!data.access_token && !data.token) {
-            throw new Error('Resposta de login inesperada: ' + JSON.stringify(data));
-        }
-        token = data.access_token || data.token;
-        return token;
-    } catch (e) {
-        const loginBox = $('#div-login-erro');
-        if (loginBox) {
-            loginBox.innerHTML = `<div class="alert alert-error" style="margin-bottom:1rem;">${escHtml(e.message)}</div>`;
-        }
-        throw e;
+        salvarSessao(data.access_token, data.expires_at);
+        await iniciarPainelAutenticado();
+    } catch (e2) {
+        showAlert('alert-login', e2.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Entrar';
     }
-}
+});
 
-async function ensureToken() {
-    if (token) {
-        try {
-            const res = await fetch('/configuracoes', {
-                headers: { 'Authorization': 'Bearer ' + token }
-            });
-            if (res.ok) return token;
-        } catch (e) {}
-        token = null;
-    }
-    return await login();
-}
+$('#btn-logout').addEventListener('click', () => {
+    limparSessao();
+    mostrarTelaLogin();
+});
 
 const authHeaders = () => {
     if (!token) throw new Error('Não há token de autenticação. Efetue login novamente.');
@@ -1399,10 +1504,43 @@ async function loadHistorico(page = 1) {
             return;
         }
 
+        // Vista agrupada (status = 'não encontrados'): 1 linha por EAN, com ações rápidas pra
+        // resolver sem sair desta aba — buscar de novo, abrir Google Imagens já preenchido, ou
+        // enviar o arquivo direto aqui.
+        if (data.agrupado) {
+            const linhas = data.registros.map(r => {
+                const ultimaFmt = new Date(r.ultima_tentativa).toLocaleString('pt-BR');
+                const descricao = r.descricao || 'Descrição não disponível';
+                return `<tr data-codbar="${escHtml(r.codbar)}">
+                    <td>
+                        <div style="font-weight:500; font-size:0.85rem;">${escHtml(descricao)}</div>
+                        <span class="ean">${escHtml(r.codbar)}</span>
+                    </td>
+                    <td><span class="badge" style="background:#fef3c7; color:#92400e;">${r.tentativas}×</span></td>
+                    <td style="white-space:nowrap; color:var(--muted); font-size:0.8rem;">${ultimaFmt}</td>
+                    <td>
+                        <div style="display:flex; gap:0.35rem; flex-wrap:wrap; align-items:center;">
+                            <button class="btn btn-primary btn-sm" data-action="hist-buscar" data-codbar="${escHtml(r.codbar)}">Buscar</button>
+                            <button class="btn btn-secondary btn-sm" data-action="hist-google" data-codbar="${escHtml(r.codbar)}" data-desc="${escHtml(descricao)}">Google Imagens</button>
+                            <button class="btn btn-secondary btn-sm" data-action="hist-upload" data-codbar="${escHtml(r.codbar)}">Enviar imagem</button>
+                            <input type="file" accept="image/*" data-upload-input="${escHtml(r.codbar)}" style="display:none;">
+                        </div>
+                    </td>
+                </tr>`;
+            }).join('');
+
+            $('#historico-list').innerHTML = `<table>
+                <thead><tr><th>Produto</th><th>Tentativas</th><th>Última tentativa</th><th>Ações</th></tr></thead>
+                <tbody>${linhas}</tbody>
+            </table>`;
+            return;
+        }
+
         const linhas = data.registros.map(r => {
             const dataFmt = new Date(r.criado_em).toLocaleString('pt-BR');
+            const origemVisivel = rotuloFonte(r.origem);
             const statusBadge = r.encontrado
-                ? `<span class="badge" style="background:#dcfce7; color:#166534;">Encontrado${r.origem ? ' · ' + escHtml(r.origem) : ''}</span>`
+                ? `<span class="badge" style="background:#dcfce7; color:#166534;">Encontrado${origemVisivel ? ' · ' + escHtml(origemVisivel) : ''}</span>`
                 : `<span class="badge" style="background:#fee2e2; color:#991b1b;">Não encontrado</span>`;
             const viaBadge = r.via === 'admin' ? 'Painel (manual)' : 'Terminal (app)';
             const notifBadge = !r.encontrado
@@ -1427,6 +1565,86 @@ async function loadHistorico(page = 1) {
         showAlert('alert-historico', `Erro: ${e.message}`, 'error');
     }
 }
+
+// Remove a linha resolvida da lista (sem recarregar a página toda) e ajusta os contadores —
+// feedback imediato de que a ação funcionou, sem esperar um novo fetch.
+function removerLinhaHistorico(codbar) {
+    const row = $(`#historico-list tr[data-codbar="${CSS.escape(codbar)}"]`);
+    if (row) row.remove();
+    const restantes = $('#historico-list tbody')?.children.length ?? 0;
+    if (restantes === 0) {
+        $('#historico-list').innerHTML = '<div class="empty-state">Nenhum registro encontrado.</div>';
+    }
+    const badge = $('#historico-count-badge');
+    const atual = parseInt((badge.textContent || '0').replace(/\D/g, ''), 10) || 0;
+    const novoTotal = Math.max(0, atual - 1);
+    badge.textContent = `${novoTotal} registro${novoTotal === 1 ? '' : 's'}`;
+}
+
+$('#historico-list').addEventListener('click', async (e) => {
+    const buscarBtn = e.target.closest('[data-action="hist-buscar"]');
+    if (buscarBtn) {
+        const codbar = buscarBtn.dataset.codbar;
+        buscarBtn.disabled = true;
+        buscarBtn.textContent = 'Buscando…';
+        try {
+            const res = await fetch(`/admin/buscar-imagem/${encodeURIComponent(codbar)}`, {
+                method: 'POST', headers: authHeaders(),
+            });
+            const body = await res.json().catch(() => ({}));
+            if (res.ok) {
+                const fonte = rotuloFonte(body.fonte);
+                toast(fonte ? `Imagem encontrada via ${fonte} para ${codbar}` : `Imagem encontrada para ${codbar}`, 'success');
+                removerLinhaHistorico(codbar);
+            } else {
+                toast(body.message || 'Ainda não encontrada em nenhuma fonte', 'error');
+                buscarBtn.disabled = false;
+                buscarBtn.textContent = 'Buscar';
+            }
+        } catch (err) {
+            toast('Erro ao buscar: ' + err.message, 'error');
+            buscarBtn.disabled = false;
+            buscarBtn.textContent = 'Buscar';
+        }
+        return;
+    }
+
+    const googleBtn = e.target.closest('[data-action="hist-google"]');
+    if (googleBtn) {
+        const termo = `${googleBtn.dataset.desc || ''} ${googleBtn.dataset.codbar}`.trim();
+        window.open(`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(termo)}`, '_blank', 'noopener');
+        return;
+    }
+
+    const uploadBtn = e.target.closest('[data-action="hist-upload"]');
+    if (uploadBtn) {
+        $(`#historico-list input[data-upload-input="${CSS.escape(uploadBtn.dataset.codbar)}"]`)?.click();
+    }
+});
+
+$('#historico-list').addEventListener('change', async (e) => {
+    const input = e.target.closest('input[data-upload-input]');
+    if (!input || !input.files.length) return;
+    const codbar = input.dataset.uploadInput;
+    const formData = new FormData();
+    formData.append('file', input.files[0]);
+    try {
+        const res = await fetch(`/upload-imagem-produto/${encodeURIComponent(codbar)}`, {
+            method: 'POST',
+            headers: authHeaders(),
+            body: formData,
+        });
+        const body = await res.json().catch(() => ({}));
+        if (res.ok) {
+            toast(`Imagem enviada para ${codbar}`, 'success');
+            removerLinhaHistorico(codbar);
+        } else {
+            toast(body.message || 'Erro ao enviar imagem', 'error');
+        }
+    } catch (err) {
+        toast('Erro ao enviar imagem: ' + err.message, 'error');
+    }
+});
 
 $('#btn-historico-filtrar').addEventListener('click', () => loadHistorico(1));
 $('#historico-codbar').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadHistorico(1); });
@@ -1654,6 +1872,74 @@ $('#btn-wa-testar-envio').addEventListener('click', async () => {
     }
 });
 
+// ===== TAB: REMOVER FUNDO =====
+// Ferramenta avulsa que antes vivia sozinha em '/' (templates/index.html, sem login nenhum) —
+// migrada pra dentro do painel autenticado. Mesmas duas rotas de sempre
+// (/remove_background_upload, /remove_background_url), agora exigindo o token do painel.
+function mostrarResultadoRemoverFundo(url) {
+    $('#rf-resultado-img').src = url;
+    $('#rf-resultado-link').href = url;
+    $('#rf-resultado').style.display = 'block';
+}
+
+$('#btn-rf-upload').addEventListener('click', async () => {
+    const input = $('#rf-file-input');
+    if (!input.files.length) {
+        showAlert('alert-removerfundo', 'Selecione um arquivo de imagem primeiro.', 'error');
+        return;
+    }
+    const btn = $('#btn-rf-upload');
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Removendo…';
+    try {
+        const formData = new FormData();
+        formData.append('file', input.files[0]);
+        const res = await fetch('/remove_background_upload', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: formData,
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+        mostrarResultadoRemoverFundo(data.url);
+        showAlert('alert-removerfundo', 'Fundo removido com sucesso.', 'success');
+    } catch (e) {
+        showAlert('alert-removerfundo', `Erro: ${e.message}`, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+    }
+});
+
+$('#btn-rf-url').addEventListener('click', async () => {
+    const url = $('#rf-url-input').value.trim();
+    if (!url) {
+        showAlert('alert-removerfundo', 'Cole a URL de uma imagem primeiro.', 'error');
+        return;
+    }
+    const btn = $('#btn-rf-url');
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Removendo…';
+    try {
+        const res = await fetch('/remove_background_url', {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image_url: url }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+        mostrarResultadoRemoverFundo(data.url);
+        showAlert('alert-removerfundo', 'Fundo removido com sucesso.', 'success');
+    } catch (e) {
+        showAlert('alert-removerfundo', `Erro: ${e.message}`, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+    }
+});
+
 // ===== TAB: CONSULTA RÁPIDA (catálogo unificado: busca + navegação + arte + detalhes) =====
 let consultaPage = 1;
 let consultaQ = '';
@@ -1709,7 +1995,8 @@ function renderConsultaTable(data) {
                     const res = await fetch(`/produto/${encodeURIComponent(ean)}`, { headers: authHeaders() });
                     const respData = await res.json().catch(() => ({}));
                     if (!res.ok) throw new Error(respData.message || `HTTP ${res.status}`);
-                    toast(`Produto cadastrado via ${respData.fonte || 'fonte externa'}: ${respData.description || ean}`, 'success');
+                    const fonteCadastro = rotuloFonte(respData.fonte) || 'fonte externa';
+                    toast(`Produto cadastrado via ${fonteCadastro}: ${respData.description || ean}`, 'success');
                     loadConsulta(1);
                 } catch (e2) {
                     toast('Não foi possível cadastrar: ' + e2.message, 'error');
@@ -2191,31 +2478,16 @@ $('#btn-api-send').addEventListener('click', async () => {
 });
 
 // ===== Inicialização =====
-(async () => {
-    try {
-        token = await login();
-        loadConfig();
-        loadEstats();
-        loadConsulta(1);
-    } catch (e) {
-        const container = document.querySelector('.content');
-        if (container) {
-            const errBox = document.createElement('div');
-            errBox.className = 'card';
-            errBox.style.borderColor = 'var(--danger)';
-            errBox.style.background = 'var(--danger-soft)';
-            errBox.innerHTML = `
-                <h2 style="color:var(--danger); margin-top:0;">Erro de Autenticação</h2>
-                <p style="margin-bottom:1rem;">Não foi possível conectar ao servidor:</p>
-                <div class="alert alert-error" style="font-family:monospace; word-break:break-all;">${escHtml(e.message)}</div>
-                <p style="font-size:0.85rem; color:var(--muted); margin-top:0.5rem;">
-                    Verifique se o servidor Flask está rodando em <code>${escHtml(window.location.origin)}</code>
-                    e se as credenciais no código estão corretas.
-                </p>
-            `;
-            container.prepend(errBox);
-        }
-        console.error('Falha na inicialização do painel:', e);
+// Sessão salva (localStorage) e ainda dentro da validade (1h, mesmo prazo do JWT no backend)
+// entra direto; senão fica na tela de login esperando alguém digitar credenciais de verdade.
+(() => {
+    const tokenSalvo = sessaoSalvaValida();
+    if (tokenSalvo) {
+        token = tokenSalvo;
+        iniciarPainelAutenticado();
+    } else {
+        limparSessao();
+        mostrarTelaLogin();
     }
 })();
 </script>

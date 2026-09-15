@@ -1,4 +1,5 @@
 import os
+import sys
 import csv
 import sqlite3
 import base64
@@ -11,7 +12,7 @@ import requests
 from io import StringIO, BytesIO
 from io import StringIO
 from datetime import datetime, timedelta
-from flask import Flask, request, jsonify, url_for, render_template
+from flask import Flask, request, jsonify, url_for, render_template, redirect
 from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, verify_jwt_in_request
 from werkzeug.utils import secure_filename
@@ -33,6 +34,19 @@ from flask_migrate import Migrate  # Adicionado
 import re
 from io import BytesIO
 
+# Quando compilado com PyInstaller (`sys.frozen`), __file__ e o cwd herdado do processo que
+# lançou o .exe (ex.: o NSSM, ou um duplo-clique) não são confiáveis como base pra caminhos
+# relativos (IMAGES_FOLDER, FONT_PATH etc. abaixo) nem pro banco SQLite — em modo onefile,
+# __file__ aponta pra dentro da pasta temporária de extração (apagada a cada execução!), então
+# usar isso pro banco faria o app "esquecer" tudo a cada reinício. BASE_DIR sempre aponta pra
+# pasta real e persistente onde o .exe está, e o chdir garante que todo caminho relativo do
+# resto do arquivo (nunca reescrito individualmente) resolva contra essa pasta.
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+    os.chdir(BASE_DIR)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # Constants
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'}
 IMAGES_FOLDER = 'static/imgs_produtos'
@@ -52,7 +66,21 @@ AZURE_REGION = os.getenv('AZURE_REGION', 'brazilsouth')
 TIMEZONE = os.getenv('TIMEZONE', 'UTC')
 
 # Flask app setup
-app = Flask(__name__)
+# `instance_path`/`static_folder`/`template_folder` explícitos (em vez de deixar o Flask
+# calcular a partir de __file__/root_path) pelo mesmo motivo do BASE_DIR acima: sob PyInstaller,
+# root_path aponta pra dentro do bundle (_internal), não pra pasta persistente do .exe. Sem essa
+# correção: (1) o Flask-SQLAlchemy resolveria 'sqlite:///produtos.db' relativo pra dentro do
+# bundle; (2) a rota embutida `/static/<path>` (usada por toda URL de imagem/arte gerada por
+# `url_for('static', ...)`) procuraria os arquivos dentro do bundle em vez da pasta `static/`
+# real ao lado do .exe — mesmo com os arquivos sendo gravados no lugar certo (isso já funciona
+# graças ao os.chdir(BASE_DIR) acima), a URL serviria 404 porque o Flask olharia no lugar errado.
+app = Flask(
+    __name__,
+    instance_path=os.path.join(BASE_DIR, 'instance'),
+    instance_relative_config=True,
+    static_folder=os.path.join(BASE_DIR, 'static'),
+    template_folder=os.path.join(BASE_DIR, 'templates'),
+)
 app.config['SWAGGER'] = {
     'title': 'API de Produtos',
     'uiversion': 3,
@@ -70,7 +98,7 @@ db = SQLAlchemy(app)
 migrate = Migrate(app, db)
 
 # Caminho do banco para consultas diretas (Opções B e C)
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'instance', 'produtos.db')  # Inicializado o Flask-Migrate
+DB_PATH = os.path.join(BASE_DIR, 'instance', 'produtos.db')  # Inicializado o Flask-Migrate
 
 jwt = JWTManager(app)
 
@@ -177,9 +205,14 @@ def _registrar_busca_imagem(codbar, encontrado, origem=None, via='terminal'):
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    """A raiz não serve mais a ferramenta avulsa de remover fundo (era templates/index.html,
+    sem login nenhum) — pedido do usuário pra sempre cair no login do painel. A ferramenta em
+    si continua existindo, migrada pra dentro do painel autenticado (aba "Remover Fundo",
+    ver /remove_background_upload e /remove_background_url)."""
+    return redirect('/configuracoes')
 
 @app.route('/remove_background_url', methods=['POST'])
+@jwt_required()
 def remove_background_url():
     if not REMBG_ENABLED:
         return jsonify({'message': 'rembg não disponível neste ambiente'}), 501
@@ -211,6 +244,7 @@ def remove_background_url():
         return jsonify({'message': f'Error processing image: {str(e)}'}), 500
 
 @app.route('/remove_background_upload', methods=['POST'])
+@jwt_required()
 def remove_background_upload():
     if not REMBG_ENABLED:
         return jsonify({'message': 'rembg não disponível neste ambiente'}), 501
@@ -234,16 +268,18 @@ def remove_background_upload():
     except Exception as e:
         return jsonify({'message': f'Error processing image: {str(e)}'}), 500
 
-@app.route('/painel/login', methods=['GET'])
-def painel_login():
-    """Retorna um token JWT de acesso ao painel de configurações."""
-    expires = timedelta(hours=1)
-    access_token = create_access_token(identity='antunes@mupa.app', expires_delta=expires)
-    return jsonify({
-        'token': access_token,
-        'expires_in_hours': 1,
-        'message': 'Token de acesso ao painel gerado com sucesso'
-    })
+# REMOVIDO: GET /painel/login emitia um JWT válido pra 'antunes@mupa.app' sem checar senha
+# nenhuma — era a causa raiz de o painel "já entrar logado" sozinho (configuracoes.html chamava
+# essa rota automaticamente no boot, antes de qualquer tela de login existir). Pedido do
+# usuário pra corrigir isso de vez: agora só existe UM jeito de conseguir um token pro painel,
+# POST /login com credenciais reais (ver CREDENCIAIS_PAINEL logo abaixo).
+
+# Credenciais de acesso ao painel — usuário pediu explicitamente a adição de support@mupa.app.
+CREDENCIAIS_PAINEL = {
+    'antunes@mupa.app': '#Mupa04051623$',
+    'support@mupa.app': '#CpvwPgu3233105$',
+}
+
 
 @app.route('/login', methods=['POST'])
 @swag_from({
@@ -281,7 +317,7 @@ def login():
     """Realiza login"""
     username = request.form.get('username')
     password = request.form.get('password')
-    if username == 'antunes@mupa.app' and password == '#Mupa04051623$':
+    if username in CREDENCIAIS_PAINEL and password == CREDENCIAIS_PAINEL[username]:
         expires = timedelta(hours=1)
         access_token = create_access_token(identity=username, expires_delta=expires)
         expires_time = datetime.now(pytz.timezone(TIMEZONE)) + expires
@@ -1492,6 +1528,48 @@ def fetch_product_from_zaffari(ean):
         logging.error(f"Erro ao buscar produto na Zaffari: {e}")
         return None
 
+
+def fetch_product_from_precomelhor(ean):
+    """Busca o produto na API pública e gratuita do PreçoMelhor (precomelhor.com.br) —
+    endpoint pensado pra dados nutricionais, mas retorna nome + marca mesmo quando os campos
+    nutricionais vêm vazios, então serve como mais uma fonte de nome/marca na mesma cadeia de
+    fallback do Cosmos/Open Food Facts/Zaffari/Google.
+
+    Particularidade dessa API: `success` vem `true` mesmo quando o EAN não existe na base deles
+    — o sinal real de "não encontrado" é `product_name` vindo vazio, não o campo `success`
+    (confirmado testando com um EAN inexistente antes de integrar). Sem imagem de produto: o
+    endpoint de imagem deles (`/api/image/<ean>`) só devolve um SVG placeholder genérico
+    ("Sem Imagem") pra qualquer EAN, nunca uma foto real — por isso não usamos como fonte de
+    thumbnail, só de descrição/marca."""
+    try:
+        response = requests.get(
+            'https://www.precomelhor.com.br/api/nutrition-lookup',
+            params={'ean': ean},
+            headers={'User-Agent': 'MupaBrain-ProdutosImgs/1.0'},
+            timeout=15,
+        )
+        response.raise_for_status()
+        data = response.json()
+        description = (data.get('product_name') or '').strip()
+        if not description:
+            return None
+
+        return {
+            'gtin': ean,
+            'description': description,
+            'ncm': {'description': 'Não disponível'},
+            'brand': {'name': data.get('brand') or 'Marca não disponível'},
+            'thumbnail': 'Imagem não disponível',
+            'cest': {'code': 'Não disponível'},
+            'package': {'type': 'Não disponível'},
+            'price': {},
+            'category': {'name': 'Não disponível'},
+        }
+    except requests.RequestException as e:
+        logging.error(f"Erro ao buscar produto no PreçoMelhor: {e}")
+        return None
+
+
 @app.route('/produto/<string:codbar>', methods=['GET'])
 @jwt_required()
 @swag_from({
@@ -1557,11 +1635,12 @@ def consultar_ou_cadastrar_produto(codbar):
         }), 200
 
     # Se o produto não for encontrado localmente, tenta cadastrar a partir de fontes externas
-    # gratuitas, em ordem de qualidade dos dados: Cosmos -> Open Food Facts -> Zaffari.
+    # gratuitas, em ordem de qualidade dos dados: Cosmos -> Open Food Facts -> Zaffari -> PreçoMelhor.
     for fonte, buscar in (
         ('cosmos', fetch_product_from_cosmos),
         ('open_food_facts', fetch_product_from_openfoodfacts),
         ('zaffari', fetch_product_from_zaffari),
+        ('precomelhor', fetch_product_from_precomelhor),
     ):
         dados = buscar(codbar)
         if not dados:
@@ -1940,7 +2019,7 @@ def gerar_textos_arte_ia(produto):
     fonte_confiavel = False
 
     if not descricao_fonte.strip() or _texto_corrompido(descricao_fonte) or _texto_corrompido(marca_fonte):
-        for buscar in (fetch_product_from_cosmos, fetch_product_from_openfoodfacts, fetch_product_from_zaffari, fetch_product_from_google):
+        for buscar in (fetch_product_from_cosmos, fetch_product_from_openfoodfacts, fetch_product_from_zaffari, fetch_product_from_google, fetch_product_from_precomelhor):
             dados = buscar(produto.codbar)
             if not dados:
                 continue
@@ -2649,6 +2728,7 @@ def gerar_arte_publica(codbar):
                 ('cosmos', fetch_product_from_cosmos),
                 ('open_food_facts', fetch_product_from_openfoodfacts),
                 ('zaffari', fetch_product_from_zaffari),
+                ('precomelhor', fetch_product_from_precomelhor),
             ):
                 dados = buscar(codbar)
                 if dados:
@@ -2903,18 +2983,66 @@ def admin_consulta_simples():
 @app.route('/admin/historico-buscas', methods=['GET'])
 @jwt_required()
 def admin_historico_buscas():
-    """Histórico de buscas de imagem (sucesso e falha), paginado. `status` filtra por
-    'encontrado', 'nao_encontrado' ou 'todos' (padrão)."""
+    """Histórico de buscas de imagem. `status` filtra por 'encontrado', 'nao_encontrado' ou
+    'todos' (padrão).
+
+    'nao_encontrado' tem um formato DIFERENTE dos outros dois: em vez do log bruto (uma linha
+    por tentativa), retorna **agrupado por EAN** — um produto consultado sem sucesso em 12
+    lojas diferentes antes virava 12 linhas idênticas na lista, obrigando quem for resolver a
+    escanear/pular duplicatas manualmente. Agrupado, cada produto aparece uma vez com o total
+    de tentativas (`tentativas`), ordenado do mais tentado pro menos tentado — prioriza o
+    produto com mais impacto (mais consultas perdidas) primeiro. 'encontrado'/'todos' continuam
+    como log bruto (útil pra auditoria/histórico), sem essa agregação.
+
+    Também filtra fora, na hora, qualquer EAN que já tenha uma foto crua salva agora (upload
+    manual feito por fora do fluxo de busca não gera uma linha 'encontrado' no histórico, então
+    sem esse filtro o produto continuaria aparecendo como pendente mesmo já resolvido)."""
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 20, type=int)
     status = request.args.get('status', 'todos')
     codbar_filtro = request.args.get('codbar', '').strip()
 
+    if status == 'nao_encontrado':
+        grupo = db.session.query(
+            HistoricoBuscaImagem.codbar,
+            db.func.count(HistoricoBuscaImagem.id).label('tentativas'),
+            db.func.max(HistoricoBuscaImagem.criado_em).label('ultima_tentativa'),
+        ).filter(HistoricoBuscaImagem.encontrado == False)
+        if codbar_filtro:
+            grupo = grupo.filter(HistoricoBuscaImagem.codbar.like(f'%{codbar_filtro}%'))
+        grupo = grupo.group_by(HistoricoBuscaImagem.codbar).order_by(db.desc('tentativas'))
+
+        # Tira quem já tem foto agora (resolvido por upload manual, sem passar pela busca).
+        pendentes = [
+            g for g in grupo.all()
+            if not find_existing_image(g.codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+        ]
+        total = len(pendentes)
+        pagina = pendentes[(page - 1) * per_page: (page - 1) * per_page + per_page]
+
+        codbars = {g.codbar for g in pagina}
+        descricoes = {}
+        if codbars:
+            for p in Produto.query.filter(Produto.codbar.in_(codbars)).all():
+                descricoes[p.codbar] = p.description
+
+        return jsonify({
+            'agrupado': True,
+            'registros': [{
+                'codbar': g.codbar,
+                'descricao': descricoes.get(g.codbar),
+                'tentativas': g.tentativas,
+                'ultima_tentativa': g.ultima_tentativa.isoformat() + 'Z',
+            } for g in pagina],
+            'total': total,
+            'page': page,
+            'per_page': per_page,
+            'pages': (total + per_page - 1) // per_page if total > 0 else 1,
+        })
+
     query = HistoricoBuscaImagem.query
     if status == 'encontrado':
         query = query.filter_by(encontrado=True)
-    elif status == 'nao_encontrado':
-        query = query.filter_by(encontrado=False)
     if codbar_filtro:
         query = query.filter(HistoricoBuscaImagem.codbar.like(f'%{codbar_filtro}%'))
 
@@ -2929,6 +3057,7 @@ def admin_historico_buscas():
             descricoes[p.codbar] = p.description
 
     return jsonify({
+        'agrupado': False,
         'registros': [{
             'id': r.id,
             'codbar': r.codbar,
@@ -3569,4 +3698,10 @@ if __name__ == '__main__':
     _iniciar_agendador_resumo()
     _iniciar_agendador_status_horario()
     _iniciar_worker_fila_arte()
-    app.run('0.0.0.0', port=5050, debug=True, threaded=True)
+    # debug=True usa o reloader do Werkzeug, que re-executa o processo (sys.executable + argv)
+    # pra vigiar mudança de arquivo — dentro de um .exe compilado (PyInstaller) isso reabre o
+    # próprio .exe recursivamente, quebra. Roda com debug/reloader só fora do modo congelado
+    # (ambiente de desenvolvimento, onde o reloader nunca foi confiável nesta máquina mesmo,
+    # já documentado no CLAUDE.md — então desligar aqui não muda o fluxo de trabalho de dev).
+    congelado = getattr(sys, 'frozen', False)
+    app.run('0.0.0.0', port=5050, debug=not congelado, use_reloader=False, threaded=True)

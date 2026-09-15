@@ -2,6 +2,23 @@
 
 API Flask de gestão de produtos/imagens para o app de consulta de preço da Mupa (`mplayer`). Roda na porta **5050**. Painel admin em `/configuracoes`.
 
+## Login real do painel (substituiu um bypass sério que existia antes)
+
+Até esta sessão o painel **não tinha login de verdade**: `configuracoes.html` se autenticava sozinho no carregamento via `GET /painel/login`, uma rota que emitia um JWT válido pra `antunes@mupa.app` **sem checar senha nenhuma** — e, se essa rota falhasse, caía num fallback com as credenciais reais **hardcoded no próprio JavaScript** (visível a qualquer um vendo o código-fonte da página). Ou seja: `/configuracoes` era, na prática, uma página pública. Pedido do usuário pra corrigir isso ("adiciona um login" + "altere o index pra carregar o login"):
+
+- **`GET /painel/login` foi removido** — não existe mais nenhum jeito de conseguir um token sem mandar credenciais reais.
+- **`POST /login`** continua sendo o único jeito de autenticar, contra `CREDENCIAIS_PAINEL` (dict em `app.py`, atualmente `antunes@mupa.app` e `support@mupa.app` — adicionar um novo acesso é só adicionar uma entrada nesse dict).
+- **Tela de login de verdade** em `configuracoes.html` (`#login-screen`): e-mail + senha, `POST /login`, token + `expires_at` salvos em `localStorage` (`mupa_painel_token`/`mupa_painel_token_expira`). Uma sessão salva e ainda válida (mesma janela de 1h do JWT) pula a tela de login no próximo carregamento; expirada ou ausente, sempre mostra a tela de login. Botão "Sair" na barra lateral limpa a sessão.
+- **`GET /` (index)** não serve mais a ferramenta avulsa de remover fundo — só redireciona (302) pra `/configuracoes`, que decide sozinho se mostra a tela de login ou o painel (ver acima). A ferramenta de remover fundo continua existindo, só que migrou pra dentro do painel autenticado (ver seção "Aba Remover Fundo" abaixo).
+
+Testado de ponta a ponta num navegador real: `GET /painel/login` agora dá 404; `GET /` dá 302 pra `/configuracoes`; senha errada é rejeitada (401) e mantém a tela de login; a credencial nova (`support@mupa.app`) loga normalmente e mostra o painel completo; sessão sobrevive a um reload da página (localStorage); "Sair" limpa tudo e volta pra tela de login.
+
+## Aba "Remover Fundo" (migrada de `templates/index.html`, agora autenticada)
+
+Existia uma ferramenta solta de remover fundo de imagem (upload ou URL, via `rembg`) servida direto na raiz (`templates/index.html`, Bootstrap/jQuery antigo, sem login nenhum). Virou uma aba normal do painel (`#tab-removerfundo`, ícone de imagem na barra lateral) — mesmas duas rotas de backend de sempre (`POST /remove_background_upload`, `POST /remove_background_url`), só que agora atrás de `@jwt_required()` (antes eram públicas, sem proteção nenhuma, qualquer um na internet podia processar imagens à vontade nelas). `templates/index.html` ficou órfão (sem rota apontando pra ele) — não foi apagado, mas pode ser removido com segurança se um dia isso incomodar.
+
+Fluxo: escolher arquivo OU colar URL → botão "Remover fundo" → chama a rota correspondente com `authHeaders()` → mostra o resultado inline (imagem com fundo xadrez pra evidenciar a transparência) + link "Abrir em nova aba". Testado de ponta a ponta com uma imagem real do catálogo (Coca-Cola, EAN 7894900011609) — recorte limpo, resultado renderizado corretamente na aba.
+
 ## Arquitetura da arte publicitária (a parte mais delicada do projeto)
 
 Fluxo: `GET /produto-imagem/<codbar>` → se já existe arte, retorna `imagem_url_arte`; se não existe mas há foto crua, dispara `gerar_arte_publicitaria` **em background** (thread separada, guardada por `_gerando_arte_em_andamento` pra não duplicar chamadas simultâneas) e retorna `null` nessa primeira resposta — a arte aparece só na consulta seguinte.
@@ -64,13 +81,23 @@ Depois do primeiro resultado, mais 4 ajustes pedidos pelo usuário:
 
 Retorno de `gerar_textos_arte_ia` mudou de `(nome, headline)` para `(nome, headline, beneficios, quantidade, marca)` — qualquer código futuro que chame essa função direto (fora de `gerar_arte_publicitaria`) precisa desempacotar os 5 valores.
 
-### Prioridade da fonte da descrição: banco → Cosmos → Open Food Facts → Zaffari → Google (sempre, não só quando corrompido)
+### Prioridade da fonte da descrição: banco → Cosmos → Open Food Facts → Zaffari → Google → PreçoMelhor (sempre, não só quando corrompido)
 
 Cogitamos primeiro usar o nome que a API de preço PRÓPRIA de cada cliente/loja retorna (mais específico por estabelecimento, mas tipicamente abreviado — ex.: "REFRIG COCA COLA 600ML") como fonte pro nome da arte, e cheguei a implementar isso (mplayer enviando `nome_cliente` na query string pro `produto-imagem/<ean>/gerar-arte`). **O usuário pediu pra reverter** — decisão final foi manter a fonte só no lado do produtos-imgs, sem depender do app enviar nada extra:
 
 1. `produto.description` (nosso banco) primeiro.
-2. Se estiver **vazio OU corrompido** (antes só disparava por corrupção — `not descricao_fonte.strip()` foi adicionado como segundo gatilho), busca pelo EAN nessa ordem: Cosmos → Open Food Facts → Zaffari → **Google** (`fetch_product_from_google`, adicionado à lista — usa uma busca de imagem com Custom Search API que às vezes retorna um título de produto útil; nota: o dict que essa função retorna tem `marca` como string solta, não `brand: {name}` aninhado como as outras fontes — o código já trata os dois formatos).
+2. Se estiver **vazio OU corrompido** (antes só disparava por corrupção — `not descricao_fonte.strip()` foi adicionado como segundo gatilho), busca pelo EAN nessa ordem: Cosmos → Open Food Facts → Zaffari → Google (`fetch_product_from_google`, usa uma busca de imagem com Custom Search API que às vezes retorna um título de produto útil; nota: o dict que essa função retorna tem `marca` como string solta, não `brand: {name}` aninhado como as outras fontes — o código já trata os dois formatos) → **PreçoMelhor** (`fetch_product_from_precomelhor`, adicionado por último na cadeia, ver seção própria abaixo).
 3. Só DEPOIS de resolvida a melhor descrição bruta disponível é que a IA entra pra reconstruir/limpar o nome comercial final.
+
+### Nova fonte: PreçoMelhor (precomelhor.com.br) — só nome/marca, sem imagem
+
+`fetch_product_from_precomelhor(ean)` consulta a API pública e gratuita do PreçoMelhor: `GET https://www.precomelhor.com.br/api/nutrition-lookup?ean=<ean>`. Documentada abertamente no próprio site deles (`precomelhor.com.br` → "Ferramentas & APIs Gratuitas" → seção "Desenvolvedores"), sem necessidade de chave/token.
+
+**Particularidade importante, só descoberta testando na prática** (o `curl` direto tomou `403` — proteção anti-bot da Cloudflare; testei via browser real pra confirmar o contrato): o campo `success` do JSON vem **sempre `true`**, mesmo pra um EAN que não existe na base deles — o sinal real de "não encontrado" é `product_name` vindo como string vazia (`""`), não o campo `success`. `fetch_product_from_precomelhor` checa isso corretamente (`if not description: return None`), mas qualquer código novo que chamar essa API direto precisa saber disso — confiar só em `success` faria o app achar que TODO EAN foi encontrado.
+
+Também tem um endpoint de imagem (`/api/image/<ean>?w=200`), mas ele só devolve um SVG placeholder genérico ("Sem Imagem") pra qualquer EAN testado, nunca uma foto real — por isso essa fonte não é usada pra buscar foto crua (`buscar_e_salvar_imagem_bing/google/zaffari`), só pra descrição/marca, igual Open Food Facts e Zaffari.
+
+Adicionado nas 3 cadeias de fallback (fim da lista, prioridade mais baixa por ser a fonte mais nova/menos testada em produção): a rota `GET /produto/<codbar>` (cadastro automático genérico), o loop de correção de texto corrompido em `gerar_textos_arte_ia`, e o auto-cadastro dentro de `gerar_arte_publica` (`POST /produto-imagem/<ean>/gerar-arte`). Testado de ponta a ponta com o EAN de exemplo do usuário (`7896577211627`, Pepinos em Conserva Agridoce Fatiado Petry 440g) — `register_product_in_database` cadastrou corretamente `description`/`marca`, registro removido depois só por ser dado de teste.
 
 Nenhuma mudança foi mantida no mplayer por causa disso (a tentativa de passar `nome_cliente` foi revertida por completo).
 
@@ -160,6 +187,28 @@ Aba "Consulta Rápida" unifica busca + catálogo + geração de arte + detalhes 
 ## Histórico de buscas e resumo diário do sistema
 
 Tabela `HistoricoBuscaImagem` registra toda consulta de imagem — sucesso ou falha — tanto do terminal (`GET /produto-imagem/<codbar>`, `via='terminal'`) quanto de uma retentativa manual no painel (`POST /admin/buscar-imagem/<codbar>`, `via='admin'`). Serve dois propósitos com a mesma tabela: histórico de uso (aba "Histórico" do painel) e fila de pendências para notificação (linhas com `encontrado=False` e `notificado_em=NULL`).
+
+### Aba "Histórico" → filtro "Não encontrados": agrupado por EAN + ações inline (resolução rápida)
+
+Problema real identificado numa sessão de UX com o usuário: a aba só listava, sem nenhuma ação — pra resolver uma imagem faltante, o colaborador precisava sair da aba, ir em Consulta Rápida, redigitar o EAN, abrir o painel de detalhes, clicar "Buscar imagem". E a lista não agrupava: um produto consultado sem sucesso em N terminais virava N linhas idênticas, sem noção de prioridade.
+
+`GET /admin/historico-buscas?status=nao_encontrado` agora retorna um formato **diferente** dos outros dois filtros (`agrupado: true` no JSON, o frontend usa isso pra saber qual template de tabela renderizar):
+- **Agrupado por `codbar`** (`GROUP BY` + `COUNT(*)` como `tentativas`, `MAX(criado_em)` como `ultima_tentativa`) — uma linha por produto, não por tentativa.
+- **Ordenado por `tentativas` DESC** — o produto mais pedido e ainda sem imagem aparece primeiro (maior impacto/prioridade).
+- **Filtra fora quem já tem foto agora** (`find_existing_image` checado na hora, por cima do resultado agrupado): um upload manual feito fora do fluxo de busca (aba Consulta Rápida → "Enviar/Trocar imagem") não gera uma linha `encontrado=True` no histórico — sem esse filtro extra, o produto continuaria aparecendo como "pendente" pra sempre mesmo já resolvido. Os filtros `'encontrado'`/`'todos'` continuam como log bruto de sempre (auditoria), sem agrupar nem esse filtro extra.
+
+Três ações por linha, todas reaproveitando rotas/fluxos que já existiam (nada novo no backend além do agrupamento acima):
+1. **Buscar** → `POST /admin/buscar-imagem/<codbar>` (rota já existente, local→Bing→Google→Zaffari) — na resposta 200, remove a linha da lista na hora (`removerLinhaHistorico`, decrementa o contador também) sem precisar recarregar a página; em 404, só reabilita o botão (a linha fica, `tentativas` sobe 1 na próxima consulta).
+2. **Google Imagens** → só frontend, sem rota nova: abre `https://www.google.com/search?tbm=isch&q=<descrição + EAN>` numa aba nova. Existe porque a busca da Bing Image Search está morta (410 Gone, ver seção de débito técnico) e a automação (Google/Zaffari) às vezes não acha — dá pro colaborador fazer a mesma busca manual que faria de qualquer jeito, sem digitar nada.
+3. **Enviar imagem** → `POST /upload-imagem-produto/<codbar>` (rota já existente) via um `<input type="file" accept="image/*">` oculto por linha, disparado pelo clique do botão — mesmo padrão de resolução instantânea da linha no sucesso.
+
+Testado de ponta a ponta num navegador real: os 178 registros brutos do histórico colapsaram pra 3 produtos únicos pendentes, ordenados corretamente (3x/2x/2x); clique real em "Buscar" gerou o `POST` esperado (confirmado por `read_network_requests`) e tratou a resposta 404 corretamente (botão reabilita, linha permanece); os `<input>` ocultos de upload existem um por linha, com `codbar` certo em cada.
+
+### Nome "zaffari" suprimido dos rótulos do painel (fonte continua ativa normalmente)
+
+Pedido do usuário, só depois de duas rodadas de esclarecimento (pediu "deletar qualquer descrição Zaffari" — mas `Produto` não tem coluna de fonte, então não tem como saber quais descrições já cadastradas vieram de lá; a intenção real era só cosmética): a palavra "zaffari" não deve aparecer em nenhum rótulo/toast do painel admin, mas a Zaffari **continua sendo usada normalmente** como fonte de imagem e descrição em todos os fluxos — nada foi desativado, nenhum dado foi tocado.
+
+`rotuloFonte(fonte)` (helper no `<script>` de `configuracoes.html`, perto de `escHtml`): retorna a fonte normalmente, exceto quando é `'zaffari'` — aí retorna `null`, e cada chamador trata isso mostrando o texto sem o nome da fonte (ex.: badge "Encontrado" sem o "· zaffari"; toast "Imagem encontrada para X" sem o "via zaffari"). Aplicado nos 3 pontos onde a origem aparece pro usuário: badge da aba Histórico (filtro 'todos'/'encontrado'), toast do botão "Buscar" (filtro 'não encontrados', ver seção acima) e toast de "Cadastrar produto" (Consulta Rápida). Se um dia aparecer um 4º lugar mostrando `origem`/`fonte` de busca de imagem, passar por `rotuloFonte` também, pelo mesmo motivo.
 
 **Resumo diário automático**: `_iniciar_agendador_resumo()` roda uma thread em background (mesmo padrão de `_disparar_geracao_arte_em_background`, sem dependência nova tipo APScheduler) que dispara `enviar_resumo_diario_sistema()` uma vez por dia no horário configurado (`RESUMO_HORARIO`, painel → Configurações → Notificações). Ao contrário de uma versão anterior mais restrita, esse resumo cobre **o sistema inteiro**, não só imagens não encontradas:
 - Estatísticas gerais do catálogo (`_estatisticas_gerais`): total de produtos, com/sem foto, com arte publicitária — reaproveita a mesma técnica leve de `/admin/estatisticas` (conta arquivo em pasta, não escaneia produto por produto; o catálogo tem ~945 mil linhas).
