@@ -797,6 +797,10 @@
                             <button class="btn btn-danger" id="btn-excluir-imagem-ean">Excluir imagem</button>
                         </div>
                     </div>
+                    <label style="display:flex; align-items:center; gap:0.5rem; font-size:0.82rem; color:var(--text); margin-top:0.6rem; cursor:pointer;">
+                        <input type="checkbox" id="excluir-imagem-bloquear" checked style="width:16px; height:16px; cursor:pointer;">
+                        Bloquear busca automática de imagem pra esse EAN permanentemente (recomendado — evita que o sistema traga a mesma imagem ruim de volta sozinho)
+                    </label>
                 </div>
 
                 <div class="card">
@@ -1708,19 +1712,21 @@ $('#btn-excluir-imagem-ean').addEventListener('click', async () => {
         showAlert('alert-excluir-imagem-ean', 'Informe um EAN válido (8 a 14 dígitos).', 'error');
         return;
     }
-    if (!confirm(`Excluir a foto do produto ${ean}? Remove o arquivo em imgs_produtos e em processed_images. A arte publicitária já gerada (se houver) não é apagada por essa ação.`)) return;
+    const bloquear = $('#excluir-imagem-bloquear').checked;
+    const avisoBloqueio = bloquear ? ' A busca automática desse EAN também será bloqueada permanentemente.' : '';
+    if (!confirm(`Excluir a foto do produto ${ean}? Remove o arquivo em imgs_produtos e em processed_images. A arte publicitária já gerada (se houver) não é apagada por essa ação.${avisoBloqueio}`)) return;
     const originalHtml = btn.innerHTML;
     btn.disabled = true;
     btn.innerHTML = `<span class="spinner"></span> Excluindo...`;
     try {
-        const res = await fetch(`/deletar-imagem-produto/${encodeURIComponent(ean)}`, {
+        const res = await fetch(`/deletar-imagem-produto/${encodeURIComponent(ean)}?bloquear=${bloquear}`, {
             method: 'DELETE',
             headers: authHeaders(),
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
-        showAlert('alert-excluir-imagem-ean', `Imagem de ${ean} excluída com sucesso.`, 'success');
-        toast(`Imagem de ${ean} excluída`, 'success');
+        showAlert('alert-excluir-imagem-ean', data.message || `Imagem de ${ean} excluída com sucesso.`, 'success');
+        toast(data.message || `Imagem de ${ean} excluída`, 'success');
         $('#excluir-imagem-ean').value = '';
     } catch (e) {
         showAlert('alert-excluir-imagem-ean', `Erro: ${e.message}`, 'error');

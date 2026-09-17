@@ -186,6 +186,16 @@ class Produto(db.Model):
     # porque é usado pra ordenar "produtos com foto primeiro" na Consulta Rápida (pedido do
     # usuário) — sem índice, ordenar ~945 mil linhas por essa coluna seria lento.
     tem_foto = db.Column(db.Boolean, nullable=False, default=False, index=True)
+    # Bloqueio permanente de busca automática de imagem pra ESSE EAN específico — pedido do
+    # usuário depois de um incidente real (imagem pornográfica servida pro EAN 7898909864181,
+    # vinda do PreçoMelhor — não do Google como se suspeitou inicialmente; ver CLAUDE.md).
+    # Diferente do kill switch global (BUSCA_IMAGEM_ONLINE_ATIVA, Config), que desliga a busca
+    # pra TODO produto: esse aqui é por produto, permanente, e sobrevive mesmo com o kill switch
+    # global religado — sem isso, o próprio auto-heal do sistema iria buscar e salvar a MESMA
+    # imagem ruim de novo na próxima consulta desse EAN, já que a fonte de dados (PreçoMelhor)
+    # continua tendo o mesmo mapeamento ruim EAN->imagem independente de qualquer correção
+    # nossa. Setado automaticamente pela ferramenta de exclusão de emergência em Configurações.
+    busca_imagem_bloqueada = db.Column(db.Boolean, nullable=False, default=False)
 
 class SugestaoProduto(db.Model):
     """Modelo de Sugestão de Produto"""
@@ -586,6 +596,14 @@ def deletar_imagem_produto(codbar):
     # Bug real achado depois de um incidente com imagem imprópria: "excluir" não garantia de
     # verdade que a imagem parasse de ser servida. Confere as duas pastas mesmo se a extensão
     # divergir entre elas (a processada é sempre .png, mas não custa nada varrer as duas).
+    # ?bloquear=true (usado pela ferramenta de exclusão de emergência em Configurações):
+    # marca o produto pra nunca mais ter imagem buscada automaticamente (ver
+    # Produto.busca_imagem_bloqueada) — independente de ter achado arquivo pra apagar ou não,
+    # porque o objetivo é impedir uma busca FUTURA re-trazer a mesma imagem ruim (a fonte de
+    # dados problemática continua tendo o mesmo mapeamento EAN->imagem ruim, então só apagar o
+    # arquivo local não resolve — o auto-heal do sistema ia buscar nela de novo).
+    bloquear = request.args.get('bloquear') == 'true'
+
     image_found = False
     try:
         for pasta in (IMAGES_FOLDER, PROCESSED_IMAGES_FOLDER):
@@ -595,14 +613,33 @@ def deletar_imagem_produto(codbar):
                     os.remove(img_path)
                     image_found = True
                     logging.info(f"Imagem deletada: {img_path}")
-        if image_found:
+
+        if image_found or bloquear:
             try:
-                _marcar_tem_foto(codbar, False)
+                if image_found:
+                    _marcar_tem_foto(codbar, False)
+                if bloquear:
+                    produto = Produto.query.filter_by(codbar=codbar).first()
+                    if not produto:
+                        # `obter_imagem_produto` (terminal) busca imagem por qualquer EAN, sem
+                        # exigir que exista um Produto cadastrado — foi exatamente esse o caso
+                        # do incidente real que motivou esse bloqueio (EAN 7898909864181 nunca
+                        # tinha sido cadastrado aqui). Sem criar a linha, não haveria onde
+                        # gravar o bloqueio e ele nunca "pegaria" de verdade. Mesmo padrão do
+                        # cadastro manual (só EAN obrigatório, resto fica vazio).
+                        produto = Produto(codbar=codbar)
+                        db.session.add(produto)
+                    produto.busca_imagem_bloqueada = True
                 db.session.commit()
             except Exception as e:
                 db.session.rollback()
-                logging.warning(f"Não foi possível marcar tem_foto=False para {codbar}: {e}")
-            return jsonify({'message': 'Imagem deletada com sucesso'}), 200
+                logging.warning(f"Não foi possível atualizar tem_foto/busca_imagem_bloqueada para {codbar}: {e}")
+
+        if image_found:
+            msg = 'Imagem deletada com sucesso' + (' e busca automática bloqueada para este EAN' if bloquear else '')
+            return jsonify({'message': msg}), 200
+        elif bloquear:
+            return jsonify({'message': 'Nenhuma imagem encontrada pra apagar, mas busca automática bloqueada para este EAN'}), 200
         else:
             logging.warning(f"Imagem não encontrada para o código de barras: {codbar}")
             return jsonify({'message': 'Imagem não encontrada'}), 404
@@ -653,7 +690,7 @@ def obter_imagem_produto(codbar):
         _registrar_busca_imagem(codbar, True, origem='local', via='terminal')
         return jsonify({'imagem_url': img_url, 'imagem_url_arte': arte_url}), 200
 
-    if _busca_imagem_online_ativa():
+    if _pode_buscar_imagem_online(codbar):
         for fonte, buscar in (
             ('bing', buscar_e_salvar_imagem_bing),
             ('google', buscar_e_salvar_imagem_google),
@@ -1114,7 +1151,7 @@ def serialize_produto_with_image(produto):
     img_path = find_existing_image(produto.codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
     if img_path:
         img_url = _static_url(img_path)
-    elif _busca_imagem_online_ativa():
+    elif _busca_imagem_online_ativa() and not produto.busca_imagem_bloqueada:
         bing_result = buscar_e_salvar_imagem_bing(produto.codbar)
         if bing_result[1] == 200:
             img_url = bing_result[0].get_json().get('imagem_url')
@@ -2063,6 +2100,17 @@ def _busca_imagem_online_ativa():
     separados). Pedido do usuário depois de um incidente real com imagem imprópria vinda de uma
     fonte externa — dá pra pausar a busca automática na hora, sem precisar de deploy."""
     return _ler_todas_config().get('BUSCA_IMAGEM_ONLINE_ATIVA', 'true') == 'true'
+
+
+def _pode_buscar_imagem_online(codbar):
+    """Combina as duas travas de segurança da busca automática de imagem: o kill switch
+    global (`_busca_imagem_online_ativa`, afeta todo produto) e o bloqueio permanente por
+    produto (`Produto.busca_imagem_bloqueada`, ver coluna). Só retorna True quando NENHUMA das
+    duas está acionada."""
+    if not _busca_imagem_online_ativa():
+        return False
+    produto = Produto.query.filter_by(codbar=codbar).first()
+    return not (produto and produto.busca_imagem_bloqueada)
 
 
 def set_config(key, value):
@@ -3281,6 +3329,10 @@ def admin_buscar_imagem(codbar):
     if not _busca_imagem_online_ativa():
         _registrar_busca_imagem(codbar, False, via='admin')
         return jsonify({'message': 'Busca de imagem online está desativada em Configurações → Flags de Funcionamento'}), 404
+
+    if produto.busca_imagem_bloqueada:
+        _registrar_busca_imagem(codbar, False, via='admin')
+        return jsonify({'message': 'Busca automática de imagem bloqueada permanentemente para este EAN (imagem imprópria já foi encontrada aqui antes)'}), 404
 
     for fonte, buscar in (
         ('bing', buscar_e_salvar_imagem_bing),
