@@ -191,11 +191,20 @@ class SugestaoProduto(db.Model):
 
 
 class HistoricoBuscaImagem(db.Model):
-    """Registra cada consulta de imagem de produto feita ao sistema — tanto pelos terminais
-    (GET /produto-imagem/<codbar>, via='terminal') quanto por uma retentativa manual no painel
-    (POST /admin/buscar-imagem/<codbar>, via='admin'). Serve de histórico de uso E de fila de
-    pendências: o resumo diário de e-mail/WhatsApp consulta as linhas com encontrado=False e
-    notificado_em=NULL."""
+    """Fila de pendências de imagens faltando — tanto de buscas do terminal
+    (GET /produto-imagem/<codbar>, via='terminal') quanto de uma retentativa manual no painel
+    (POST /admin/buscar-imagem/<codbar>, via='admin'). O resumo diário de e-mail/WhatsApp
+    consulta as linhas com encontrado=False e notificado_em=NULL.
+
+    Pedido do usuário: só registra quando (a) o EAN é um produto que realmente existe no nosso
+    catálogo (`Produto`) e (b) a busca falhou — ver `_registrar_busca_imagem`. Antes disso, TODA
+    consulta de imagem virava uma linha aqui (inclusive sucesso, e inclusive EANs que nem são
+    produtos nossos, ex.: código escaneado errado ou produto de outra loja) — isso inflava a
+    fila de "não encontrados" com entradas que ninguém tinha como resolver de verdade (não são
+    produtos do catálogo) e obrigava a filtrar sucesso/falha manualmente na aba Histórico. A
+    coluna `encontrado` continua existindo (linhas antigas, de antes dessa mudança, têm valores
+    `True` reais) mas linhas novas são sempre `False` — o histórico virou só a fila de pendência,
+    não mais um log geral de todo scan de terminal."""
     id = db.Column(db.Integer, primary_key=True)
     codbar = db.Column(db.String(64), nullable=False, index=True)
     encontrado = db.Column(db.Boolean, nullable=False, default=False)
@@ -206,9 +215,18 @@ class HistoricoBuscaImagem(db.Model):
 
 
 def _registrar_busca_imagem(codbar, encontrado, origem=None, via='terminal'):
-    """Grava uma linha de histórico de busca de imagem. Nunca deixa uma falha de log quebrar
-    o fluxo principal de consulta de imagem."""
+    """Grava uma linha na fila de pendências (ver docstring de HistoricoBuscaImagem) — só quando
+    a busca falhou (`encontrado=False`) E o EAN é um produto que existe de verdade no nosso
+    catálogo. As duas checagens são deliberadas: sucesso não vira pendência nenhuma (nada a
+    resolver), e um EAN sem `Produto` cadastrado também não (não é um produto nosso, não tem
+    como/por que "resolver" a foto dele). Chamadores continuam passando `encontrado=True` nos
+    casos de sucesso (não precisou mudar nenhum call site) — aqui vira um no-op silencioso.
+    Nunca deixa uma falha de log quebrar o fluxo principal de consulta de imagem."""
+    if encontrado:
+        return
     try:
+        if not Produto.query.filter_by(codbar=codbar).first():
+            return
         db.session.add(HistoricoBuscaImagem(codbar=codbar, encontrado=encontrado, origem=origem, via=via))
         db.session.commit()
     except Exception as e:

@@ -301,7 +301,21 @@ Corrigido: `.gitignore` reescrito do zero em UTF-8 puro (`venv/`, `__pycache__/`
 
 ## Histórico de buscas e resumo diário do sistema
 
-Tabela `HistoricoBuscaImagem` registra toda consulta de imagem — sucesso ou falha — tanto do terminal (`GET /produto-imagem/<codbar>`, `via='terminal'`) quanto de uma retentativa manual no painel (`POST /admin/buscar-imagem/<codbar>`, `via='admin'`). Serve dois propósitos com a mesma tabela: histórico de uso (aba "Histórico" do painel) e fila de pendências para notificação (linhas com `encontrado=False` e `notificado_em=NULL`).
+Tabela `HistoricoBuscaImagem` — hoje é uma **fila de pendências pura**, não mais um log geral de toda consulta de imagem (ver mudança abaixo). Alimentada tanto pelo terminal (`GET /produto-imagem/<codbar>`, `via='terminal'`) quanto por uma retentativa manual no painel (`POST /admin/buscar-imagem/<codbar>`, `via='admin'`); usada tanto pela aba "Histórico" do painel quanto pela fila de pendências do resumo diário (linhas com `encontrado=False` e `notificado_em=NULL`).
+
+### Registro restrito: só produtos cadastrados + só falhas (pedido do usuário, corrigindo poluição real na fila)
+
+Até esta mudança, `_registrar_busca_imagem` gravava uma linha pra **toda** consulta de imagem feita ao sistema — sucesso ou falha, EAN cadastrado ou não. Isso poluía a fila de pendências ("Não encontrados") com EANs que **não são produtos do nosso catálogo** (ex.: código de barras escaneado errado no terminal, produto de outra loja/rede) — o colaborador via esses EANs na fila mas não tinha nada de fato pra "resolver" ali, já que não é um produto nosso.
+
+`_registrar_busca_imagem(codbar, encontrado, ...)` agora só grava uma linha quando **as duas condições** são verdadeiras:
+1. `encontrado=False` — sucesso nunca vira pendência (nada a resolver); virou um no-op silencioso logo no início da função (`if encontrado: return`), sem precisar mudar nenhum dos 4 call sites que ainda passam `encontrado=True` nos casos de sucesso.
+2. `Produto.query.filter_by(codbar=codbar).first()` existe — só produtos cadastrados de verdade no nosso catálogo geram pendência.
+
+A coluna `encontrado` continua existindo no model (linhas antigas, de antes dessa mudança, têm valores `True` reais — não foram apagadas nem alteradas) mas toda linha nova é sempre `False`. O impacto prático: a aba Histórico com filtro "Todos"/"Encontrados" para de ganhar linhas novas a partir de agora (só mostra o histórico antigo já existente) — só o filtro "Não encontrados" (a fila de pendências de verdade) continua recebendo dados novos, e agora só com produtos reais do catálogo.
+
+Testado direto (`_registrar_busca_imagem`, sem passar pela rota HTTP): EAN sem `Produto` cadastrado + `encontrado=False` → nenhuma linha criada; mesmo EAN + `encontrado=True` → nenhuma linha; EAN de um produto real do catálogo + `encontrado=False` → linha criada normalmente; mesmo EAN + `encontrado=True` → nenhuma linha (nem para produto cadastrado).
+
+**Erro cometido durante esse teste, documentado aqui pra não repetir**: ao limpar a linha de teste criada pro EAN real (`7896079480217`), usei `HistoricoBuscaImagem.query.filter(id > 184).delete()` assumindo (errado) que `184` era um limite seguro "antes desta sessão" — na verdade esse número veio de um id de exemplo de um EAN completamente diferente, visto bem antes nesta mesma sessão, e não tinha relação nenhuma com os ids reais das linhas desse produto. Isso apagou **3 linhas de histórico legítimas e antigas** desse produto (de tentativas reais passadas), além da linha de teste — perda real de dado histórico (não do produto, nem da imagem, só de registros de tentativas de busca antigas). Lição: nunca filtrar `delete()` por um id numérico "lembrado" sem antes consultar e conferir os ids reais das linhas que serão afetadas.
 
 ### Aba "Histórico" → filtro "Não encontrados": agrupado por EAN + ações inline (resolução rápida)
 
