@@ -61,6 +61,7 @@ BING_API_KEY = 'fd94e4427d7c4622919f8ac561818e94'
 GOOGLE_API_KEY = 'AIzaSyDcgpSF9cRmzLwGqIk44x-3_GZjTfUChtM'
 GOOGLE_CX = '053e66708840f4936'
 ZAFFARI_SEARCH_URL = 'https://zaffari.vtexcommercestable.com.br/api/catalog_system/pub/products/search'
+RISSUL_SEARCH_URL = 'https://superrissul.vtexcommercestable.com.br/api/catalog_system/pub/products/search'
 
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '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')
 JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY', 'your-jwt-secret-key')
@@ -591,7 +592,7 @@ def deletar_imagem_produto(codbar):
     }
 })
 def obter_imagem_produto(codbar):
-    """Obtém a imagem crua do produto (local -> Bing -> Google -> Zaffari -> PrecoMelhor) e, se já
+    """Obtém a imagem crua do produto (local -> Bing -> Google -> Zaffari -> PrecoMelhor -> Rissul) e, se já
     existir, a URL da arte publicitária gerada para ele. Quando a foto existe mas a arte
     ainda não foi gerada, dispara a geração em background (a resposta desta chamada ainda
     sai sem 'imagem_url_arte'; uma consulta seguinte já encontra a arte pronta).
@@ -618,6 +619,7 @@ def obter_imagem_produto(codbar):
         ('google', buscar_e_salvar_imagem_google),
         ('zaffari', buscar_e_salvar_imagem_zaffari),
         ('precomelhor', buscar_e_salvar_imagem_precomelhor),
+        ('rissul', buscar_e_salvar_imagem_rissul),
     ):
         resultado = buscar(codbar)
         if resultado[1] == 200:
@@ -629,7 +631,7 @@ def obter_imagem_produto(codbar):
             return jsonify({'imagem_url': imagem_url, 'imagem_url_arte': None}), 200
 
     _registrar_busca_imagem(codbar, False, via='terminal')
-    return jsonify({'message': 'Imagem não encontrada em nenhuma fonte (local, Bing, Google, Zaffari, PrecoMelhor)'}), 404
+    return jsonify({'message': 'Imagem não encontrada em nenhuma fonte (local, Bing, Google, Zaffari, PrecoMelhor, Rissul)'}), 404
 
 
 _fila_arte = queue.Queue()
@@ -929,6 +931,43 @@ def buscar_e_salvar_imagem_zaffari(codbar):
         return jsonify({'message': f'Error fetching or saving image from Zaffari: {str(e)}'}), 500
 
 
+def buscar_e_salvar_imagem_rissul(codbar):
+    """Busca e salva a imagem crua (fundo branco) do produto na API pública do Rissul (VTEX,
+    conta `superrissul`) — mesmo contrato da Zaffari (`fq=alternateIds_Ean:<ean>`, resposta
+    é uma lista de produtos com `items[].images[].imageUrl`), confirmado testando ao vivo com
+    um link de produto que o usuário mandou. EAN não encontrado retorna `200` com lista vazia
+    (`[]`), não 404 — o `if resultados:` abaixo já trata isso corretamente sem checagem extra."""
+    try:
+        response = requests.get(
+            RISSUL_SEARCH_URL,
+            params={'fq': f'alternateIds_Ean:{codbar}'},
+            timeout=15,
+        )
+        response.raise_for_status()
+        resultados = response.json()
+
+        if resultados:
+            for produto_rissul in resultados:
+                for item in produto_rissul.get('items', []):
+                    for imagem in item.get('images', []):
+                        image_url = imagem.get('imageUrl')
+                        if not image_url:
+                            continue
+                        try:
+                            img_response = requests.get(image_url, timeout=15)
+                            img_response.raise_for_status()
+                            return save_image_from_response(img_response.content, codbar)
+                        except requests.RequestException as e:
+                            logging.warning(f"Erro ao baixar a imagem do URL {image_url}: {e}")
+            return jsonify({'message': 'No valid image found from Rissul'}), 404
+        else:
+            logging.info(f"Nenhuma imagem encontrada no Rissul para o produto {codbar}")
+            return jsonify({'message': 'No image found from Rissul'}), 404
+    except requests.RequestException as e:
+        logging.error(f"Erro ao buscar ou salvar imagem do Rissul para o produto {codbar}: {e}")
+        return jsonify({'message': f'Error fetching or saving image from Rissul: {str(e)}'}), 500
+
+
 def _url_e_imagem_valida(url, timeout=5):
     """Confere rapidamente (HEAD, com fallback pra GET em streaming se o servidor não suportar
     HEAD direito) se uma URL aponta de verdade pra um arquivo de imagem (Content-Type image/*),
@@ -1049,6 +1088,10 @@ def serialize_produto_with_image(produto):
                     precomelhor_result = buscar_e_salvar_imagem_precomelhor(produto.codbar)
                     if precomelhor_result[1] == 200:
                         img_url = precomelhor_result[0].get_json().get('imagem_url')
+                    else:
+                        rissul_result = buscar_e_salvar_imagem_rissul(produto.codbar)
+                        if rissul_result[1] == 200:
+                            img_url = rissul_result[0].get_json().get('imagem_url')
 
     return {
         'codbar': produto.codbar,
@@ -3109,7 +3152,7 @@ def admin_cadastrar_produto_manual(codbar):
 @app.route('/admin/buscar-imagem/<string:codbar>', methods=['POST'])
 @jwt_required()
 def admin_buscar_imagem(codbar):
-    """Busca a imagem crua (fundo branco) do produto: local -> Bing -> Google -> Zaffari -> PrecoMelhor,
+    """Busca a imagem crua (fundo branco) do produto: local -> Bing -> Google -> Zaffari -> PrecoMelhor -> Rissul,
     salvando o resultado em IMAGES_FOLDER."""
     produto = Produto.query.filter_by(codbar=codbar).first()
     if not produto:
@@ -3125,6 +3168,7 @@ def admin_buscar_imagem(codbar):
         ('google', buscar_e_salvar_imagem_google),
         ('zaffari', buscar_e_salvar_imagem_zaffari),
         ('precomelhor', buscar_e_salvar_imagem_precomelhor),
+        ('rissul', buscar_e_salvar_imagem_rissul),
     ):
         resultado = buscar(codbar)
         if resultado[1] == 200:
@@ -3133,7 +3177,7 @@ def admin_buscar_imagem(codbar):
             return jsonify({'message': f'Imagem encontrada via {fonte}', 'imagem_url': imagem_url, 'fonte': fonte}), 200
 
     _registrar_busca_imagem(codbar, False, via='admin')
-    return jsonify({'message': 'Nenhuma imagem encontrada em nenhuma das fontes (Bing, Google, Zaffari, PrecoMelhor)'}), 404
+    return jsonify({'message': 'Nenhuma imagem encontrada em nenhuma das fontes (Bing, Google, Zaffari, PrecoMelhor, Rissul)'}), 404
 
 
 @app.route('/admin/buscar-imagem-ia/<string:codbar>', methods=['POST'])
