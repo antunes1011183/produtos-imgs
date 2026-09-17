@@ -631,7 +631,7 @@ def obter_imagem_produto(codbar):
             return jsonify({'imagem_url': imagem_url, 'imagem_url_arte': None}), 200
 
     _registrar_busca_imagem(codbar, False, via='terminal')
-    return jsonify({'message': 'Imagem não encontrada em nenhuma fonte (local, Bing, Google, Zaffari, PrecoMelhor, Rissul)'}), 404
+    return jsonify({'message': 'Imagem não encontrada em nenhuma fonte (local, Bing, Google, PrecoMelhor)'}), 404
 
 
 _fila_arte = queue.Queue()
@@ -1989,7 +1989,7 @@ def consultar_ou_cadastrar_produto(codbar):
             'sugestao': _sugestao_segura(novo_produto),
         }), 201
 
-    return jsonify({'message': 'Produto não encontrado em nenhuma fonte (Cosmos, Open Food Facts, Zaffari, PreçoMelhor)'}), 404
+    return jsonify({'message': 'Produto não encontrado em nenhuma fonte (Cosmos, Open Food Facts, PreçoMelhor)'}), 404
 
 
 # =====================================================================
@@ -3226,7 +3226,7 @@ def admin_buscar_imagem(codbar):
             return jsonify({'message': f'Imagem encontrada via {fonte}', 'imagem_url': imagem_url, 'fonte': fonte}), 200
 
     _registrar_busca_imagem(codbar, False, via='admin')
-    return jsonify({'message': 'Nenhuma imagem encontrada em nenhuma das fontes (Bing, Google, Zaffari, PrecoMelhor, Rissul)'}), 404
+    return jsonify({'message': 'Nenhuma imagem encontrada em nenhuma das fontes (Bing, Google, PrecoMelhor)'}), 404
 
 
 @app.route('/admin/buscar-imagem-ia/<string:codbar>', methods=['POST'])
@@ -3369,7 +3369,7 @@ def gerar_arte_publica(codbar):
                     if produto:
                         break
             if not produto:
-                return jsonify({'message': 'Produto não encontrado em nenhuma fonte (Cosmos, Open Food Facts, Zaffari, PreçoMelhor)'}), 404
+                return jsonify({'message': 'Produto não encontrado em nenhuma fonte (Cosmos, Open Food Facts, PreçoMelhor)'}), 404
 
         content_type = (request.content_type or '').lower()
         ext = 'png' if 'png' in content_type else 'webp' if 'webp' in content_type else 'jpg'

@@ -699,7 +699,7 @@
                         <span style="font-size:0.82rem; color:var(--muted); margin-left:0.25rem;" id="cosmos-status-text">Carregando...</span>
                     </div>
                     <p style="font-size:0.76rem; color:var(--muted); margin-top:0.75rem; margin-bottom:0;">
-                        Sem nenhum token configurado, o cadastro automático continua funcionando via Open Food Facts e Zaffari (o Cosmos só é pulado).
+                        Sem nenhum token configurado, o cadastro automático continua funcionando via outras fontes (o Cosmos só é pulado).
                     </p>
                 </div>
 
@@ -853,7 +853,7 @@
                                         <button class="btn btn-secondary" id="btn-cancelar-cadastro">Cancelar</button>
                                     </div>
                                     <p style="font-size:0.76rem; color:var(--muted); margin:0.5rem 0 0;">
-                                        "Buscar no Cosmos e cadastrar" consulta apenas o Cosmos (com rotação de tokens, se houver mais de um configurado) e ignora descrição/imagem preenchidas aqui — se não encontrar lá, nada é cadastrado; use a busca normal acima pra tentar Open Food Facts / Zaffari também. "Cadastrar manualmente" não consulta fonte nenhuma — cria o produto com o EAN e, se preenchidos, a descrição e a imagem acima; marca fica vazia até completar depois.
+                                        "Buscar no Cosmos e cadastrar" consulta apenas o Cosmos (com rotação de tokens, se houver mais de um configurado) e ignora descrição/imagem preenchidas aqui — se não encontrar lá, nada é cadastrado; use a busca normal acima pra tentar outras fontes também. "Cadastrar manualmente" não consulta fonte nenhuma — cria o produto com o EAN e, se preenchidos, a descrição e a imagem acima; marca fica vazia até completar depois.
                                     </p>
                                 </div>
                             </div>
@@ -1424,7 +1424,7 @@ async function loadConfig() {
         const cosmosStatus = cfg.cosmos_status || {};
         $('#cosmos-status-text').textContent = cosmosStatus.total_tokens
             ? `Token #${cosmosStatus.token_atual} de ${cosmosStatus.total_tokens} em uso · ${cosmosStatus.sucessos} sucesso(s) e ${cosmosStatus.rotacoes} rotação(ões) desde o último resumo`
-            : 'Nenhum token configurado — cadastro automático seguirá via Open Food Facts / Zaffari';
+            : 'Nenhum token configurado — cadastro automático seguirá via outras fontes';
 
         setToggle('toggle-use-openai', cfg.use_openai);
         setToggle('toggle-rembg', cfg.rembg_enabled);
@@ -1640,7 +1640,7 @@ $('#btn-save-cosmos').addEventListener('click', async () => {
         showAlert('alert-cosmos', data.message || 'Tokens salvos com sucesso!', 'success');
         $('#cosmos-status-text').textContent = data.total_tokens > 0
             ? `${data.total_tokens} token(ns) configurado(s), começando pelo #1`
-            : 'Nenhum token configurado — cadastro automático seguirá via Open Food Facts / Zaffari';
+            : 'Nenhum token configurado — cadastro automático seguirá via outras fontes';
     } catch (e) {
         showAlert('alert-cosmos', `Erro: ${e.message}`, 'error');
     }
@@ -2408,7 +2408,7 @@ function renderConsultaTable(data) {
         list.innerHTML = `<div class="empty-state">
             Nenhum produto encontrado${consultaQ ? ' para "' + escHtml(consultaQ) + '"' : ''}.
             ${pareceEan ? `<div style="margin-top:0.85rem;">
-                <button class="btn btn-primary btn-sm" id="btn-cadastrar-via-cosmos" data-ean="${escHtml(consultaQ)}">Cadastrar produto (buscar em Cosmos / Open Food Facts / Zaffari)</button>
+                <button class="btn btn-primary btn-sm" id="btn-cadastrar-via-cosmos" data-ean="${escHtml(consultaQ)}">Cadastrar produto (buscar em fontes externas)</button>
             </div>` : ''}
         </div>`;
         if (info) info.textContent = 'Página 0 de 0';
