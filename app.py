@@ -1797,6 +1797,54 @@ def fetch_product_from_zaffari(ean):
         return None
 
 
+def fetch_product_from_rissul(ean):
+    """Busca dados estruturados do produto na API pública do Rissul (VTEX, conta `superrissul`),
+    gratuita — mesmo contrato da Zaffari (ver RISSUL_SEARCH_URL/buscar_e_salvar_imagem_rissul),
+    só que aqui também aproveitando nome/marca/categoria, não só a imagem.
+
+    Pedido do usuário pra também usar como fonte de cadastro/descrição (antes só entrava na
+    busca de foto crua) — mas sem o nome "Rissul" aparecer em nenhum lugar do painel: a
+    supressão é feita do mesmo jeito que já existe pra Zaffari (`rotuloFonte` no frontend,
+    ver seção "Nome 'zaffari' suprimido dos rótulos do painel"), só adicionando `'rissul'` à
+    mesma lista — a fonte continua sendo usada normalmente, só o rótulo some da UI."""
+    try:
+        response = requests.get(
+            RISSUL_SEARCH_URL,
+            params={'fq': f'alternateIds_Ean:{ean}'},
+            timeout=15,
+        )
+        response.raise_for_status()
+        resultados = response.json()
+        if not resultados:
+            return None
+
+        produto_rissul = resultados[0]
+        description = produto_rissul.get('productName') or produto_rissul.get('productTitle')
+        if not description:
+            return None
+
+        item = (produto_rissul.get('items') or [{}])[0]
+        imagens = item.get('images') or []
+        thumbnail = imagens[0].get('imageUrl') if imagens else 'Imagem não disponível'
+        categorias = produto_rissul.get('categories') or []
+        categoria_nome = categorias[0].strip('/').split('/')[-1] if categorias else 'Não disponível'
+
+        return {
+            'gtin': ean,
+            'description': description,
+            'ncm': {'description': 'Não disponível'},
+            'brand': {'name': produto_rissul.get('brand') or 'Marca não disponível'},
+            'thumbnail': thumbnail,
+            'cest': {'code': 'Não disponível'},
+            'package': {'type': 'Não disponível'},
+            'price': {},
+            'category': {'name': categoria_nome},
+        }
+    except requests.RequestException as e:
+        logging.error(f"Erro ao buscar produto no Rissul: {e}")
+        return None
+
+
 def fetch_product_from_precomelhor(ean):
     """Busca o produto na API pública e gratuita do PreçoMelhor (precomelhor.com.br) —
     endpoint pensado pra dados nutricionais, mas retorna nome + marca mesmo quando os campos
@@ -1910,6 +1958,7 @@ def consultar_ou_cadastrar_produto(codbar):
         ('open_food_facts', fetch_product_from_openfoodfacts),
         ('zaffari', fetch_product_from_zaffari),
         ('precomelhor', fetch_product_from_precomelhor),
+        ('rissul', fetch_product_from_rissul),
     ):
         dados = buscar(codbar)
         if not dados:
@@ -2318,7 +2367,7 @@ def gerar_textos_arte_ia(produto):
     fonte_confiavel = False
 
     if not descricao_fonte.strip() or _texto_corrompido(descricao_fonte) or _texto_corrompido(marca_fonte):
-        for buscar in (fetch_product_from_cosmos, fetch_product_from_openfoodfacts, fetch_product_from_zaffari, fetch_product_from_google, fetch_product_from_precomelhor):
+        for buscar in (fetch_product_from_cosmos, fetch_product_from_openfoodfacts, fetch_product_from_zaffari, fetch_product_from_google, fetch_product_from_precomelhor, fetch_product_from_rissul):
             dados = buscar(produto.codbar)
             if not dados:
                 continue
@@ -3312,6 +3361,7 @@ def gerar_arte_publica(codbar):
                 ('open_food_facts', fetch_product_from_openfoodfacts),
                 ('zaffari', fetch_product_from_zaffari),
                 ('precomelhor', fetch_product_from_precomelhor),
+                ('rissul', fetch_product_from_rissul),
             ):
                 dados = buscar(codbar)
                 if dados:

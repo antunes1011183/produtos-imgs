@@ -1270,11 +1270,13 @@ function escHtml(s) {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// Pedido do usuário: a Zaffari continua funcionando como fonte normalmente (imagem e
-// descrição) — só o nome dela não deve aparecer em nenhum rótulo/toast do painel. Não mexe em
-// nenhum dado nem desativa a fonte, só suprime o texto exibido nesses pontos específicos.
+// Pedido do usuário: a Zaffari (e, na mesma leva, o Rissul) continuam funcionando como fonte
+// normalmente (imagem e descrição) — só o nome delas não deve aparecer em nenhum rótulo/toast
+// do painel. Não mexe em nenhum dado nem desativa a fonte, só suprime o texto exibido nesses
+// pontos específicos.
+const FONTES_OCULTAS_NO_PAINEL = ['zaffari', 'rissul'];
 function rotuloFonte(fonte) {
-    return fonte && fonte !== 'zaffari' ? fonte : null;
+    return fonte && !FONTES_OCULTAS_NO_PAINEL.includes(fonte) ? fonte : null;
 }
 
 // ===== Login =====
@@ -1934,7 +1936,8 @@ async function openHistDetailPanel(ean) {
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
-            toast(data.message || 'Imagem encontrada', 'success');
+            const fonteVisivel = rotuloFonte(data.fonte);
+            toast(fonteVisivel ? `Imagem encontrada via ${fonteVisivel}` : 'Imagem encontrada', 'success');
             if (data.imagem_url && histDetailEan === ean) {
                 $('#hist-detail-modal-image').innerHTML = `<img src="${escHtml(data.imagem_url)}?t=${Date.now()}" alt="Foto do produto">`;
             }
@@ -2772,7 +2775,8 @@ async function openDetailModal(ean) {
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
-            toast(data.message || 'Imagem encontrada', 'success');
+            const fonteVisivel = rotuloFonte(data.fonte);
+            toast(fonteVisivel ? `Imagem encontrada via ${fonteVisivel}` : 'Imagem encontrada', 'success');
             if (data.imagem_url && detailEan === ean) {
                 const img = $('#detail-modal-image').querySelector('img');
                 if (!img) $('#detail-modal-image').innerHTML = `<img src="${escHtml(data.imagem_url)}?t=${Date.now()}" alt="Foto do produto">`;
