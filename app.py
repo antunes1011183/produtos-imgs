@@ -842,10 +842,54 @@ def _marcar_tem_foto(produto_ou_codbar, valor):
         produto.tem_foto = bool(valor)
 
 
+def _imagem_e_segura(image_data):
+    """Classifica se uma imagem é apropriada pra exibição pública num terminal de preços de
+    loja (sem nudez/pornografia/conteúdo sexual). Camada de segurança adicionada depois de um
+    incidente real (ver CLAUDE.md): uma fonte externa "confiável" (PreçoMelhor, com foto
+    hospedada no próprio CDN deles, não um resultado de busca genérico) tinha um mapeamento
+    EAN→imagem pornográfica na própria base de dados — provou que NENHUMA fonte automática pode
+    ser assumida como 100% segura só por ser "curada". A defesa de verdade é checar o CONTEÚDO
+    da imagem antes de salvar, não confiar cegamente numa fonte específica.
+
+    Usa o próprio Gemini (multimodal) como classificador — reaproveita a mesma infraestrutura já
+    usada pra gerar arte (`Part.from_bytes`, mesmo client), sem precisar de chave/serviço novo
+    (ex.: Cloud Vision SafeSearch, que exigiria configurar faturamento/API separada).
+
+    Falha aberta deliberada: se a classificação der erro (sem chave configurada, rede, cota
+    esgotada), retorna True (permite salvar) — uma falha aqui não pode travar toda a busca de
+    imagem do sistema. Essa checagem é a PRIMEIRA linha de defesa (impede a imagem de ser salva
+    em primeiro lugar); o bloqueio permanente por EAN (`Produto.busca_imagem_bloqueada`) continua
+    sendo a segunda linha, pra quando algo passa despercebido por aqui mesmo assim."""
+    api_key = _ler_todas_config().get('GEMINI_API_KEY', '').strip()
+    if not api_key:
+        return True
+    try:
+        client = genai.Client(vertexai=True, api_key=api_key)
+        response = client.models.generate_content(
+            model='gemini-2.5-flash-lite',
+            contents=[
+                genai_types.Part.from_bytes(data=image_data, mime_type='image/jpeg'),
+                'Esta imagem vai ser exibida publicamente num terminal de preços de supermercado, '
+                'como foto de um produto do catálogo. Ela contém nudez, conteúdo sexual/pornográfico, '
+                'violência gráfica, ou é flagrantemente imprópria pra um ambiente familiar de varejo? '
+                'Responda só com uma palavra, sem explicação: SEGURA ou IMPROPRIA.',
+            ],
+        )
+        texto = (response.text or '').strip().upper()
+        return 'IMPROPRIA' not in texto
+    except Exception as e:
+        logging.warning(f"Erro ao classificar segurança da imagem (permitindo por padrão): {e}")
+        return True
+
+
 def save_image_from_response(image_data, codbar):
     """Salva a imagem a partir da resposta de uma requisição"""
     original_file_path = os.path.join(IMAGES_FOLDER, f'{codbar}.jpg')
     processed_file_path = os.path.join(PROCESSED_IMAGES_FOLDER, f'{codbar}.png')  # Mudamos para .png para suportar transparência
+
+    if not _imagem_e_segura(image_data):
+        logging.error(f"Imagem REJEITADA por conteúdo impróprio pro produto {codbar} — não foi salva.")
+        return jsonify({'message': 'Imagem rejeitada: conteúdo classificado como impróprio'}), 422
 
     try:
         # Salva a imagem original
