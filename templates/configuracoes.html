@@ -1270,6 +1270,34 @@ function escHtml(s) {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// `navigator.clipboard` só funciona em contexto seguro (https ou localhost) — esse painel
+// normalmente é acessado pela rede local via IP puro em HTTP (ver seção "srv-mupa é uma
+// máquina diferente" no CLAUDE.md), onde a API fica indisponível/lança erro. Fallback pro
+// jeito antigo (`textarea` temporário + `execCommand('copy')`, descontinuado mas ainda
+// suportado pra esse propósito específico) garante que o botão funcione nos dois cenários.
+async function copiarTexto(texto) {
+    if (navigator.clipboard && window.isSecureContext) {
+        try {
+            await navigator.clipboard.writeText(texto);
+            return true;
+        } catch (e) { /* cai pro fallback abaixo */ }
+    }
+    try {
+        const textarea = document.createElement('textarea');
+        textarea.value = texto;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(textarea);
+        return ok;
+    } catch (e) {
+        return false;
+    }
+}
+
 // Pedido do usuário: a Zaffari (e, na mesma leva, o Rissul) continuam funcionando como fonte
 // normalmente (imagem e descrição) — só o nome delas não deve aparecer em nenhum rótulo/toast
 // do painel. Não mexe em nenhum dado nem desativa a fonte, só suprime o texto exibido nesses
@@ -1734,6 +1762,7 @@ async function loadHistorico(page = 1) {
                         <div style="display:flex; gap:0.35rem; flex-wrap:wrap; align-items:center;">
                             <button class="btn btn-primary btn-sm" data-action="hist-buscar" data-codbar="${escHtml(r.codbar)}">Buscar</button>
                             <button class="btn btn-secondary btn-sm" data-action="hist-google" data-codbar="${escHtml(r.codbar)}" data-desc="${escHtml(descricao)}">Google Imagens</button>
+                            <button class="btn btn-secondary btn-sm" data-action="hist-copy-ean" data-codbar="${escHtml(r.codbar)}" title="Copiar só o EAN">Copiar EAN</button>
                             <button class="btn btn-secondary btn-sm" data-action="hist-upload" data-codbar="${escHtml(r.codbar)}">Enviar imagem</button>
                             <input type="file" accept="image/*" data-upload-input="${escHtml(r.codbar)}" style="display:none;">
                         </div>
@@ -1835,6 +1864,13 @@ $('#historico-list').addEventListener('click', async (e) => {
     if (googleBtn) {
         const termo = `${googleBtn.dataset.desc || ''} ${googleBtn.dataset.codbar}`.trim();
         window.open(`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(termo)}`, '_blank', 'noopener');
+        return;
+    }
+
+    const copyEanBtn = e.target.closest('[data-action="hist-copy-ean"]');
+    if (copyEanBtn) {
+        const ok = await copiarTexto(copyEanBtn.dataset.codbar);
+        toast(ok ? `EAN ${copyEanBtn.dataset.codbar} copiado` : 'Não foi possível copiar o EAN', ok ? 'success' : 'error');
         return;
     }
 
