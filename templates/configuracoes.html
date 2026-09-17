@@ -772,6 +772,31 @@
                         </div>
                         <div class="toggle" id="toggle-rembg" data-key="REMBG_ENABLED"></div>
                     </div>
+                    <div class="toggle-row">
+                        <div class="toggle-label">
+                            <span class="name">Busca de imagem online (Bing/Google/Zaffari/PreçoMelhor/Rissul)</span>
+                            <span class="desc">Desativa a busca automática de foto crua em fontes externas — o terminal e o painel passam a usar só a imagem local já salva. Não afeta cadastro de nome/marca nem a aba "Buscar com IA". Use pra pausar tudo rapidamente em caso de imagem imprópria vindo de fonte externa.</span>
+                        </div>
+                        <div class="toggle" id="toggle-busca-imagem-online" data-key="BUSCA_IMAGEM_ONLINE_ATIVA"></div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                        Excluir imagem de um produto pelo EAN
+                    </h2>
+                    <p style="font-size:0.82rem; color:var(--muted); margin:0 0 0.85rem;">
+                        Apaga a foto crua desse EAN de <code>static/imgs_produtos</code> e <code>static/processed_images</code> (a versão com fundo removido). Não apaga a arte publicitária gerada nem o cadastro do produto. Use pra remover rápido uma imagem imprópria/errada sem precisar navegar até a Consulta Rápida.
+                    </p>
+                    <div id="alert-excluir-imagem-ean"></div>
+                    <div class="form-row">
+                        <label for="excluir-imagem-ean">Código de barras (EAN)</label>
+                        <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+                            <input type="text" id="excluir-imagem-ean" placeholder="Ex: 7896116900050" autocomplete="off" style="flex:1; min-width:160px;">
+                            <button class="btn btn-danger" id="btn-excluir-imagem-ean">Excluir imagem</button>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="card">
@@ -1456,6 +1481,7 @@ async function loadConfig() {
 
         setToggle('toggle-use-openai', cfg.use_openai);
         setToggle('toggle-rembg', cfg.rembg_enabled);
+        setToggle('toggle-busca-imagem-online', cfg.busca_imagem_online_ativa);
 
         const notif = cfg.notificacoes || {};
         $('#notif-horario').value = notif.RESUMO_HORARIO || '08:00';
@@ -1633,6 +1659,7 @@ $$('.toggle').forEach(tog => {
         const actionMap = {
             'USE_OPENAI_SUGESTIONS': 'toggle_use_openai',
             'REMBG_ENABLED': 'toggle_rembg',
+            'BUSCA_IMAGEM_ONLINE_ATIVA': 'toggle_busca_imagem_online',
         };
         const action = actionMap[key] || `toggle_${key.toLowerCase().replace(/_/g, '_')}`;
 
@@ -1672,6 +1699,38 @@ $('#btn-save-cosmos').addEventListener('click', async () => {
     } catch (e) {
         showAlert('alert-cosmos', `Erro: ${e.message}`, 'error');
     }
+});
+
+$('#btn-excluir-imagem-ean').addEventListener('click', async () => {
+    const btn = $('#btn-excluir-imagem-ean');
+    const ean = $('#excluir-imagem-ean').value.trim();
+    if (!/^\d{8,14}$/.test(ean)) {
+        showAlert('alert-excluir-imagem-ean', 'Informe um EAN válido (8 a 14 dígitos).', 'error');
+        return;
+    }
+    if (!confirm(`Excluir a foto do produto ${ean}? Remove o arquivo em imgs_produtos e em processed_images. A arte publicitária já gerada (se houver) não é apagada por essa ação.`)) return;
+    const originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner"></span> Excluindo...`;
+    try {
+        const res = await fetch(`/deletar-imagem-produto/${encodeURIComponent(ean)}`, {
+            method: 'DELETE',
+            headers: authHeaders(),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+        showAlert('alert-excluir-imagem-ean', `Imagem de ${ean} excluída com sucesso.`, 'success');
+        toast(`Imagem de ${ean} excluída`, 'success');
+        $('#excluir-imagem-ean').value = '';
+    } catch (e) {
+        showAlert('alert-excluir-imagem-ean', `Erro: ${e.message}`, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+    }
+});
+$('#excluir-imagem-ean').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') $('#btn-excluir-imagem-ean').click();
 });
 
 $('#btn-save-notificacoes').addEventListener('click', async () => {

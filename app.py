@@ -580,16 +580,21 @@ def deletar_imagem_produto(codbar):
         logging.error("Código de barras não fornecido")
         return jsonify({'message': 'Código de barras não fornecido'}), 400
     
+    # Apaga dos DOIS diretórios (crua em IMAGES_FOLDER + com fundo removido em
+    # PROCESSED_IMAGES_FOLDER) — antes só apagava a crua, deixando a versão processada
+    # (que é a que normalmente fica servida, ver save_image_from_response) intacta no disco.
+    # Bug real achado depois de um incidente com imagem imprópria: "excluir" não garantia de
+    # verdade que a imagem parasse de ser servida. Confere as duas pastas mesmo se a extensão
+    # divergir entre elas (a processada é sempre .png, mas não custa nada varrer as duas).
     image_found = False
     try:
-        for ext in ALLOWED_EXTENSIONS:
-            img_path = os.path.join(IMAGES_FOLDER, f'{codbar}.{ext}')
-            logging.info(f"Verificando a existência do arquivo: {img_path}")
-            if os.path.exists(img_path):
-                os.remove(img_path)
-                image_found = True
-                logging.info(f"Imagem deletada: {img_path}")
-                break
+        for pasta in (IMAGES_FOLDER, PROCESSED_IMAGES_FOLDER):
+            for ext in ALLOWED_EXTENSIONS:
+                img_path = os.path.join(pasta, f'{codbar}.{ext}')
+                if os.path.exists(img_path):
+                    os.remove(img_path)
+                    image_found = True
+                    logging.info(f"Imagem deletada: {img_path}")
         if image_found:
             try:
                 _marcar_tem_foto(codbar, False)
@@ -648,21 +653,22 @@ def obter_imagem_produto(codbar):
         _registrar_busca_imagem(codbar, True, origem='local', via='terminal')
         return jsonify({'imagem_url': img_url, 'imagem_url_arte': arte_url}), 200
 
-    for fonte, buscar in (
-        ('bing', buscar_e_salvar_imagem_bing),
-        ('google', buscar_e_salvar_imagem_google),
-        ('zaffari', buscar_e_salvar_imagem_zaffari),
-        ('precomelhor', buscar_e_salvar_imagem_precomelhor),
-        ('rissul', buscar_e_salvar_imagem_rissul),
-    ):
-        resultado = buscar(codbar)
-        if resultado[1] == 200:
-            imagem_url = resultado[0].get_json().get('imagem_url')
-            novo_img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
-            if novo_img_path:
-                _enfileirar_geracao_arte(codbar, novo_img_path, orientacao=orientacao)
-            _registrar_busca_imagem(codbar, True, origem=fonte, via='terminal')
-            return jsonify({'imagem_url': imagem_url, 'imagem_url_arte': None}), 200
+    if _busca_imagem_online_ativa():
+        for fonte, buscar in (
+            ('bing', buscar_e_salvar_imagem_bing),
+            ('google', buscar_e_salvar_imagem_google),
+            ('zaffari', buscar_e_salvar_imagem_zaffari),
+            ('precomelhor', buscar_e_salvar_imagem_precomelhor),
+            ('rissul', buscar_e_salvar_imagem_rissul),
+        ):
+            resultado = buscar(codbar)
+            if resultado[1] == 200:
+                imagem_url = resultado[0].get_json().get('imagem_url')
+                novo_img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+                if novo_img_path:
+                    _enfileirar_geracao_arte(codbar, novo_img_path, orientacao=orientacao)
+                _registrar_busca_imagem(codbar, True, origem=fonte, via='terminal')
+                return jsonify({'imagem_url': imagem_url, 'imagem_url_arte': None}), 200
 
     _registrar_busca_imagem(codbar, False, via='terminal')
     return jsonify({'message': 'Imagem não encontrada em nenhuma fonte (local, Bing, Google, PrecoMelhor)'}), 404
@@ -1108,7 +1114,7 @@ def serialize_produto_with_image(produto):
     img_path = find_existing_image(produto.codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
     if img_path:
         img_url = _static_url(img_path)
-    else:
+    elif _busca_imagem_online_ativa():
         bing_result = buscar_e_salvar_imagem_bing(produto.codbar)
         if bing_result[1] == 200:
             img_url = bing_result[0].get_json().get('imagem_url')
@@ -2049,6 +2055,16 @@ def _ler_todas_config():
     return {r.key: (r.value or '') for r in rows}
 
 
+def _busca_imagem_online_ativa():
+    """Kill switch de emergência (Configurações → Flags de Funcionamento): quando desativado, a
+    busca automática de foto crua em fontes externas (Bing/Google/Zaffari/PreçoMelhor/Rissul) é
+    pulada inteiramente — só a imagem já salva localmente continua funcionando. Não afeta
+    cadastro de nome/marca (fetch_product_from_*) nem o botão "Buscar com IA" (fluxos
+    separados). Pedido do usuário depois de um incidente real com imagem imprópria vinda de uma
+    fonte externa — dá pra pausar a busca automática na hora, sem precisar de deploy."""
+    return _ler_todas_config().get('BUSCA_IMAGEM_ONLINE_ATIVA', 'true') == 'true'
+
+
 def set_config(key, value):
     """Cria ou atualiza uma configuração pelo par chave-valor."""
     cfg = Config.query.filter_by(key=key).first()
@@ -2147,16 +2163,28 @@ def configuracoes():
                 return jsonify({'message': 'Chave inválida', 'saved': False}), 400
 
         elif action == 'toggle_use_openai':
-            val = data.get('use_openai')
+            # Lia 'use_openai' aqui, mas o frontend sempre mandou o campo com o mesmo nome do
+            # data-key do toggle ('USE_OPENAI_SUGESTIONS') — bug real, achado de passagem
+            # implementando o toggle de busca de imagem online (mesmo padrão de código): o
+            # valor lido nunca batia, então esse toggle sempre salvava False, mesmo clicando
+            # pra ativar. Corrigido pra ler a chave que o frontend realmente manda.
+            val = data.get('USE_OPENAI_SUGESTIONS')
             use_flag = (val == 'true' or val is True)
             set_config('USE_OPENAI_SUGESTIONS', str(use_flag).lower())
             return jsonify({'message': f'Flag USE_OPENAI_SUGESTIONS = {use_flag}', 'saved': True})
 
         elif action == 'toggle_rembg':
-            val = data.get('rembg_enabled')
+            # Mesmo bug do toggle acima, mesma correção.
+            val = data.get('REMBG_ENABLED')
             enabled = (val == 'true' or val is True)
             set_config('REMBG_ENABLED', str(enabled).lower())
             return jsonify({'message': f'REMBG_ENABLED = {enabled}', 'saved': True})
+
+        elif action == 'toggle_busca_imagem_online':
+            val = data.get('BUSCA_IMAGEM_ONLINE_ATIVA')
+            ativa = (val == 'true' or val is True)
+            set_config('BUSCA_IMAGEM_ONLINE_ATIVA', str(ativa).lower())
+            return jsonify({'message': f'BUSCA_IMAGEM_ONLINE_ATIVA = {ativa}', 'saved': True})
 
         elif action == 'toggle_resumo_ativo':
             val = data.get('RESUMO_ATIVO')
@@ -2203,6 +2231,7 @@ def configuracoes():
         'notificacoes': {chave: cfg.get(chave, '') for chave in NOTIFICACAO_CONFIG_KEYS},
         'use_openai': cfg.get('USE_OPENAI_SUGESTIONS', 'true') == 'true',
         'rembg_enabled': cfg.get('REMBG_ENABLED', 'false') == 'true',
+        'busca_imagem_online_ativa': cfg.get('BUSCA_IMAGEM_ONLINE_ATIVA', 'true') == 'true',
     })
 
 
@@ -2220,6 +2249,7 @@ def api_config():
         'gemini_key_full': gemini_key_full,
         'use_openai': cfg.get('USE_OPENAI_SUGESTIONS', 'true') == 'true',
         'rembg_enabled': cfg.get('REMBG_ENABLED', 'false') == 'true',
+        'busca_imagem_online_ativa': cfg.get('BUSCA_IMAGEM_ONLINE_ATIVA', 'true') == 'true',
     })
 
 
@@ -3247,6 +3277,10 @@ def admin_buscar_imagem(codbar):
     if img_path:
         img_url = url_for('static', filename=f'imgs_produtos/{os.path.basename(img_path)}', _external=True)
         return jsonify({'message': 'Produto já possui foto', 'imagem_url': img_url, 'fonte': 'local'}), 200
+
+    if not _busca_imagem_online_ativa():
+        _registrar_busca_imagem(codbar, False, via='admin')
+        return jsonify({'message': 'Busca de imagem online está desativada em Configurações → Flags de Funcionamento'}), 404
 
     for fonte, buscar in (
         ('bing', buscar_e_salvar_imagem_bing),
