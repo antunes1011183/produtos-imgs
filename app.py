@@ -216,16 +216,26 @@ class HistoricoBuscaImagem(db.Model):
 
 def _registrar_busca_imagem(codbar, encontrado, origem=None, via='terminal'):
     """Grava uma linha na fila de pendências (ver docstring de HistoricoBuscaImagem) — só quando
-    a busca falhou (`encontrado=False`) E o EAN é um produto que existe de verdade no nosso
-    catálogo. As duas checagens são deliberadas: sucesso não vira pendência nenhuma (nada a
-    resolver), e um EAN sem `Produto` cadastrado também não (não é um produto nosso, não tem
-    como/por que "resolver" a foto dele). Chamadores continuam passando `encontrado=True` nos
-    casos de sucesso (não precisou mudar nenhum call site) — aqui vira um no-op silencioso.
+    as TRÊS condições abaixo são verdadeiras (pedido explícito do usuário, com cada uma delas
+    nomeada separadamente):
+    1. Temos cadastro: `Produto.query...` encontra o EAN no catálogo — sem isso não é um produto
+       nosso, não tem como/por que "resolver" a foto dele.
+    2. NÃO temos a imagem do produto na pasta: checado direto via `find_existing_image` (não só
+       confiando no parâmetro `encontrado` que o chamador passou) — garante que a condição real é
+       sempre "o arquivo não existe fisicamente em IMAGES_FOLDER agora", não uma inferência sobre
+       como a busca correu.
+    3. `encontrado=False`: sucesso não vira pendência nenhuma (nada a resolver) — verificado
+       primeiro, como atalho barato antes de tocar o banco/disco; os chamadores continuam
+       passando `encontrado=True` nos casos de sucesso (não precisou mudar nenhum call site),
+       vira um no-op silencioso aqui.
+
     Nunca deixa uma falha de log quebrar o fluxo principal de consulta de imagem."""
     if encontrado:
         return
     try:
         if not Produto.query.filter_by(codbar=codbar).first():
+            return
+        if find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS):
             return
         db.session.add(HistoricoBuscaImagem(codbar=codbar, encontrado=encontrado, origem=origem, via=via))
         db.session.commit()
