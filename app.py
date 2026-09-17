@@ -591,7 +591,7 @@ def deletar_imagem_produto(codbar):
     }
 })
 def obter_imagem_produto(codbar):
-    """Obtém a imagem crua do produto (local -> Bing -> Google -> Zaffari) e, se já
+    """Obtém a imagem crua do produto (local -> Bing -> Google -> Zaffari -> PrecoMelhor) e, se já
     existir, a URL da arte publicitária gerada para ele. Quando a foto existe mas a arte
     ainda não foi gerada, dispara a geração em background (a resposta desta chamada ainda
     sai sem 'imagem_url_arte'; uma consulta seguinte já encontra a arte pronta).
@@ -617,6 +617,7 @@ def obter_imagem_produto(codbar):
         ('bing', buscar_e_salvar_imagem_bing),
         ('google', buscar_e_salvar_imagem_google),
         ('zaffari', buscar_e_salvar_imagem_zaffari),
+        ('precomelhor', buscar_e_salvar_imagem_precomelhor),
     ):
         resultado = buscar(codbar)
         if resultado[1] == 200:
@@ -628,7 +629,7 @@ def obter_imagem_produto(codbar):
             return jsonify({'imagem_url': imagem_url, 'imagem_url_arte': None}), 200
 
     _registrar_busca_imagem(codbar, False, via='terminal')
-    return jsonify({'message': 'Imagem não encontrada em nenhuma fonte (local, Bing, Google, Zaffari)'}), 404
+    return jsonify({'message': 'Imagem não encontrada em nenhuma fonte (local, Bing, Google, Zaffari, PrecoMelhor)'}), 404
 
 
 _fila_arte = queue.Queue()
@@ -847,6 +848,54 @@ def buscar_e_salvar_imagem_google(codbar):
         logging.error(f"Erro ao buscar ou salvar imagem do Google para o produto {codbar}: {e}")
         return jsonify({'message': f'Error fetching or saving image from Google: {str(e)}'}), 500
 
+def _buscar_imagem_real_precomelhor(ean):
+    """Busca a URL da foto real do produto na página pública do PreçoMelhor
+    (precomelhor.com.br/p/<ean>), via a tag <meta property="og:image">. Diferente do endpoint
+    de dados nutricionais (fetch_product_from_precomelhor), que nunca traz imagem, essa página
+    de produto às vezes tem uma foto real hospedada no CDN próprio deles (bucket Cloudflare R2,
+    ex.: pub-251da151f43b454d9e192d38bf5e6d71.r2.dev/<ean>.webp) — descoberto inspecionando a
+    página ao vivo depois que o usuário mandou um link de produto de exemplo. Quando o produto
+    existe na base deles MAS não tem foto cadastrada, o og:image aponta em vez disso pro
+    endpoint de imagem placeholder do próprio domínio (precomelhor.com.br/api/image/<ean>...),
+    que é sempre o mesmo SVG genérico de "sem imagem" (confirmado ao vivo) — o sinal real de
+    "tem foto de verdade" é o host do og:image ser o CDN r2.dev, não o domínio principal."""
+    try:
+        response = requests.get(
+            f'https://www.precomelhor.com.br/p/{ean}',
+            headers={'User-Agent': 'MupaBrain-ProdutosImgs/1.0'},
+            timeout=15,
+        )
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        match = re.search(r'<meta\s+property="og:image"\s+content="([^"]+)"', response.text)
+        if not match:
+            return None
+        image_url = match.group(1)
+        if 'r2.dev' not in image_url:
+            return None
+        return image_url
+    except requests.RequestException as e:
+        logging.error(f"Erro ao buscar página de produto no PreçoMelhor: {e}")
+        return None
+
+
+def buscar_e_salvar_imagem_precomelhor(codbar):
+    """Busca e salva a imagem real do produto na página pública do PreçoMelhor (ver
+    _buscar_imagem_real_precomelhor)."""
+    image_url = _buscar_imagem_real_precomelhor(codbar)
+    if not image_url:
+        logging.info(f"Nenhuma imagem real encontrada no PreçoMelhor para o produto {codbar}")
+        return jsonify({'message': 'No image found from PrecoMelhor'}), 404
+    try:
+        img_response = requests.get(image_url, timeout=15)
+        img_response.raise_for_status()
+        return save_image_from_response(img_response.content, codbar)
+    except requests.RequestException as e:
+        logging.error(f"Erro ao buscar ou salvar imagem do PreçoMelhor para o produto {codbar}: {e}")
+        return jsonify({'message': f'Error fetching or saving image from PrecoMelhor: {str(e)}'}), 500
+
+
 def buscar_e_salvar_imagem_zaffari(codbar):
     """Busca e salva a imagem crua (fundo branco) do produto na API pública da Zaffari (VTEX)."""
     try:
@@ -996,6 +1045,10 @@ def serialize_produto_with_image(produto):
                 zaffari_result = buscar_e_salvar_imagem_zaffari(produto.codbar)
                 if zaffari_result[1] == 200:
                     img_url = zaffari_result[0].get_json().get('imagem_url')
+                else:
+                    precomelhor_result = buscar_e_salvar_imagem_precomelhor(produto.codbar)
+                    if precomelhor_result[1] == 200:
+                        img_url = precomelhor_result[0].get_json().get('imagem_url')
 
     return {
         'codbar': produto.codbar,
@@ -1709,10 +1762,10 @@ def fetch_product_from_precomelhor(ean):
 
     Particularidade dessa API: `success` vem `true` mesmo quando o EAN não existe na base deles
     — o sinal real de "não encontrado" é `product_name` vindo vazio, não o campo `success`
-    (confirmado testando com um EAN inexistente antes de integrar). Sem imagem de produto: o
-    endpoint de imagem deles (`/api/image/<ean>`) só devolve um SVG placeholder genérico
-    ("Sem Imagem") pra qualquer EAN, nunca uma foto real — por isso não usamos como fonte de
-    thumbnail, só de descrição/marca."""
+    (confirmado testando com um EAN inexistente antes de integrar). Esse endpoint em si nunca
+    traz imagem (o `/api/image/<ean>` dele é sempre um SVG placeholder genérico) — o thumbnail
+    vem, quando existe, de `_buscar_imagem_real_precomelhor` (página pública do produto, que às
+    vezes tem uma foto real hospedada no CDN próprio deles, ver docstring dessa função)."""
     try:
         response = requests.get(
             'https://www.precomelhor.com.br/api/nutrition-lookup',
@@ -1726,12 +1779,13 @@ def fetch_product_from_precomelhor(ean):
         if not description:
             return None
 
+        thumbnail = _buscar_imagem_real_precomelhor(ean) or 'Imagem não disponível'
         return {
             'gtin': ean,
             'description': description,
             'ncm': {'description': 'Não disponível'},
             'brand': {'name': data.get('brand') or 'Marca não disponível'},
-            'thumbnail': 'Imagem não disponível',
+            'thumbnail': thumbnail,
             'cest': {'code': 'Não disponível'},
             'package': {'type': 'Não disponível'},
             'price': {},
@@ -3055,7 +3109,7 @@ def admin_cadastrar_produto_manual(codbar):
 @app.route('/admin/buscar-imagem/<string:codbar>', methods=['POST'])
 @jwt_required()
 def admin_buscar_imagem(codbar):
-    """Busca a imagem crua (fundo branco) do produto: local -> Bing -> Google -> Zaffari,
+    """Busca a imagem crua (fundo branco) do produto: local -> Bing -> Google -> Zaffari -> PrecoMelhor,
     salvando o resultado em IMAGES_FOLDER."""
     produto = Produto.query.filter_by(codbar=codbar).first()
     if not produto:
@@ -3070,6 +3124,7 @@ def admin_buscar_imagem(codbar):
         ('bing', buscar_e_salvar_imagem_bing),
         ('google', buscar_e_salvar_imagem_google),
         ('zaffari', buscar_e_salvar_imagem_zaffari),
+        ('precomelhor', buscar_e_salvar_imagem_precomelhor),
     ):
         resultado = buscar(codbar)
         if resultado[1] == 200:
@@ -3078,7 +3133,7 @@ def admin_buscar_imagem(codbar):
             return jsonify({'message': f'Imagem encontrada via {fonte}', 'imagem_url': imagem_url, 'fonte': fonte}), 200
 
     _registrar_busca_imagem(codbar, False, via='admin')
-    return jsonify({'message': 'Nenhuma imagem encontrada em nenhuma das fontes (Bing, Google, Zaffari)'}), 404
+    return jsonify({'message': 'Nenhuma imagem encontrada em nenhuma das fontes (Bing, Google, Zaffari, PrecoMelhor)'}), 404
 
 
 @app.route('/admin/buscar-imagem-ia/<string:codbar>', methods=['POST'])
