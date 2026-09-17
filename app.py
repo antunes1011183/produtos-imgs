@@ -4,6 +4,7 @@ import csv
 import sqlite3
 import base64
 import threading
+import concurrent.futures
 import time
 import queue
 import subprocess
@@ -30,9 +31,10 @@ except Exception:
     remove = None
     REMBG_ENABLED = False
     logging.warning("rembg não disponível - remoção de fundo desativada")
-from PIL import Image, ImageDraw, ImageFont, ImageChops
+from PIL import Image, ImageDraw, ImageFont, ImageChops, ImageFilter
 from flask_migrate import Migrate  # Adicionado
 import re
+import json
 from io import BytesIO
 
 # Quando compilado com PyInstaller (`sys.frozen`), __file__ e o cwd herdado do processo que
@@ -169,6 +171,14 @@ class Produto(db.Model):
     marca = db.Column(db.String(255))
     preco_medio = db.Column(db.Float)
     categoriaText = db.Column(db.String(255))
+    # Indicador reliável de "tem foto crua salva localmente" (static/imgs_produtos/<codbar>.*) —
+    # diferente de foto_png (campo legado, inconsistente: às vezes guarda uma URL externa crua
+    # do cadastro automático, às vezes um path local, às vezes nunca foi atualizado depois de um
+    # upload/busca de imagem). Mantido em sincronia por _marcar_tem_foto, chamado em todo ponto
+    # que salva/remove a foto crua de um produto (ver função pra lista completa). Indexado
+    # porque é usado pra ordenar "produtos com foto primeiro" na Consulta Rápida (pedido do
+    # usuário) — sem índice, ordenar ~945 mil linhas por essa coluna seria lento.
+    tem_foto = db.Column(db.Boolean, nullable=False, default=False, index=True)
 
 class SugestaoProduto(db.Model):
     """Modelo de Sugestão de Produto"""
@@ -366,6 +376,12 @@ def upload_imagem_produto(codbar):
         filename = secure_filename(f'{codbar}.{file.filename.rsplit(".", 1)[1].lower()}')
         file_path = os.path.join(IMAGES_FOLDER, filename)
         file.save(file_path)
+        try:
+            _marcar_tem_foto(codbar, True)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            logging.warning(f"Não foi possível marcar tem_foto=True para {codbar}: {e}")
         return jsonify({'message': 'Image successfully uploaded', 'path': file_path}), 200
     else:
         return jsonify({'message': 'File format not allowed'}), 400
@@ -540,6 +556,12 @@ def deletar_imagem_produto(codbar):
                 logging.info(f"Imagem deletada: {img_path}")
                 break
         if image_found:
+            try:
+                _marcar_tem_foto(codbar, False)
+                db.session.commit()
+            except Exception as e:
+                db.session.rollback()
+                logging.warning(f"Não foi possível marcar tem_foto=False para {codbar}: {e}")
             return jsonify({'message': 'Imagem deletada com sucesso'}), 200
         else:
             logging.warning(f"Imagem não encontrada para o código de barras: {codbar}")
@@ -572,14 +594,22 @@ def obter_imagem_produto(codbar):
     """Obtém a imagem crua do produto (local -> Bing -> Google -> Zaffari) e, se já
     existir, a URL da arte publicitária gerada para ele. Quando a foto existe mas a arte
     ainda não foi gerada, dispara a geração em background (a resposta desta chamada ainda
-    sai sem 'imagem_url_arte'; uma consulta seguinte já encontra a arte pronta)."""
+    sai sem 'imagem_url_arte'; uma consulta seguinte já encontra a arte pronta).
+
+    Query param `orientacao` ('horizontal', default, ou 'vertical'): o app manda esse valor de
+    acordo com a orientação física do terminal (ver PriceQueryEngine.reportarOrientacao no
+    mplayer) — decide tanto qual arte é retornada em 'imagem_url_arte' quanto qual pipeline é
+    disparado em background quando falta gerar. Só a orientação pedida é gerada (não as duas de
+    uma vez) — cada chamada à IA custa dinheiro/tempo, não faz sentido gerar uma arte vertical
+    pra uma loja que só tem terminais horizontais, e vice-versa."""
+    orientacao = 'vertical' if request.args.get('orientacao') == 'vertical' else 'horizontal'
     img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
     if img_path:
         img_url = _static_url(img_path)
         logging.info(f"Imagem encontrada localmente para o produto {codbar}: {img_url}")
-        arte_url = _arte_url(codbar)
+        arte_url = _arte_url(codbar, orientacao)
         if not arte_url:
-            _enfileirar_geracao_arte(codbar, img_path)
+            _enfileirar_geracao_arte(codbar, img_path, orientacao=orientacao)
         _registrar_busca_imagem(codbar, True, origem='local', via='terminal')
         return jsonify({'imagem_url': img_url, 'imagem_url_arte': arte_url}), 200
 
@@ -593,7 +623,7 @@ def obter_imagem_produto(codbar):
             imagem_url = resultado[0].get_json().get('imagem_url')
             novo_img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
             if novo_img_path:
-                _enfileirar_geracao_arte(codbar, novo_img_path)
+                _enfileirar_geracao_arte(codbar, novo_img_path, orientacao=orientacao)
             _registrar_busca_imagem(codbar, True, origem=fonte, via='terminal')
             return jsonify({'imagem_url': imagem_url, 'imagem_url_arte': None}), 200
 
@@ -608,17 +638,31 @@ class _JobArte:
     """Uma tarefa de geração de arte enfileirada. `evento` só é criado quando o chamador
     precisa aguardar o resultado (admin_gerar_arte, gerar_arte_publica) — o disparo em
     background feito por obter_imagem_produto não espera, só enfileira e segue servindo a
-    foto crua normalmente."""
-    __slots__ = ('codbar', 'img_path', 'evento', 'erro')
+    foto crua normalmente.
 
-    def __init__(self, codbar, img_path, aguardar):
+    `orientacao` ('horizontal'/'vertical') decide qual pipeline o worker chama — mesma fila
+    única pras duas orientações (continua garantindo no máximo uma chamada ao Gemini por vez,
+    não importa se é arte horizontal ou vertical que está sendo gerada)."""
+    __slots__ = ('codbar', 'img_path', 'evento', 'erro', 'orientacao')
+
+    def __init__(self, codbar, img_path, aguardar, orientacao='horizontal'):
         self.codbar = codbar
         self.img_path = img_path
         self.evento = threading.Event() if aguardar else None
         self.erro = None
+        self.orientacao = orientacao
 
 
-def _enfileirar_geracao_arte(codbar, img_path, aguardar=False, forcar=False):
+def _chave_andamento(codbar, orientacao):
+    """Chave usada em _gerando_arte_em_andamento. Horizontal usa o codbar puro (não muda o
+    comportamento/formato já existente, usado por admin_gerar_arte/gerar_arte_publica); vertical
+    usa uma chave composta, pra uma geração vertical em andamento nunca bloquear (nem ser
+    bloqueada por) uma geração horizontal do mesmo produto, e vice-versa — são pipelines/
+    arquivos independentes."""
+    return codbar if orientacao == 'horizontal' else f'{codbar}:{orientacao}'
+
+
+def _enfileirar_geracao_arte(codbar, img_path, aguardar=False, forcar=False, orientacao='horizontal'):
     """Coloca a geração de arte na fila em vez de disparar na hora. Com vários dispositivos em
     lojas/clientes diferentes consultando ao mesmo tempo, gerar tudo em paralelo estourava o
     rate limit do Gemini (429 RESOURCE_EXHAUSTED, já visto em produção) — um único worker
@@ -629,21 +673,23 @@ def _enfileirar_geracao_arte(codbar, img_path, aguardar=False, forcar=False):
     admin). `aguardar=True` bloqueia até o job específico terminar e retorna o job para o
     chamador checar `job.erro` — usado pelas rotas que precisam responder com o resultado
     (admin_gerar_arte, gerar_arte_publica); sem isso, é fire-and-forget (retorna o job já
-    enfileirado, mas ninguém espera por ele).
+    enfileirado, mas ninguém espera por ele). `orientacao='vertical'` gera a arte pro terminal
+    em pé (ver gerar_arte_publicitaria_vertical) em vez da horizontal de sempre.
 
     Retorna None quando não há nada a fazer (já em andamento, arte já existe e não é forçado,
     sem chave Gemini configurada, ou produto não cadastrado)."""
-    if codbar in _gerando_arte_em_andamento:
+    chave = _chave_andamento(codbar, orientacao)
+    if chave in _gerando_arte_em_andamento:
         return None
-    if not forcar and _arte_url(codbar):
+    if not forcar and _arte_url(codbar, orientacao):
         return None
     if not _ler_todas_config().get('GEMINI_API_KEY', '').strip():
         return None
     if not Produto.query.filter_by(codbar=codbar).first():
         return None
 
-    _gerando_arte_em_andamento.add(codbar)
-    job = _JobArte(codbar, img_path, aguardar)
+    _gerando_arte_em_andamento.add(chave)
+    job = _JobArte(codbar, img_path, aguardar, orientacao)
     _fila_arte.put(job)
     return job
 
@@ -652,21 +698,25 @@ def _worker_fila_arte():
     """Processa a fila de geração de arte um item por vez, para sempre, numa única thread —
     é essa serialização que garante no máximo uma chamada ao Gemini em andamento simultânea,
     independente de quantos dispositivos estejam consultando produtos diferentes ao mesmo
-    tempo. Refaz a consulta do produto aqui dentro (em vez de receber o objeto já carregado)
-    para não reaproveitar uma instância do SQLAlchemy entre threads/sessões diferentes."""
+    tempo (nem quantas orientações diferentes). Refaz a consulta do produto aqui dentro (em vez
+    de receber o objeto já carregado) para não reaproveitar uma instância do SQLAlchemy entre
+    threads/sessões diferentes."""
     while True:
         job = _fila_arte.get()
         try:
             with app.app_context():
                 produto = Produto.query.filter_by(codbar=job.codbar).first()
                 if produto:
-                    gerar_arte_publicitaria(produto, job.img_path)
-                    logging.info(f"Arte publicitária gerada (fila) para {job.codbar}")
+                    if job.orientacao == 'vertical':
+                        gerar_arte_publicitaria_vertical(produto, job.img_path)
+                    else:
+                        gerar_arte_publicitaria(produto, job.img_path)
+                    logging.info(f"Arte publicitária ({job.orientacao}) gerada (fila) para {job.codbar}")
         except Exception as e:
             job.erro = str(e)
-            logging.error(f"Erro ao gerar arte da fila para {job.codbar}: {e}")
+            logging.error(f"Erro ao gerar arte ({job.orientacao}) da fila para {job.codbar}: {e}")
         finally:
-            _gerando_arte_em_andamento.discard(job.codbar)
+            _gerando_arte_em_andamento.discard(_chave_andamento(job.codbar, job.orientacao))
             if job.evento:
                 job.evento.set()
             _fila_arte.task_done()
@@ -690,11 +740,27 @@ def _static_url(fs_path):
     return url_for('static', filename=rel_path, _external=True)
 
 
-def _arte_url(codbar):
-    """Retorna a URL da arte publicitária já gerada para o produto, ou None se ainda não existir."""
-    if os.path.exists(os.path.join(ARTES_FOLDER, f'{codbar}.webp')):
-        return url_for('static', filename=f'artes_geradas/{codbar}.webp', _external=True)
+def _arte_url(codbar, orientacao='horizontal'):
+    """Retorna a URL da arte publicitária já gerada para o produto, ou None se ainda não existir.
+    `orientacao='vertical'` olha pro arquivo <codbar>_vertical.webp (terminal em pé, ver
+    gerar_arte_publicitaria_vertical) em vez do <codbar>.webp horizontal de sempre — os dois
+    arquivos são independentes, um produto pode ter as duas artes ao mesmo tempo."""
+    nome_arquivo = f'{codbar}_vertical.webp' if orientacao == 'vertical' else f'{codbar}.webp'
+    if os.path.exists(os.path.join(ARTES_FOLDER, nome_arquivo)):
+        return url_for('static', filename=f'artes_geradas/{nome_arquivo}', _external=True)
     return None
+
+def _marcar_tem_foto(produto_ou_codbar, valor):
+    """Mantém Produto.tem_foto em sincronia com a existência real da foto crua em disco — chamar
+    em TODO ponto que salva ou remove static/imgs_produtos/<codbar>.*, ou a coluna volta a ficar
+    tão inconfiável quanto o foto_png legado que ela substitui pra fins de ordenação/filtro.
+    Aceita o objeto Produto já carregado (evita uma query extra quando o chamador já tem) ou o
+    codbar puro (busca por conta própria). Não dá commit sozinho — o chamador decide quando
+    (geralmente já está fazendo outro commit por perto)."""
+    produto = produto_ou_codbar if isinstance(produto_ou_codbar, Produto) else Produto.query.filter_by(codbar=produto_ou_codbar).first()
+    if produto:
+        produto.tem_foto = bool(valor)
+
 
 def save_image_from_response(image_data, codbar):
     """Salva a imagem a partir da resposta de uma requisição"""
@@ -715,6 +781,13 @@ def save_image_from_response(image_data, codbar):
 
         img_url = _static_url(processed_file_path)
         logging.info(f"Imagem salva e processada para o produto {codbar}: {img_url}")
+
+        try:
+            _marcar_tem_foto(codbar, True)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            logging.warning(f"Não foi possível marcar tem_foto=True para {codbar}: {e}")
 
         return jsonify({'imagem_url': img_url}), 200
     except Exception as e:
@@ -805,6 +878,104 @@ def buscar_e_salvar_imagem_zaffari(codbar):
     except requests.RequestException as e:
         logging.error(f"Erro ao buscar ou salvar imagem da Zaffari para o produto {codbar}: {e}")
         return jsonify({'message': f'Error fetching or saving image from Zaffari: {str(e)}'}), 500
+
+
+def _url_e_imagem_valida(url, timeout=5):
+    """Confere rapidamente (HEAD, com fallback pra GET em streaming se o servidor não suportar
+    HEAD direito) se uma URL aponta de verdade pra um arquivo de imagem (Content-Type image/*),
+    não pra uma página HTML qualquer. Usado só pra filtrar as candidatas da busca com IA antes
+    de mostrar pro usuário — o modelo às vezes devolve o link de uma página de resultado (ex.:
+    toppng.com/png-...) em vez do arquivo de imagem direto, apesar do prompt pedir só links
+    diretos; sem essa checagem, o picker mostrava "N imagens encontradas" com miniaturas quebradas
+    (o <img> falha silenciosamente no navegador), um bug real pego testando ao vivo."""
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    try:
+        resp = requests.head(url, timeout=timeout, allow_redirects=True, headers=headers)
+        content_type = resp.headers.get('Content-Type', '')
+        if resp.status_code < 400 and 'image' in content_type.lower():
+            return True
+        if resp.status_code >= 400 or not content_type:
+            resp = requests.get(url, timeout=timeout, stream=True, headers=headers)
+            content_type = resp.headers.get('Content-Type', '')
+            resp.close()
+            return resp.status_code < 400 and 'image' in content_type.lower()
+        return False
+    except requests.RequestException:
+        return False
+
+
+def _buscar_imagens_gemini_web(nome_produto, marca, codbar):
+    """Usa o Gemini com a ferramenta de busca do Google (grounding) pra sugerir candidatas a
+    foto do produto na internet. Trocado de OpenAI pra Gemini nesta mesma leva — a chave da
+    OpenAI configurada nesta máquina estava sem crédito (HTTP 429, 'insufficient_quota',
+    confirmado testando ao vivo), e o Gemini já é o provedor de IA principal do sistema (arte
+    publicitária + sugestão de nome), com uma chave já configurada e ativa — mesmo padrão de
+    client usado em gerar_termos_sugestao_ia/gerar_textos_arte_ia (`genai.Client(vertexai=True,
+    api_key=...)`), só que com a tool `google_search` habilitada pra busca em tempo real.
+
+    Só devolve URLs — não baixa nem salva nada aqui (ver admin_definir_imagem_url pra isso).
+    Retorna uma tupla (candidatos, erro): candidatos é uma lista de dicts {url, titulo} (pode vir
+    vazia quando a IA genuinamente não acha nada confiável); erro só vem preenchido quando a
+    própria chamada ao Gemini falhou (chave inválida, rede, etc.) — nesse caso o chamador deve
+    mostrar esse erro pro usuário, em vez de tratar como "nenhuma imagem encontrada"."""
+    api_key = _ler_todas_config().get('GEMINI_API_KEY', '').strip()
+    if not api_key:
+        return [], 'Nenhuma chave do Gemini configurada (Configurações → Token Gemini).'
+
+    termo_busca = ' '.join(filter(None, [marca, nome_produto])).strip() or codbar
+    prompt = (
+        f"Procure na internet (Google) fotos reais e atuais do produto de supermercado a "
+        f"seguir, preferencialmente em fundo branco/neutro, sem marca d'água grande. "
+        f"Produto: \"{termo_busca}\" (código de barras EAN: {codbar}).\n\n"
+        f"Responda APENAS com um JSON (sem markdown, sem texto antes ou depois), no formato "
+        f'exato: {{"imagens": [{{"url": "...", "titulo": "..."}}]}}. Inclua até 6 URLs diretas '
+        f"de arquivo de imagem (terminando em .jpg, .jpeg, .png ou .webp) que você encontrou de "
+        f'verdade na busca, das mais confiáveis pras menos. Se não encontrar nenhuma foto real '
+        f'desse produto específico, responda {{"imagens": []}}.'
+    )
+
+    try:
+        client = genai.Client(vertexai=True, api_key=api_key)
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+            config=genai_types.GenerateContentConfig(
+                tools=[genai_types.Tool(google_search=genai_types.GoogleSearch())],
+            ),
+        )
+        texto = (response.text or '').strip()
+    except Exception as e:
+        logging.error(f"Erro ao chamar a busca web do Gemini para {codbar}: {e}")
+        return [], f'Erro ao buscar no Gemini: {e}'
+
+    match = re.search(r'\{.*\}', texto, re.DOTALL)
+    if not match:
+        logging.warning(f"Busca web do Gemini para {codbar} não retornou JSON reconhecível: {texto[:300]}")
+        return [], None
+
+    try:
+        parsed = json.loads(match.group(0))
+    except (json.JSONDecodeError, TypeError):
+        logging.warning(f"Busca web do Gemini para {codbar} retornou JSON inválido: {texto[:300]}")
+        return [], None
+
+    candidatos_brutos = []
+    for item in (parsed.get('imagens') or [])[:6]:
+        if not isinstance(item, dict):
+            continue
+        url = (item.get('url') or '').strip()
+        if url.startswith('http'):
+            candidatos_brutos.append({'url': url, 'titulo': (item.get('titulo') or '').strip()})
+
+    # Validação em paralelo (não em série) — até 6 candidatas, cada uma com timeout de alguns
+    # segundos; em série isso podia empilhar até ~30s no pior caso (todas lentas/travando).
+    if candidatos_brutos:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(candidatos_brutos)) as executor:
+            validas = list(executor.map(lambda c: _url_e_imagem_valida(c['url']), candidatos_brutos))
+        candidatos = [c for c, valida in zip(candidatos_brutos, validas) if valida]
+    else:
+        candidatos = []
+    return candidatos, None
 
 
 def serialize_produto_with_image(produto):
@@ -2248,6 +2419,15 @@ def _gradiente_borda_1d(tamanho, largura_pct, alpha_max):
 ARTE_LARGURA_HORIZONTAL = 1280
 ARTE_ALTURA_HORIZONTAL = 800
 
+# Resolução real do terminal ET45 em pé (retrato) — mesma lógica/regra do par horizontal acima:
+# nunca variável, sempre a resolução física do device. Medida a partir da especificação do
+# painel 10.1" do ET45 (WUXGA 1920x1200, girado pra retrato = 1200x1920). Se a rede de lojas
+# vier a ter terminais verticais com resolução física diferente, atualizar aqui do mesmo jeito
+# que ARTE_LARGURA_HORIZONTAL/ARTE_ALTURA_HORIZONTAL — nunca assumir, sempre medir o aparelho
+# real (ver seção "Atualização automática..."/regra fixa no CLAUDE.md pro par horizontal).
+ARTE_LARGURA_VERTICAL = 1200
+ARTE_ALTURA_VERTICAL = 1920
+
 
 def _normalizar_tamanho_arte(image, largura=ARTE_LARGURA_HORIZONTAL, altura=ARTE_ALTURA_HORIZONTAL):
     """REGRA: a arte publicitária NUNCA pode sair do sistema em tamanho diferente de
@@ -2607,6 +2787,171 @@ def gerar_arte_publicitaria(produto, image_path):
     return output_path
 
 
+def _desenhar_painel_curvo_topo(draw, width, y_topo_painel, altura_painel, cor_rgba, amplitude_pct=0.035):
+    """Equivalente vertical de _desenhar_painel_curvo: em vez de um painel lateral com borda
+    direita em curva, desenha um painel cobrindo a faixa de BAIXO inteira da arte vertical, com
+    a borda de CIMA em curva (mesma sanoide, só que percorrendo a largura em vez da altura).
+    Retorna o y mais alto que a curva alcança, útil pra nunca colidir texto com ela (mesmo papel
+    de 'borda_segura' em _desenhar_painel_curvo, só que no eixo vertical)."""
+    amplitude = width * amplitude_pct
+    passos = 60
+    pontos = [(0, y_topo_painel + altura_painel), (0, y_topo_painel)]
+    y_min = y_topo_painel
+    for i in range(passos + 1):
+        x = width * i / passos
+        y = y_topo_painel + amplitude * math.sin((x / width) * math.pi * 1.4)
+        pontos.append((x, y))
+        y_min = min(y_min, y)
+    pontos.append((width, y_topo_painel + altura_painel))
+    draw.polygon(pontos, fill=cor_rgba)
+    return y_min
+
+
+def compor_arte_vertical(cena_bytes, produto, cor_acento, altura_foto=None):
+    """Compõe a arte vertical (retrato, ver ARTE_LARGURA_VERTICAL/ARTE_ALTURA_VERTICAL): a cena
+    gerada pela IA ocupa só a faixa de CIMA (45% da altura) e um painel de cor sólida (dominante
+    extraída da própria foto do produto, ver _cor_painel_vibrante) cobre a faixa de BAIXO (55%),
+    com o nome do produto desenhado por PIL (mesma garantia de ortografia 100% correta do
+    pipeline horizontal) e uma caixa branca com sombra reservando o espaço onde o preço real vai
+    entrar depois.
+
+    Diferença deliberada em relação à arte horizontal: o PREÇO não é desenhado aqui. Pedido
+    explícito do usuário ("os preços vai retornar do cliente") — cada loja/integração tem seu
+    próprio preço em tempo real, então gravar um valor fixo na arte não faz sentido; a arte só
+    reserva visualmente o espaço (caixa com sombra), e quem desenha o preço de verdade por cima
+    é o app (nativo, dinâmico), igual já faz hoje pro badge de preço da arte horizontal."""
+    largura = ARTE_LARGURA_VERTICAL
+    altura_total = ARTE_ALTURA_VERTICAL
+    altura_foto = altura_foto or round(altura_total * 0.45)
+    altura_painel = altura_total - altura_foto
+
+    cena = Image.open(BytesIO(cena_bytes)).convert('RGBA')
+    cena = _normalizar_tamanho_arte(cena, largura=largura, altura=altura_foto)
+
+    canvas = Image.new('RGBA', (largura, altura_total), (0, 0, 0, 255))
+    canvas.paste(cena.convert('RGB'), (0, 0))
+
+    overlay = Image.new('RGBA', (largura, altura_total), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+
+    cor_painel = _cor_painel_vibrante(cor_acento)
+    y_min_curva = _desenhar_painel_curvo_topo(draw, largura, altura_foto, altura_painel, (*cor_painel, 255))
+
+    marca_destaque, resto_nome = _separar_marca_do_nome(produto.description, produto.marca)
+    margin = int(largura * 0.07)
+    y_texto = int(y_min_curva + altura_total * 0.045)
+
+    font_marca = ImageFont.truetype(FONT_PATH, int(altura_total * 0.052))
+    font_marca.set_variation_by_name('Bold')
+    font_resto = ImageFont.truetype(FONT_PATH, int(altura_total * 0.028))
+    font_resto.set_variation_by_name('Regular')
+
+    if marca_destaque:
+        _desenhar_texto_com_sombra(draw, (margin, y_texto), marca_destaque.upper(), font_marca, fill=(255, 255, 255, 255))
+        y_texto += int(altura_total * 0.058)
+        if resto_nome:
+            _desenhar_texto_com_sombra(draw, (margin, y_texto), resto_nome, font_resto, fill=(255, 255, 255, 230))
+            y_texto += int(altura_total * 0.045)
+    else:
+        _desenhar_texto_com_sombra(draw, (margin, y_texto), (produto.description or '').upper(), font_marca, fill=(255, 255, 255, 255))
+        y_texto += int(altura_total * 0.058)
+
+    # Caixa vazia (com sombra) reservando o espaço do preço real — ver docstring da função.
+    # Posição FIXA (% de altura_foto/altura_total), não derivada de y_texto/quebra de linha do
+    # nome — de propósito: o app (Kotlin) precisa desenhar o preço de verdade exatamente nesse
+    # mesmo lugar, sem ter como saber quantas linhas o nome ocupou aqui no servidor. Com uma
+    # posição fixa, as constantes abaixo (CAIXA_PRECO_*) podem ser espelhadas do lado do app
+    # como estão, garantindo que os dois lados sempre concordem — ver
+    # updatePriceBadgeVertical/CAIXA_PRECO_* no PlayerActivity.kt.
+    CAIXA_PRECO_Y0_PCT = 0.16
+    CAIXA_PRECO_ALTURA_PCT = 0.14
+    caixa_x0 = margin
+    caixa_y0 = altura_foto + int(altura_total * CAIXA_PRECO_Y0_PCT)
+    caixa_x1 = largura - margin
+    caixa_y1 = caixa_y0 + int(altura_total * CAIXA_PRECO_ALTURA_PCT)
+
+    sombra_layer = Image.new('RGBA', (largura, altura_total), (0, 0, 0, 0))
+    sombra_draw = ImageDraw.Draw(sombra_layer)
+    deslocamento_sombra = int(altura_total * 0.006)
+    sombra_draw.rounded_rectangle(
+        (caixa_x0, caixa_y0 + deslocamento_sombra, caixa_x1, caixa_y1 + deslocamento_sombra),
+        radius=int(altura_total * 0.018), fill=(0, 0, 0, 130),
+    )
+    sombra_layer = sombra_layer.filter(ImageFilter.GaussianBlur(int(altura_total * 0.012)))
+
+    caixa_layer = Image.new('RGBA', (largura, altura_total), (0, 0, 0, 0))
+    caixa_draw = ImageDraw.Draw(caixa_layer)
+    caixa_draw.rounded_rectangle(
+        (caixa_x0, caixa_y0, caixa_x1, caixa_y1),
+        radius=int(altura_total * 0.018), fill=(255, 255, 255, 235),
+    )
+
+    final_image = Image.alpha_composite(canvas, overlay)
+    final_image = Image.alpha_composite(final_image, sombra_layer)
+    final_image = Image.alpha_composite(final_image, caixa_layer)
+
+    output = BytesIO()
+    final_image.convert('RGB').save(output, format='WEBP', quality=88)
+    return output.getvalue()
+
+
+def gerar_arte_publicitaria_vertical(produto, image_path):
+    """Equivalente vertical de gerar_arte_publicitaria: gera só a CENA (Gemini, mesmas regras
+    de ARTE_PROMPT_TEMPLATE, só que enquadrada em 4:3 pra caber na faixa de cima da arte
+    vertical) e delega a composição do painel+nome+caixa de preço pra compor_arte_vertical.
+    Salva em ARTES_FOLDER/<codbar>_vertical.webp — nome de arquivo distinto da arte horizontal
+    (<codbar>.webp), pra nunca colidir/sobrescrever uma com a outra; os dois podem coexistir
+    pro mesmo produto (um terminal horizontal e um vertical na mesma loja, por exemplo)."""
+    api_key = _ler_todas_config().get('GEMINI_API_KEY', '').strip()
+    if not api_key:
+        raise ValueError('Nenhuma chave Gemini configurada. Configure em Configurações antes de gerar artes.')
+
+    prompt = _montar_prompt_arte(produto)
+
+    ext = image_path.rsplit('.', 1)[-1].lower()
+    mime_type = 'image/png' if ext == 'png' else 'image/jpeg' if ext in ('jpg', 'jpeg') else 'image/webp'
+    with open(image_path, 'rb') as image_file:
+        image_bytes = image_file.read()
+
+    try:
+        client = genai.Client(vertexai=True, api_key=api_key)
+        response = client.models.generate_content(
+            model='gemini-2.5-flash-image',
+            contents=[
+                genai_types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+                prompt,
+            ],
+            config=genai_types.GenerateContentConfig(
+                image_config=genai_types.ImageConfig(aspect_ratio='4:3'),
+            ),
+        )
+        _registrar_uso_gemini('imagem', sucesso=True)
+    except Exception as e:
+        rate_limited = '429' in str(e) or 'RESOURCE_EXHAUSTED' in str(e)
+        _registrar_uso_gemini('imagem', sucesso=False, rate_limited=rate_limited)
+        raise RuntimeError(f'Erro da API Gemini: {e}')
+
+    parts = response.candidates[0].content.parts if response.candidates else []
+    cena_bytes = None
+    for part in parts:
+        if part.inline_data and part.inline_data.data:
+            cena_bytes = part.inline_data.data
+            break
+
+    if not cena_bytes:
+        raise RuntimeError('A API Gemini não retornou uma imagem gerada (verifique se o modelo de imagem está disponível para sua chave).')
+
+    cena_bytes = _cortar_tarjas_pretas(cena_bytes)
+    cor_acento = _extrair_cor_acento(image_path)
+    output_bytes = compor_arte_vertical(cena_bytes, produto, cor_acento)
+
+    output_path = os.path.join(ARTES_FOLDER, f'{produto.codbar}_vertical.webp')
+    with open(output_path, 'wb') as out_file:
+        out_file.write(output_bytes)
+
+    return output_path
+
+
 @app.route('/admin/cadastrar-produto-cosmos/<string:codbar>', methods=['POST'])
 @jwt_required()
 def admin_cadastrar_produto_cosmos(codbar):
@@ -2650,6 +2995,63 @@ def admin_cadastrar_produto_cosmos(codbar):
     }), 201
 
 
+@app.route('/admin/cadastrar-produto-manual/<string:codbar>', methods=['POST'])
+@jwt_required()
+def admin_cadastrar_produto_manual(codbar):
+    """Cadastra um produto no catálogo local só com o EAN, sem consultar NENHUMA fonte externa
+    (Cosmos/Open Food Facts/Zaffari/Google/PreçoMelhor). Pensado pro caso em que as buscas
+    automáticas já tentaram e nenhuma fonte tem esse produto (ex.: item novo/exclusivo da loja,
+    sem GTIN público cadastrado em lugar nenhum).
+
+    `description` (form-data, opcional) e um arquivo de imagem (form-data, campo `file`,
+    opcional) podem vir junto nessa mesma requisição — pedido do usuário pra não precisar de um
+    passo separado depois. Sem eles, cai no comportamento antigo (produto só com o EAN; hoje o
+    painel não tem tela de edição de nome/marca, só o upload de imagem no painel de detalhes
+    pra completar depois)."""
+    codbar = (codbar or '').strip()
+    if not re.fullmatch(r'\d{8,14}', codbar):
+        return jsonify({'message': 'EAN inválido (precisa ter só números, 8 a 14 dígitos)'}), 400
+
+    description = (request.form.get('description') or '').strip() or None
+
+    produto_existente = Produto.query.filter_by(codbar=codbar).first()
+    if produto_existente:
+        return jsonify({
+            'message': f'Produto já cadastrado no catálogo: {produto_existente.description or "(sem descrição ainda)"}',
+            'ja_existia': True,
+            'codbar': produto_existente.codbar,
+            'description': produto_existente.description,
+        }), 200
+
+    novo_produto = Produto(codbar=codbar, description=description)
+    _marcar_tem_foto(novo_produto, False)
+    db.session.add(novo_produto)
+    db.session.commit()
+
+    imagem_salva = False
+    file = request.files.get('file')
+    if file and file.filename and allowed_file(file.filename):
+        filename = secure_filename(f'{codbar}.{file.filename.rsplit(".", 1)[1].lower()}')
+        file.save(os.path.join(IMAGES_FOLDER, filename))
+        _marcar_tem_foto(novo_produto, True)
+        db.session.commit()
+        imagem_salva = True
+
+    partes_msg = [f'Produto {codbar} cadastrado manualmente']
+    partes_msg.append('com descrição' if description else 'sem descrição')
+    partes_msg.append('e com imagem' if imagem_salva else 'sem imagem')
+    partes_msg.append('(nenhuma fonte externa foi consultada).')
+
+    return jsonify({
+        'message': ' '.join(partes_msg),
+        'ja_existia': False,
+        'codbar': novo_produto.codbar,
+        'description': novo_produto.description,
+        'marca': novo_produto.marca,
+        'imagem_salva': imagem_salva,
+    }), 201
+
+
 @app.route('/admin/buscar-imagem/<string:codbar>', methods=['POST'])
 @jwt_required()
 def admin_buscar_imagem(codbar):
@@ -2677,6 +3079,53 @@ def admin_buscar_imagem(codbar):
 
     _registrar_busca_imagem(codbar, False, via='admin')
     return jsonify({'message': 'Nenhuma imagem encontrada em nenhuma das fontes (Bing, Google, Zaffari)'}), 404
+
+
+@app.route('/admin/buscar-imagem-ia/<string:codbar>', methods=['POST'])
+@jwt_required()
+def admin_buscar_imagem_ia(codbar):
+    """Usa o Gemini (busca na internet via grounding do Google, ver _buscar_imagens_gemini_web)
+    pra sugerir candidatas a foto do produto. Não salva nada sozinha — só devolve as opções pro
+    painel mostrar numa lista; o usuário escolhe uma (ver admin_definir_imagem_url) ou descarta."""
+    produto = Produto.query.filter_by(codbar=codbar).first()
+    if not produto:
+        return jsonify({'message': 'Produto não encontrado'}), 404
+
+    candidatos, erro = _buscar_imagens_gemini_web(produto.description, produto.marca, codbar)
+    if erro:
+        return jsonify({'message': erro}), 502
+    return jsonify({'opcoes': candidatos}), 200
+
+
+@app.route('/admin/definir-imagem-url/<string:codbar>', methods=['POST'])
+@jwt_required()
+def admin_definir_imagem_url(codbar):
+    """Baixa uma imagem a partir de uma URL (ex.: escolhida no picker da busca com IA) e salva
+    como a foto do produto — mesmo caminho de sempre (save_image_from_response), então também
+    passa pela remoção de fundo já existente pras outras fontes."""
+    produto = Produto.query.filter_by(codbar=codbar).first()
+    if not produto:
+        return jsonify({'message': 'Produto não encontrado'}), 404
+
+    data = request.get_json(silent=True) or {}
+    image_url = (data.get('url') or '').strip()
+    if not image_url.startswith('http'):
+        return jsonify({'message': 'URL de imagem inválida'}), 400
+
+    try:
+        img_response = requests.get(image_url, timeout=20, headers={'User-Agent': 'Mozilla/5.0'})
+        img_response.raise_for_status()
+        content_type = img_response.headers.get('Content-Type', '')
+        if 'image' not in content_type.lower():
+            return jsonify({'message': 'O link escolhido não retornou uma imagem válida'}), 400
+    except requests.RequestException as e:
+        logging.warning(f"Erro ao baixar imagem escolhida na busca com IA para {codbar}: {e}")
+        return jsonify({'message': 'Não foi possível baixar essa imagem'}), 400
+
+    resultado = save_image_from_response(img_response.content, codbar)
+    if resultado[1] == 200:
+        _registrar_busca_imagem(codbar, True, origem='ia', via='admin')
+    return resultado
 
 
 @app.route('/admin/gerar-arte/<string:codbar>', methods=['POST'])
@@ -2736,8 +3185,12 @@ def gerar_arte_publica(codbar):
     """Gera a arte publicitária a partir de uma foto crua enviada no corpo da requisição
     (usado pelo app de consulta de preço quando a foto vem de uma fonte externa própria da
     integração, ex.: API do Komprão, que o srv-mupa ainda não conhece). Idempotente: se a
-    arte já existe, apenas retorna a URL existente sem gerar de novo."""
-    arte_existente = _arte_url(codbar)
+    arte já existe, apenas retorna a URL existente sem gerar de novo.
+
+    Mesmo query param `orientacao` de obter_imagem_produto (ver lá) — o app pede a orientação
+    que precisa pro terminal físico dele."""
+    orientacao = 'vertical' if request.args.get('orientacao') == 'vertical' else 'horizontal'
+    arte_existente = _arte_url(codbar, orientacao)
     if arte_existente:
         return jsonify({'imagem_url_arte': arte_existente}), 200
 
@@ -2745,11 +3198,11 @@ def gerar_arte_publica(codbar):
     if not image_data:
         return jsonify({'message': 'Corpo da requisição vazio (esperada a foto crua do produto)'}), 400
 
-    # Evita duas gerações concorrentes do mesmo EAN (ex.: dois terminais consultando o mesmo
-    # produto ao mesmo tempo). A geração em si acontece na fila única (ver
+    # Evita duas gerações concorrentes do mesmo EAN+orientação (ex.: dois terminais consultando
+    # o mesmo produto ao mesmo tempo). A geração em si acontece na fila única (ver
     # _enfileirar_geracao_arte) — essa rota aguarda o próprio job terminar antes de responder,
     # então o contrato não muda (ainda retorna a URL pronta no corpo da resposta).
-    if codbar in _gerando_arte_em_andamento:
+    if _chave_andamento(codbar, orientacao) in _gerando_arte_em_andamento:
         return jsonify({'message': 'Geração de arte já em andamento para este produto'}), 409
 
     try:
@@ -2778,7 +3231,7 @@ def gerar_arte_publica(codbar):
         else:
             img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
 
-        job = _enfileirar_geracao_arte(codbar, img_path, aguardar=True)
+        job = _enfileirar_geracao_arte(codbar, img_path, aguardar=True, orientacao=orientacao)
         if job is not None:
             job.evento.wait()
             if job.erro:
@@ -2787,7 +3240,7 @@ def gerar_arte_publica(codbar):
         logging.error(f"Erro ao gerar arte publicitária (via upload) para {codbar}: {e}")
         return jsonify({'message': f'Erro ao gerar arte: {e}'}), 500
 
-    return jsonify({'imagem_url_arte': _arte_url(codbar)}), 200
+    return jsonify({'imagem_url_arte': _arte_url(codbar, orientacao)}), 200
 
 
 @app.route('/admin/estatisticas', methods=['GET'])
@@ -2892,16 +3345,21 @@ def admin_consulta_produtos():
     per_page = request.args.get('per_page', 15, type=int)
     search = request.args.get('q', '').strip()
 
+    # Produtos com foto sempre primeiro (pedido do usuário) — tem_foto é mantida em sincronia
+    # com static/imgs_produtos/ por _marcar_tem_foto em todo ponto que salva/remove a foto crua
+    # (ver Produto.tem_foto). Na busca, o EAN exato pesquisado continua tendo prioridade máxima
+    # (achar o produto que a pessoa procurou é mais importante que a ordem geral), mas entre os
+    # resultados o critério "com foto primeiro" também se aplica.
     if search:
         like_search = f"%{search.upper()}%"
         where_clause = " WHERE codbar = ? OR UPPER(description) LIKE ? OR UPPER(marca) LIKE ?"
         where_params = [search, like_search, like_search]
-        order_clause = " ORDER BY (codbar = ?) DESC, description"
+        order_clause = " ORDER BY (codbar = ?) DESC, tem_foto DESC, description"
         order_params = [search]
     else:
         where_clause = ""
         where_params = []
-        order_clause = " ORDER BY description"
+        order_clause = " ORDER BY tem_foto DESC, description"
         order_params = []
 
     conn = sqlite3.connect(DB_PATH)

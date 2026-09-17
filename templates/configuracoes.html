@@ -408,16 +408,61 @@
         .lightbox-close:hover { background: rgba(255,255,255,0.22); }
         .lightbox-close svg { width: 18px; height: 18px; }
 
-        /* ===== Consulta Rápida: lista + painel de detalhes lado a lado ===== */
-        .consulta-layout { display: flex; align-items: flex-start; gap: 1.1rem; }
-        .consulta-list-col { flex: 1; min-width: 0; }
-        .consulta-detail-col { width: 400px; flex-shrink: 0; }
-        @media (max-width: 1100px) {
-            .consulta-layout { flex-direction: column; }
-            .consulta-detail-col { width: 100%; }
-        }
+        /* ===== Consulta Rápida / Histórico: lista em largura total + painel de detalhes
+           como popup deslizante pela lateral direita (ver .detail-panel abaixo) ===== */
+        .consulta-layout { display: block; }
+        .consulta-list-col { width: 100%; }
+        .consulta-detail-col { width: 0; height: 0; overflow: visible; }
 
-        .detail-panel { position: relative; padding: 0; overflow: hidden; }
+        /* ===== Popup de detalhes: desliza a partir da borda direita, sobre o conteúdo ===== */
+        .detail-panel-backdrop {
+            display: none; position: fixed; inset: 0; background: rgba(15,23,42,0.55);
+            z-index: 1499; opacity: 0; transition: opacity 0.22s ease;
+        }
+        .detail-panel-backdrop.show { display: block; opacity: 1; }
+
+        /* ===== Popup central de cadastro de produto ===== */
+        .modal-overlay {
+            display: none; position: fixed; inset: 0; z-index: 1600;
+            background: rgba(15,23,42,0.55);
+            align-items: center; justify-content: center; padding: 1.25rem;
+        }
+        .modal-overlay.show { display: flex; }
+        .modal-panel { width: 100%; max-width: 480px; max-height: 90vh; overflow-y: auto; margin: 0; }
+
+        /* ===== Toggle lista/grade (Consulta Rápida) ===== */
+        .view-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; flex-shrink: 0; }
+        .view-toggle-btn { display: flex; align-items: center; justify-content: center; width: 34px; height: 30px; background: var(--card); border: none; color: var(--muted); cursor: pointer; }
+        .view-toggle-btn svg { width: 16px; height: 16px; }
+        .view-toggle-btn + .view-toggle-btn { border-left: 1px solid var(--border); }
+        .view-toggle-btn:hover { background: var(--hover); color: var(--text); }
+        .view-toggle-btn.active { background: var(--accent); color: #fff; }
+
+        /* ===== Catálogo em grade (alternativa à tabela) ===== */
+        .consulta-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0.75rem; margin-top: 0.4rem; }
+        .produto-card { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--card); display: flex; flex-direction: column; }
+        .produto-card-img { width: 100%; aspect-ratio: 1/1; background: var(--bg); display: flex; align-items: center; justify-content: center; overflow: hidden; }
+        .produto-card-img img { width: 100%; height: 100%; object-fit: contain; }
+        .produto-card-img .foto-thumb-placeholder { width: 32px; height: 32px; color: var(--muted); }
+        .produto-card-body { padding: 0.6rem; display: flex; flex-direction: column; gap: 0.25rem; flex: 1; }
+        .produto-card-ean { font-family: "SF Mono", Consolas, monospace; font-size: 0.68rem; color: var(--muted); }
+        .produto-card-desc { font-size: 0.78rem; line-height: 1.25; min-height: 2.4em; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+        .produto-card-marca { font-size: 0.7rem; color: var(--muted); }
+        .produto-card-preco { font-size: 0.8rem; font-weight: 600; color: var(--success); margin-top: 0.15rem; }
+        .produto-card-actions { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: auto; padding-top: 0.5rem; }
+        .produto-card-actions .btn-sm { flex: 1; min-width: 0; padding-left: 0.4rem; padding-right: 0.4rem; }
+
+        .detail-panel {
+            position: fixed; top: 0; right: 0; bottom: 0;
+            width: 440px; max-width: 92vw;
+            padding: 0; margin: 0; border-radius: 0;
+            overflow-y: auto; overflow-x: hidden;
+            z-index: 1500;
+            transform: translateX(100%);
+            transition: transform 0.25s ease;
+            box-shadow: -12px 0 40px rgba(0,0,0,0.28);
+        }
+        .detail-panel.open { transform: translateX(0); }
         .detail-modal-close {
             position: absolute; top: 1rem; right: 1rem;
             width: 34px; height: 34px; border-radius: 50%;
@@ -438,6 +483,19 @@
         .detail-field .label { color: var(--muted); flex-shrink: 0; }
         .detail-field .value { text-align: right; font-weight: 500; }
 
+        /* ===== Picker de imagens da busca com IA (dentro do painel de detalhes) ===== */
+        .ia-picker { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin: 0 0 1.25rem; background: var(--bg); }
+        .ia-picker-header { display: flex; align-items: center; justify-content: space-between; padding: 0.6rem 0.85rem; font-size: 0.82rem; font-weight: 600; color: var(--text); border-bottom: 1px solid var(--border); }
+        .ia-picker-close { width: 24px; height: 24px; border-radius: 50%; border: none; background: transparent; color: var(--muted); font-size: 1.1rem; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+        .ia-picker-close:hover { background: var(--hover); color: var(--text); }
+        .ia-picker-empty { display: flex; flex-direction: column; align-items: center; gap: 0.5rem; padding: 1.4rem 1rem; font-size: 0.82rem; color: var(--muted); text-align: center; }
+        .ia-picker-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; padding: 0.65rem; }
+        .ia-picker-item { padding: 0; border: 2px solid var(--border); border-radius: 8px; overflow: hidden; aspect-ratio: 1/1; background: var(--card); cursor: pointer; }
+        .ia-picker-item:hover { border-color: var(--accent); }
+        .ia-picker-item:disabled { opacity: 0.5; cursor: default; }
+        .ia-picker-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .ia-picker-item-loading { opacity: 0.5; }
+
         @media (max-width: 880px) {
             .sidebar {
                 position: fixed;
@@ -450,6 +508,25 @@
             .menu-toggle { display: inline-flex; }
             .content { padding: 1.25rem 1rem 2.5rem; }
             .topbar { padding: 1rem; }
+        }
+
+        /* ===== Telas de celular: ajustes adicionais além do breakpoint de 880px acima ===== */
+        @media (max-width: 560px) {
+            /* Badge de versão (data+commit) some pra sobrar espaço pro título do topbar não
+               quebrar em 3 linhas disputando espaço com ele — informação útil, mas dispensável
+               numa tela de celular; continua visível normalmente em telas maiores. */
+            #versao-info { display: none !important; }
+            .topbar-titles h1 { font-size: 1.05rem; }
+            .topbar-titles p { font-size: 0.78rem; }
+
+            /* Qualquer <select>/<input> de formulário nunca deve ultrapassar a largura do
+               container em telas estreitas — alguns campos deste painel têm largura definida
+               só pelo conteúdo (ex.: <select> com a opção mais longa como largura mínima do
+               navegador), o que cortava o campo (ex.: filtro "Status" do Histórico, antes de
+               ganhar flex:1 explícito — ver correção ao lado do HTML). Rede de segurança geral
+               pros casos não pegos individualmente.
+             */
+            .card select, .card input[type="text"], .card input[type="password"] { max-width: 100%; }
         }
     </style>
 </head>
@@ -727,37 +804,58 @@
                 <div class="consulta-layout">
                     <div class="consulta-list-col">
                         <div class="card">
-                            <h2>
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                                Catálogo de Produtos <span class="badge" id="consulta-count-badge">carregando...</span>
+                            <h2 style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.5rem;">
+                                <span style="display:flex; align-items:center; gap:0.5rem;">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                                    Catálogo de Produtos <span class="badge" id="consulta-count-badge">carregando...</span>
+                                </span>
+                                <span class="view-toggle" id="consulta-view-toggle" role="group" aria-label="Modo de visualização">
+                                    <button type="button" class="view-toggle-btn" data-view="lista" title="Ver em lista" aria-label="Ver em lista">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                                    </button>
+                                    <button type="button" class="view-toggle-btn" data-view="grade" title="Ver em grade" aria-label="Ver em grade">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+                                    </button>
+                                </span>
                             </h2>
                             <div class="form-row" style="margin-bottom:0.85rem;">
                                 <label for="consulta-q">Buscar por EAN, descrição ou marca (vazio = navega o catálogo inteiro)</label>
-                                <div style="display:flex; gap:0.5rem;">
-                                    <input type="text" id="consulta-q" placeholder="Ex: 7896116900050, KICALDO, FEIJÃO..." autocomplete="off" style="flex:1;">
+                                <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+                                    <input type="text" id="consulta-q" placeholder="Ex: 7896116900050, KICALDO, FEIJÃO..." autocomplete="off" style="flex:1; min-width:160px;">
                                     <button class="btn btn-primary" id="btn-consulta">Buscar</button>
                                     <button class="btn btn-secondary" id="btn-consulta-limpar">Limpar</button>
                                     <button class="btn btn-secondary" id="btn-abrir-cadastro">+ Cadastrar produto</button>
                                 </div>
                             </div>
 
-                            <div class="card" id="form-cadastro-cosmos" style="display:none; margin:0 0 1rem; background:var(--bg);">
-                                <h2 style="font-size:0.9rem;">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                                    Cadastrar produto pelo EAN (busca no Cosmos)
-                                </h2>
-                                <div id="alert-cadastro-cosmos"></div>
-                                <div class="form-row">
-                                    <label for="cadastro-ean">Código de barras (EAN)</label>
-                                    <div style="display:flex; gap:0.5rem;">
-                                        <input type="text" id="cadastro-ean" placeholder="Ex: 7896116900050" autocomplete="off" style="flex:1;">
+                            <div class="modal-overlay" id="cadastro-modal-overlay">
+                                <div class="card modal-panel" id="form-cadastro-cosmos">
+                                    <h2 style="font-size:0.9rem;">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                        Cadastrar produto pelo EAN (busca no Cosmos)
+                                    </h2>
+                                    <div id="alert-cadastro-cosmos"></div>
+                                    <div class="form-row">
+                                        <label for="cadastro-ean">Código de barras (EAN)</label>
+                                        <input type="text" id="cadastro-ean" placeholder="Ex: 7896116900050" autocomplete="off">
+                                    </div>
+                                    <div class="form-row">
+                                        <label for="cadastro-descricao">Descrição (opcional — só usada pelo "Cadastrar manualmente" abaixo)</label>
+                                        <input type="text" id="cadastro-descricao" placeholder="Ex: Refrigerante Cola Lata 350ml" autocomplete="off">
+                                    </div>
+                                    <div class="form-row">
+                                        <label for="cadastro-imagem">Imagem (opcional — idem, só usada pelo "Cadastrar manualmente")</label>
+                                        <input type="file" id="cadastro-imagem" accept="image/png,image/jpeg,image/webp">
+                                    </div>
+                                    <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.5rem;">
                                         <button class="btn btn-primary" id="btn-cadastrar-cosmos">Buscar no Cosmos e cadastrar</button>
+                                        <button class="btn btn-secondary" id="btn-cadastrar-manual">Cadastrar manualmente</button>
                                         <button class="btn btn-secondary" id="btn-cancelar-cadastro">Cancelar</button>
                                     </div>
+                                    <p style="font-size:0.76rem; color:var(--muted); margin:0.5rem 0 0;">
+                                        "Buscar no Cosmos e cadastrar" consulta apenas o Cosmos (com rotação de tokens, se houver mais de um configurado) e ignora descrição/imagem preenchidas aqui — se não encontrar lá, nada é cadastrado; use a busca normal acima pra tentar Open Food Facts / Zaffari também. "Cadastrar manualmente" não consulta fonte nenhuma — cria o produto com o EAN e, se preenchidos, a descrição e a imagem acima; marca fica vazia até completar depois.
+                                    </p>
                                 </div>
-                                <p style="font-size:0.76rem; color:var(--muted); margin:0.5rem 0 0;">
-                                    Busca apenas no Cosmos (com rotação de tokens, se houver mais de um configurado). Se não encontrar lá, o produto não é cadastrado por este formulário — use a busca normal acima para tentar Open Food Facts / Zaffari também.
-                                </p>
                             </div>
 
                             <div id="alert-consulta"></div>
@@ -774,6 +872,7 @@
                         </div>
                     </div>
 
+                    <div class="detail-panel-backdrop" id="detail-panel-backdrop"></div>
                     <div class="consulta-detail-col">
                         <div class="card detail-panel" id="detail-panel">
                             <div id="detail-empty" class="empty-state" style="padding:2.5rem 1.25rem;">
@@ -794,12 +893,15 @@
 
                                     <div style="display:flex; flex-wrap:wrap; gap:0.6rem; margin:1.25rem 0;">
                                         <button class="btn btn-secondary btn-sm" id="detail-btn-buscar-imagem">Buscar imagem</button>
+                                        <button class="btn btn-secondary btn-sm" id="detail-btn-buscar-ia">Buscar com IA</button>
                                         <button class="btn btn-primary btn-sm" id="detail-btn-gerar-arte">Gerar arte</button>
                                         <button class="btn btn-secondary btn-sm" id="detail-btn-ver-arte" style="display:none;">Ver arte em tela cheia</button>
                                         <button class="btn btn-secondary btn-sm" id="detail-btn-trocar-imagem">Enviar/Trocar imagem</button>
                                         <input type="file" id="detail-input-imagem" accept="image/png,image/jpeg,image/webp" style="display:none;">
                                         <button class="btn btn-danger btn-sm" id="detail-btn-excluir-imagem">Excluir imagem</button>
                                     </div>
+
+                                    <div id="detail-ia-picker" style="display:none;"></div>
 
                                     <div class="card" style="margin:0; background:var(--bg);">
                                         <h2 style="font-size:0.9rem;">
@@ -879,9 +981,9 @@
                                     <label for="historico-codbar" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">Filtrar por EAN</label>
                                     <input type="text" id="historico-codbar" placeholder="Ex: 7896116900050" autocomplete="off">
                                 </div>
-                                <div>
+                                <div style="flex:1; min-width:140px;">
                                     <label for="historico-status" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">Status</label>
-                                    <select id="historico-status">
+                                    <select id="historico-status" style="width:100%;">
                                         <option value="todos">Todos</option>
                                         <option value="nao_encontrado" selected>Não encontrados</option>
                                         <option value="encontrado">Encontrados</option>
@@ -902,6 +1004,7 @@
                         </div>
                     </div>
 
+                    <div class="detail-panel-backdrop" id="hist-detail-panel-backdrop"></div>
                     <div class="consulta-detail-col">
                         <div class="card detail-panel" id="hist-detail-panel">
                             <div id="hist-detail-empty" class="empty-state" style="padding:2.5rem 1.25rem;">
@@ -922,11 +1025,14 @@
 
                                     <div style="display:flex; flex-wrap:wrap; gap:0.6rem; margin:1.25rem 0;">
                                         <button class="btn btn-secondary btn-sm" id="hist-detail-btn-buscar-imagem">Buscar imagem</button>
+                                        <button class="btn btn-secondary btn-sm" id="hist-detail-btn-buscar-ia">Buscar com IA</button>
                                         <button class="btn btn-primary btn-sm" id="hist-detail-btn-gerar-arte">Gerar arte</button>
                                         <button class="btn btn-secondary btn-sm" id="hist-detail-btn-ver-arte" style="display:none;">Ver arte em tela cheia</button>
                                         <button class="btn btn-secondary btn-sm" id="hist-detail-btn-trocar-imagem">Enviar/Trocar imagem</button>
                                         <input type="file" id="hist-detail-input-imagem" accept="image/png,image/jpeg,image/webp" style="display:none;">
                                     </div>
+
+                                    <div id="hist-detail-ia-picker" style="display:none;"></div>
                                 </div>
                             </div>
                         </div>
@@ -1775,14 +1881,22 @@ let histDetailEan = null;
 
 function closeHistDetailPanel() {
     histDetailEan = null;
+    $('#hist-detail-panel').classList.remove('open');
+    $('#hist-detail-panel-backdrop').classList.remove('show');
     $('#hist-detail-content').style.display = 'none';
     $('#hist-detail-empty').style.display = 'block';
 }
 
 $('#hist-detail-panel-close').addEventListener('click', closeHistDetailPanel);
+$('#hist-detail-panel-backdrop').addEventListener('click', closeHistDetailPanel);
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && $('#hist-detail-panel').classList.contains('open')) closeHistDetailPanel();
+});
 
 async function openHistDetailPanel(ean) {
     histDetailEan = ean;
+    $('#hist-detail-panel').classList.add('open');
+    $('#hist-detail-panel-backdrop').classList.add('show');
     $('#hist-detail-empty').style.display = 'none';
     $('#hist-detail-content').style.display = 'block';
     $('#hist-detail-nome').textContent = 'Carregando...';
@@ -1832,6 +1946,12 @@ async function openHistDetailPanel(ean) {
             buscarImgBtn.innerHTML = originalHtml;
         }
     };
+
+    const buscarIaBtn = $('#hist-detail-btn-buscar-ia');
+    buscarIaBtn.disabled = false;
+    buscarIaBtn.textContent = 'Buscar com IA';
+    fecharPickerIA($('#hist-detail-ia-picker'));
+    buscarIaBtn.onclick = () => buscarImagensIA(ean, buscarIaBtn, '#hist-detail-ia-picker', '#hist-detail-modal-image', () => removerLinhaHistorico(ean));
 
     const trocarImgBtn = $('#hist-detail-btn-trocar-imagem');
     const inputImagem = $('#hist-detail-input-imagem');
@@ -2178,6 +2298,26 @@ $('#btn-rf-url').addEventListener('click', async () => {
 let consultaPage = 1;
 let consultaQ = '';
 let ultimoConsultaData = null;
+const CONSULTA_VIEW_STORAGE_KEY = 'mupa_painel_consulta_view';
+// Sem preferência salva ainda, o padrão depende da largura da tela: a tabela precisa de
+// scroll horizontal pra caber todas as colunas (aceitável num desktop, ruim num celular), a
+// grade não — celular abre em grade por padrão, desktop continua abrindo em lista como sempre.
+let consultaViewMode = localStorage.getItem(CONSULTA_VIEW_STORAGE_KEY) || (window.innerWidth < 700 ? 'grade' : 'lista');
+
+function aplicarConsultaViewToggle() {
+    $$('#consulta-view-toggle .view-toggle-btn').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.view === consultaViewMode);
+    });
+}
+$$('#consulta-view-toggle .view-toggle-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+        consultaViewMode = btn.dataset.view;
+        localStorage.setItem(CONSULTA_VIEW_STORAGE_KEY, consultaViewMode);
+        aplicarConsultaViewToggle();
+        if (ultimoConsultaData) renderConsultaTable(ultimoConsultaData);
+    });
+});
+aplicarConsultaViewToggle();
 
 async function loadConsulta(page = 1) {
     consultaPage = page;
@@ -2196,6 +2336,59 @@ async function loadConsulta(page = 1) {
     } catch (e) {
         showAlert('alert-consulta', `Erro: ${e.message}`, 'error');
     }
+}
+
+function renderConsultaTableHtml(produtos) {
+    let html = `<table style="margin-top:0.4rem;">
+        <thead><tr>
+            <th style="width:85px;">EAN</th>
+            <th>Descrição</th>
+            <th style="width:90px;">Marca</th>
+            <th style="width:70px;">Preço</th>
+            <th style="width:40px;">Foto</th>
+            <th style="width:150px;">Arte publicitária</th>
+            <th style="width:90px;"></th>
+        </tr></thead><tbody>`;
+    produtos.forEach(p => {
+        html += `
+        <tr>
+            <td><span class="ean">${escHtml(p.ean)}</span></td>
+            <td>${escHtml(p.descricao || '—')}</td>
+            <td style="color:var(--muted);">${escHtml(p.marca || '—')}</td>
+            <td style="color:var(--success); font-weight:600;">${p.preco_medio && p.preco_medio > 0 ? 'R$ ' + p.preco_medio.toFixed(2) : '—'}</td>
+            <td>${p.foto_png
+                ? `<img src="${p.foto_png}" class="foto-thumb" alt="foto">`
+                : `<span class="foto-thumb-placeholder">${CAMERA_ICON}</span>`}</td>
+            <td>${renderArteCell(p)}</td>
+            <td><button class="btn btn-secondary btn-sm" data-action="detalhes" data-codbar="${escHtml(p.ean)}">Detalhes</button></td>
+        </tr>`;
+    });
+    html += '</tbody></table>';
+    return html;
+}
+
+function renderConsultaGrid(produtos) {
+    // Mesmos data-action/data-codbar da tabela — o handler delegado em #consulta-list (click)
+    // já funciona sem mudança nenhuma, tanto na grade quanto na tabela.
+    const cards = produtos.map(p => `
+        <div class="produto-card">
+            <div class="produto-card-img">${p.foto_png
+                ? `<img src="${p.foto_png}" alt="foto">`
+                : `<span class="foto-thumb-placeholder">${CAMERA_ICON}</span>`}</div>
+            <div class="produto-card-body">
+                <span class="produto-card-ean">${escHtml(p.ean)}</span>
+                <span class="produto-card-desc" title="${escHtml(p.descricao || '')}">${escHtml(p.descricao || '—')}</span>
+                <span class="produto-card-marca">${escHtml(p.marca || '—')}</span>
+                <span class="produto-card-preco">${p.preco_medio && p.preco_medio > 0 ? 'R$ ' + p.preco_medio.toFixed(2) : '—'}</span>
+                <div class="produto-card-actions">
+                    ${p.arte_url
+                        ? `<button class="btn btn-secondary btn-sm" data-action="ver-arte" data-url="${escHtml(p.arte_url)}">Arte</button>`
+                        : `<button class="btn btn-primary btn-sm" data-action="gerar-arte" data-codbar="${escHtml(p.ean)}">Gerar arte</button>`}
+                    <button class="btn btn-secondary btn-sm" data-action="detalhes" data-codbar="${escHtml(p.ean)}">Detalhes</button>
+                </div>
+            </div>
+        </div>`).join('');
+    return `<div class="consulta-grid">${cards}</div>`;
 }
 
 function renderConsultaTable(data) {
@@ -2242,32 +2435,7 @@ function renderConsultaTable(data) {
         return;
     }
 
-    let html = `<table style="margin-top:0.4rem;">
-        <thead><tr>
-            <th style="width:85px;">EAN</th>
-            <th>Descrição</th>
-            <th style="width:90px;">Marca</th>
-            <th style="width:70px;">Preço</th>
-            <th style="width:40px;">Foto</th>
-            <th style="width:150px;">Arte publicitária</th>
-            <th style="width:90px;"></th>
-        </tr></thead><tbody>`;
-    data.produtos.forEach(p => {
-        html += `
-        <tr>
-            <td><span class="ean">${escHtml(p.ean)}</span></td>
-            <td>${escHtml(p.descricao || '—')}</td>
-            <td style="color:var(--muted);">${escHtml(p.marca || '—')}</td>
-            <td style="color:var(--success); font-weight:600;">${p.preco_medio && p.preco_medio > 0 ? 'R$ ' + p.preco_medio.toFixed(2) : '—'}</td>
-            <td>${p.foto_png
-                ? `<img src="${p.foto_png}" class="foto-thumb" alt="foto">`
-                : `<span class="foto-thumb-placeholder">${CAMERA_ICON}</span>`}</td>
-            <td>${renderArteCell(p)}</td>
-            <td><button class="btn btn-secondary btn-sm" data-action="detalhes" data-codbar="${escHtml(p.ean)}">Detalhes</button></td>
-        </tr>`;
-    });
-    html += '</tbody></table>';
-    list.innerHTML = html;
+    list.innerHTML = consultaViewMode === 'grade' ? renderConsultaGrid(data.produtos) : renderConsultaTableHtml(data.produtos);
     const pages = data.pages || 1;
     if (info) info.textContent = `Página ${data.page} de ${pages} (${(data.total || 0).toLocaleString('pt-BR')} produtos)`;
     if (prevBtn) prevBtn.disabled = data.page <= 1;
@@ -2285,19 +2453,25 @@ $('#btn-consulta-limpar').addEventListener('click', () => {
 $('#btn-consulta-prev').addEventListener('click', () => loadConsulta(consultaPage - 1));
 $('#btn-consulta-next').addEventListener('click', () => loadConsulta(consultaPage + 1));
 
-// ===== Formulário: Cadastrar produto pelo EAN (busca no Cosmos) =====
-$('#btn-abrir-cadastro').addEventListener('click', () => {
-    const form = $('#form-cadastro-cosmos');
-    const abrindo = form.style.display === 'none';
-    form.style.display = abrindo ? 'block' : 'none';
-    if (abrindo) {
-        $('#cadastro-ean').value = '';
-        $('#alert-cadastro-cosmos').innerHTML = '';
-        $('#cadastro-ean').focus();
-    }
+// ===== Popup central: Cadastrar produto pelo EAN (busca no Cosmos / manual) =====
+function abrirModalCadastro() {
+    $('#cadastro-modal-overlay').classList.add('show');
+    $('#cadastro-ean').value = '';
+    $('#cadastro-descricao').value = '';
+    $('#cadastro-imagem').value = '';
+    $('#alert-cadastro-cosmos').innerHTML = '';
+    $('#cadastro-ean').focus();
+}
+function fecharModalCadastro() {
+    $('#cadastro-modal-overlay').classList.remove('show');
+}
+$('#btn-abrir-cadastro').addEventListener('click', abrirModalCadastro);
+$('#btn-cancelar-cadastro').addEventListener('click', fecharModalCadastro);
+$('#cadastro-modal-overlay').addEventListener('click', (e) => {
+    if (e.target.id === 'cadastro-modal-overlay') fecharModalCadastro();
 });
-$('#btn-cancelar-cadastro').addEventListener('click', () => {
-    $('#form-cadastro-cosmos').style.display = 'none';
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && $('#cadastro-modal-overlay').classList.contains('show')) fecharModalCadastro();
 });
 
 async function cadastrarProdutoViaCosmos() {
@@ -2317,10 +2491,10 @@ async function cadastrarProdutoViaCosmos() {
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
-        showAlert('alert-cadastro-cosmos', data.message || 'Produto cadastrado com sucesso!', 'success');
         toast(data.message || 'Produto cadastrado', 'success');
         $('#consulta-q').value = ean;
         loadConsulta(1);
+        fecharModalCadastro();
     } catch (e) {
         showAlert('alert-cadastro-cosmos', `Erro: ${e.message}`, 'error');
     } finally {
@@ -2332,6 +2506,44 @@ $('#btn-cadastrar-cosmos').addEventListener('click', cadastrarProdutoViaCosmos);
 $('#cadastro-ean').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') cadastrarProdutoViaCosmos();
 });
+
+async function cadastrarProdutoManual() {
+    const ean = $('#cadastro-ean').value.trim();
+    if (!/^\d{8,14}$/.test(ean)) {
+        showAlert('alert-cadastro-cosmos', 'Informe um EAN válido (8 a 14 dígitos).', 'error');
+        return;
+    }
+    const btn = $('#btn-cadastrar-manual');
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner"></span> Cadastrando...`;
+    try {
+        const formData = new FormData();
+        const descricao = ($('#cadastro-descricao').value || '').trim();
+        if (descricao) formData.append('description', descricao);
+        const arquivo = $('#cadastro-imagem').files[0];
+        if (arquivo) formData.append('file', arquivo);
+        // Sem Content-Type manual — o navegador define multipart/form-data com o boundary
+        // certo sozinho quando o body é um FormData; forçar aqui quebraria o upload.
+        const res = await fetch(`/admin/cadastrar-produto-manual/${encodeURIComponent(ean)}`, {
+            method: 'POST',
+            headers: authHeaders(),
+            body: formData,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+        toast(data.message || 'Produto cadastrado', 'success');
+        $('#consulta-q').value = ean;
+        loadConsulta(1);
+        fecharModalCadastro();
+    } catch (e) {
+        showAlert('alert-cadastro-cosmos', `Erro: ${e.message}`, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+    }
+}
+$('#btn-cadastrar-manual').addEventListener('click', cadastrarProdutoManual);
 
 // ===== Geração de arte publicitária (IA) =====
 function renderArteCell(p) {
@@ -2365,6 +2577,107 @@ async function gerarArteParaBotao(gerarBtn, codbar, onDone) {
         toast('Erro ao gerar arte: ' + e2.message, 'error');
         gerarBtn.disabled = false;
         gerarBtn.innerHTML = originalHtml;
+    }
+}
+
+// ===== Busca de imagem com IA (OpenAI + web search) — compartilhada pelos dois painéis =====
+// Diferente de 'Buscar imagem' (local -> Bing -> Google -> Zaffari, salva direto), este botão
+// só mostra uma lista de candidatas dentro do próprio painel (sem sair do sistema) — o usuário
+// escolhe uma pra ela ser baixada e salva (POST /admin/definir-imagem-url/<ean>), ou fecha sem
+// escolher nada. Se a IA não achar nenhuma foto confiável, mostra um estado vazio no lugar.
+function fecharPickerIA(picker) {
+    picker.style.display = 'none';
+    picker.innerHTML = '';
+}
+
+async function buscarImagensIA(ean, btn, pickerSelector, imageSelector, onImagemDefinida) {
+    const picker = $(pickerSelector);
+    const originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner"></span> Buscando na internet...`;
+    picker.style.display = 'block';
+    picker.innerHTML = `<div class="empty-state" style="padding:1rem;"><span class="spinner" style="border-top-color:var(--accent); border-color:rgba(79,70,229,0.25);"></span> A IA está pesquisando na internet...</div>`;
+
+    try {
+        const res = await fetch(`/admin/buscar-imagem-ia/${encodeURIComponent(ean)}`, {
+            method: 'POST',
+            headers: authHeaders(),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+        const opcoes = data.opcoes || [];
+
+        if (opcoes.length === 0) {
+            picker.innerHTML = `
+                <div class="ia-picker">
+                    <div class="ia-picker-header">
+                        <span>Busca com IA</span>
+                        <button type="button" class="ia-picker-close" title="Fechar">&times;</button>
+                    </div>
+                    <div class="ia-picker-empty">
+                        <span style="width:32px;height:32px;color:var(--muted);display:inline-flex;">${CAMERA_ICON}</span>
+                        Nenhuma imagem encontrada na internet para este produto.
+                    </div>
+                </div>`;
+            picker.querySelector('.ia-picker-close').addEventListener('click', () => fecharPickerIA(picker));
+            return;
+        }
+
+        picker.innerHTML = `
+            <div class="ia-picker">
+                <div class="ia-picker-header">
+                    <span>Escolha uma imagem (${opcoes.length})</span>
+                    <button type="button" class="ia-picker-close" title="Fechar">&times;</button>
+                </div>
+                <div class="ia-picker-grid">
+                    ${opcoes.map((op, i) => `
+                        <button type="button" class="ia-picker-item" data-idx="${i}" title="${escHtml(op.titulo || '')}">
+                            <img src="${escHtml(op.url)}" alt="Opção ${i + 1}" loading="lazy" onerror="this.closest('.ia-picker-item').remove()">
+                        </button>
+                    `).join('')}
+                </div>
+            </div>`;
+        picker.querySelector('.ia-picker-close').addEventListener('click', () => fecharPickerIA(picker));
+        picker.querySelectorAll('.ia-picker-item').forEach((item) => {
+            item.addEventListener('click', async () => {
+                const escolhida = opcoes[Number(item.dataset.idx)];
+                if (!escolhida) return;
+                picker.querySelectorAll('.ia-picker-item').forEach(b => b.disabled = true);
+                item.classList.add('ia-picker-item-loading');
+                try {
+                    const res2 = await fetch(`/admin/definir-imagem-url/${encodeURIComponent(ean)}`, {
+                        method: 'POST',
+                        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ url: escolhida.url }),
+                    });
+                    const data2 = await res2.json().catch(() => ({}));
+                    if (!res2.ok) throw new Error(data2.message || `HTTP ${res2.status}`);
+                    toast('Imagem definida com sucesso', 'success');
+                    fecharPickerIA(picker);
+                    if (data2.imagem_url) {
+                        $(imageSelector).innerHTML = `<img src="${escHtml(data2.imagem_url)}?t=${Date.now()}" alt="Foto do produto">`;
+                    }
+                    if (onImagemDefinida) onImagemDefinida();
+                } catch (e3) {
+                    toast('Erro ao definir imagem: ' + e3.message, 'error');
+                    picker.querySelectorAll('.ia-picker-item').forEach(b => b.disabled = false);
+                    item.classList.remove('ia-picker-item-loading');
+                }
+            });
+        });
+    } catch (e2) {
+        picker.innerHTML = `
+            <div class="ia-picker">
+                <div class="ia-picker-header">
+                    <span>Busca com IA</span>
+                    <button type="button" class="ia-picker-close" title="Fechar">&times;</button>
+                </div>
+                <div class="ia-picker-empty">Erro ao buscar: ${escHtml(e2.message)}</div>
+            </div>`;
+        picker.querySelector('.ia-picker-close').addEventListener('click', () => fecharPickerIA(picker));
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
     }
 }
 
@@ -2404,14 +2717,22 @@ $('#lightbox').addEventListener('click', (e) => {
 let detailEan = null;
 
 function closeDetailModal() {
+    $('#detail-panel').classList.remove('open');
+    $('#detail-panel-backdrop').classList.remove('show');
     $('#detail-content').style.display = 'none';
     $('#detail-empty').style.display = 'block';
     detailEan = null;
 }
 $('#detail-panel-close').addEventListener('click', closeDetailModal);
+$('#detail-panel-backdrop').addEventListener('click', closeDetailModal);
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && $('#detail-panel').classList.contains('open')) closeDetailModal();
+});
 
 async function openDetailModal(ean) {
     detailEan = ean;
+    $('#detail-panel').classList.add('open');
+    $('#detail-panel-backdrop').classList.add('show');
     $('#detail-empty').style.display = 'none';
     $('#detail-content').style.display = 'block';
     $('#detail-nome').textContent = 'Carregando...';
@@ -2464,6 +2785,12 @@ async function openDetailModal(ean) {
             buscarImgBtn.innerHTML = originalHtml;
         }
     };
+
+    const buscarIaBtn = $('#detail-btn-buscar-ia');
+    buscarIaBtn.disabled = false;
+    buscarIaBtn.textContent = 'Buscar com IA';
+    fecharPickerIA($('#detail-ia-picker'));
+    buscarIaBtn.onclick = () => buscarImagensIA(ean, buscarIaBtn, '#detail-ia-picker', '#detail-modal-image', () => loadConsulta(consultaPage));
 
     const trocarImgBtn = $('#detail-btn-trocar-imagem');
     const inputImagem = $('#detail-input-imagem');
