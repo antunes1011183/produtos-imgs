@@ -136,7 +136,13 @@ def save_image_with_background_removal(image, file_path):
     output_image.save(file_path)
 
 def fetch_product_from_google(ean):
-    search_url = f"https://www.googleapis.com/customsearch/v1?q={ean}&cx={GOOGLE_CX}&searchType=image&num=2&key={GOOGLE_API_KEY}"
+    # safe=active: filtra conteúdo explícito no resultado — CRÍTICO aqui porque a busca é feita
+    # só pelo EAN em dígitos (não pelo nome do produto, que ainda não temos nesse ponto), uma
+    # query genérica demais pro Google Custom Search associar com confiança a um produto de
+    # verdade; sem SafeSearch, um EAN pode acabar casando com qualquer página da internet que
+    # contenha aquela sequência de números, inclusive conteúdo impróprio (incidente real: EAN
+    # 7898909864181 retornou uma imagem pornográfica antes dessa correção).
+    search_url = f"https://www.googleapis.com/customsearch/v1?q={ean}&cx={GOOGLE_CX}&searchType=image&num=2&safe=active&key={GOOGLE_API_KEY}"
     try:
         response = requests.get(search_url)
         response.raise_for_status()
@@ -854,7 +860,9 @@ def buscar_e_salvar_imagem_bing(codbar):
         return jsonify({'message': f'Error fetching or saving image from Bing: {str(e)}'}), 500
 
 def buscar_e_salvar_imagem_google(codbar):
-    search_url = f"https://www.googleapis.com/customsearch/v1?q={codbar}&cx={GOOGLE_CX}&searchType=image&num=2&key={GOOGLE_API_KEY}"
+    # safe=active: ver comentário em fetch_product_from_google — mesma busca genérica só pelo
+    # EAN em dígitos, mesmo risco de casar com conteúdo impróprio sem SafeSearch ativado.
+    search_url = f"https://www.googleapis.com/customsearch/v1?q={codbar}&cx={GOOGLE_CX}&searchType=image&num=2&safe=active&key={GOOGLE_API_KEY}"
     try:
         response = requests.get(search_url)
         response.raise_for_status()
