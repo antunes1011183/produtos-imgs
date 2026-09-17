@@ -1897,7 +1897,7 @@ def consultar_ou_cadastrar_produto(codbar):
             'sugestao': _sugestao_segura(novo_produto),
         }), 201
 
-    return jsonify({'message': 'Produto não encontrado em nenhuma fonte (Cosmos, Open Food Facts, Zaffari)'}), 404
+    return jsonify({'message': 'Produto não encontrado em nenhuma fonte (Cosmos, Open Food Facts, Zaffari, PreçoMelhor)'}), 404
 
 
 # =====================================================================
@@ -3275,7 +3275,7 @@ def gerar_arte_publica(codbar):
                     if produto:
                         break
             if not produto:
-                return jsonify({'message': 'Produto não encontrado em nenhuma fonte (Cosmos, Open Food Facts, Zaffari)'}), 404
+                return jsonify({'message': 'Produto não encontrado em nenhuma fonte (Cosmos, Open Food Facts, Zaffari, PreçoMelhor)'}), 404
 
         content_type = (request.content_type or '').lower()
         ext = 'png' if 'png' in content_type else 'webp' if 'webp' in content_type else 'jpg'
