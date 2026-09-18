@@ -600,6 +600,10 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                 Histórico
             </button>
+            <button class="nav-tab" data-tab="pendentes" data-title="Imagens Pendentes" data-subtitle="Todo EAN sem imagem na pasta — com ou sem cadastro no catálogo">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/><line x1="15" y1="4" x2="21" y2="4"/><line x1="18" y1="1" x2="18" y2="7"/></svg>
+                Imagens Pendentes <span class="badge" id="pendentes-badge-sidebar" style="display:none;"></span>
+            </button>
             <button class="nav-tab" data-tab="quarentena" data-title="Quarentena de Imagens" data-subtitle="Imagens rejeitadas pelo filtro de conteúdo, aguardando revisão">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
                 Quarentena <span class="badge" id="quarentena-badge-sidebar" style="display:none;"></span>
@@ -793,7 +797,7 @@
                     </div>
                     <div class="toggle-row">
                         <div class="toggle-label">
-                            <span class="name">Busca de imagem online (Bing/Google/Zaffari/PreçoMelhor/Rissul)</span>
+                            <span class="name">Busca de imagem online (Bing/Google/Zaffari/PreçoMelhor/Rissul/Sonda)</span>
                             <span class="desc">Desativa a busca automática de foto crua em fontes externas — o terminal e o painel passam a usar só a imagem local já salva. Não afeta cadastro de nome/marca nem a aba "Buscar com IA". Use pra pausar tudo rapidamente em caso de imagem imprópria vindo de fonte externa.</span>
                         </div>
                         <div class="toggle" id="toggle-busca-imagem-online" data-key="BUSCA_IMAGEM_ONLINE_ATIVA"></div>
@@ -1084,6 +1088,37 @@
                                 </div>
                             </div>
                         </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ===== TAB: IMAGENS PENDENTES ===== -->
+            <div id="tab-pendentes" class="tab-content" style="display:none;">
+                <div class="card">
+                    <h2>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>
+                        Imagens Pendentes <span class="badge" id="pendentes-count-badge">carregando...</span>
+                    </h2>
+                    <p style="margin:-0.4rem 0 0.85rem; color:var(--muted); font-size:0.85rem;">
+                        Todo EAN que o sistema tentou e não conseguiu baixar imagem nenhuma, e que ainda não tem foto salva na pasta agora — cadastrado no catálogo ou não. Some da lista assim que uma imagem for salva pra ele.
+                    </p>
+                    <div id="alert-pendentes"></div>
+                    <div class="form-row" style="flex-direction:row; gap:0.5rem; flex-wrap:wrap; align-items:flex-end; margin-bottom:0.85rem;">
+                        <div style="flex:1; min-width:180px;">
+                            <label for="pendentes-codbar" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">Filtrar por EAN</label>
+                            <input type="text" id="pendentes-codbar" placeholder="Ex: 7896116900050" autocomplete="off">
+                        </div>
+                        <button class="btn btn-primary" id="btn-pendentes-filtrar">Filtrar</button>
+                    </div>
+                    <div id="pendentes-list" style="overflow-x:auto;">
+                        <div class="empty-state">Carregando...</div>
+                    </div>
+                    <div id="pendentes-pagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:0.85rem; font-size:0.82rem; color:var(--muted);">
+                        <span id="pendentes-info">—</span>
+                        <span style="display:flex; gap:0.4rem;">
+                            <button class="btn btn-secondary btn-sm" id="btn-pendentes-prev">← Anterior</button>
+                            <button class="btn btn-secondary btn-sm" id="btn-pendentes-next">Próximo →</button>
+                        </span>
                     </div>
                 </div>
             </div>
@@ -1504,6 +1539,7 @@ $$('.nav-tab').forEach(btn => {
         else pararPollingStatusSistema();
         if (tab === 'config') loadConfig();
         if (tab === 'historico') loadHistorico(1);
+        if (tab === 'pendentes') loadImagensPendentes(1);
         if (tab === 'quarentena') loadQuarentena(1);
         if (tab === 'whatsapp') loadWhatsapp();
 
@@ -1928,26 +1964,45 @@ async function loadHistorico(page = 1) {
     }
 }
 
-// Remove a linha resolvida da lista (sem recarregar a página toda) e ajusta os contadores —
-// feedback imediato de que a ação funcionou, sem esperar um novo fetch.
-function removerLinhaHistorico(codbar) {
-    // Só existe uma linha com data-codbar no <tr> na vista agrupada ('não encontrados') — na
-    // vista de log bruto ('todos'/'encontrados') não há o que remover (nem faz sentido: é
-    // histórico, não fila de pendências), então sai sem mexer no contador.
-    const row = $(`#historico-list tr[data-codbar="${CSS.escape(codbar)}"]`);
+// Remove a linha resolvida de uma lista (sem recarregar a página toda) e ajusta o contador —
+// feedback imediato de que a ação funcionou, sem esperar um novo fetch. Compartilhada entre a
+// vista agrupada do Histórico ("Não encontrados") e a aba "Imagens Pendentes" (mesmo formato de
+// tabela, containers diferentes).
+function removerLinhaDeLista(containerId, badgeId, codbar) {
+    const row = document.querySelector(`#${containerId} tr[data-codbar="${CSS.escape(codbar)}"]`);
     if (!row) return;
     row.remove();
-    const restantes = $('#historico-list tbody')?.children.length ?? 0;
+    const restantes = document.querySelector(`#${containerId} tbody`)?.children.length ?? 0;
     if (restantes === 0) {
-        $('#historico-list').innerHTML = '<div class="empty-state">Nenhum registro encontrado.</div>';
+        document.getElementById(containerId).innerHTML = '<div class="empty-state">Nenhum registro encontrado.</div>';
     }
-    const badge = $('#historico-count-badge');
+    const badge = document.getElementById(badgeId);
+    if (!badge) return;
     const atual = parseInt((badge.textContent || '0').replace(/\D/g, ''), 10) || 0;
     const novoTotal = Math.max(0, atual - 1);
     badge.textContent = `${novoTotal} registro${novoTotal === 1 ? '' : 's'}`;
 }
 
-$('#historico-list').addEventListener('click', async (e) => {
+function removerLinhaHistorico(codbar) {
+    removerLinhaDeLista('historico-list', 'historico-count-badge', codbar);
+}
+
+function removerLinhaPendente(codbar) {
+    removerLinhaDeLista('pendentes-list', 'pendentes-count-badge', codbar);
+}
+
+// O painel de detalhes (`openHistDetailPanel`) é compartilhado entre as duas abas (é um overlay
+// fixo, pode ser aberto de qualquer tab) — ao resolver a imagem por ele, tenta remover a linha
+// das DUAS listas (a que não tiver essa linha simplesmente não faz nada, sem erro).
+function removerLinhaEmTodasAsListas(codbar) {
+    removerLinhaHistorico(codbar);
+    removerLinhaPendente(codbar);
+}
+
+// Ações rápidas de linha (Buscar/Google Imagens/Copiar EAN/Enviar imagem) — compartilhadas entre
+// a vista agrupada do Histórico ("Não encontrados") e a aba "Imagens Pendentes" (mesmas ações,
+// containers diferentes; `removerLinha` decide de qual lista tirar a linha resolvida).
+async function handleAcoesRapidasImagem(e, removerLinha) {
     const detalhesCell = e.target.closest('[data-action="hist-detalhes"]');
     if (detalhesCell) {
         openHistDetailPanel(detalhesCell.dataset.codbar);
@@ -1967,7 +2022,7 @@ $('#historico-list').addEventListener('click', async (e) => {
             if (res.ok) {
                 const fonte = rotuloFonte(body.fonte);
                 toast(fonte ? `Imagem encontrada via ${fonte} para ${codbar}` : `Imagem encontrada para ${codbar}`, 'success');
-                removerLinhaHistorico(codbar);
+                removerLinha(codbar);
             } else {
                 toast(body.message || 'Ainda não encontrada em nenhuma fonte', 'error');
                 buscarBtn.disabled = false;
@@ -1997,11 +2052,11 @@ $('#historico-list').addEventListener('click', async (e) => {
 
     const uploadBtn = e.target.closest('[data-action="hist-upload"]');
     if (uploadBtn) {
-        $(`#historico-list input[data-upload-input="${CSS.escape(uploadBtn.dataset.codbar)}"]`)?.click();
+        e.currentTarget.querySelector(`input[data-upload-input="${CSS.escape(uploadBtn.dataset.codbar)}"]`)?.click();
     }
-});
+}
 
-$('#historico-list').addEventListener('change', async (e) => {
+async function handleUploadRapidoImagem(e, removerLinha) {
     const input = e.target.closest('input[data-upload-input]');
     if (!input || !input.files.length) return;
     const codbar = input.dataset.uploadInput;
@@ -2016,20 +2071,105 @@ $('#historico-list').addEventListener('change', async (e) => {
         const body = await res.json().catch(() => ({}));
         if (res.ok) {
             toast(`Imagem enviada para ${codbar}`, 'success');
-            removerLinhaHistorico(codbar);
+            removerLinha(codbar);
         } else {
             toast(body.message || 'Erro ao enviar imagem', 'error');
         }
     } catch (err) {
         toast('Erro ao enviar imagem: ' + err.message, 'error');
     }
-});
+}
+
+$('#historico-list').addEventListener('click', (e) => handleAcoesRapidasImagem(e, removerLinhaHistorico));
+$('#historico-list').addEventListener('change', (e) => handleUploadRapidoImagem(e, removerLinhaHistorico));
+$('#pendentes-list').addEventListener('click', (e) => handleAcoesRapidasImagem(e, removerLinhaPendente));
+$('#pendentes-list').addEventListener('change', (e) => handleUploadRapidoImagem(e, removerLinhaPendente));
 
 $('#btn-historico-filtrar').addEventListener('click', () => loadHistorico(1));
 $('#historico-codbar').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadHistorico(1); });
 $('#historico-status').addEventListener('change', () => loadHistorico(1));
 $('#btn-historico-prev').addEventListener('click', () => { if (historicoPage > 1) loadHistorico(historicoPage - 1); });
 $('#btn-historico-next').addEventListener('click', () => loadHistorico(historicoPage + 1));
+
+// ===== TAB: IMAGENS PENDENTES =====
+// Mesmo formato agrupado da vista "Histórico → Não encontrados" (1 linha por EAN, mesmas 4
+// ações), só que via `status=sem_imagem` — não exige `Produto` cadastrado (ver
+// `_registrar_busca_imagem`/`admin_historico_buscas` no app.py). Página dedicada porque o
+// público-alvo é diferente: aqui é "qualquer barcode sem imagem, resolve manualmente", não só
+// produto já cadastrado no catálogo.
+let pendentesPage = 1;
+
+async function loadImagensPendentes(page = 1) {
+    pendentesPage = page;
+    try {
+        const params = new URLSearchParams({ page, per_page: 20, status: 'sem_imagem' });
+        const codbar = ($('#pendentes-codbar').value || '').trim();
+        if (codbar) params.append('codbar', codbar);
+
+        const res = await fetch('/admin/historico-buscas?' + params.toString(), { headers: authHeaders() });
+        if (!res.ok) {
+            const errBody = await res.json().catch(() => ({}));
+            throw new Error(errBody.message || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+
+        $('#pendentes-count-badge').textContent = `${data.total} registro${data.total === 1 ? '' : 's'}`;
+        $('#pendentes-info').textContent = data.total > 0
+            ? `Página ${data.page} de ${data.pages} · ${data.total} registro(s)`
+            : 'Nenhum registro encontrado';
+
+        const badgeSidebar = $('#pendentes-badge-sidebar');
+        if (badgeSidebar) {
+            if (data.total > 0) {
+                badgeSidebar.textContent = data.total;
+                badgeSidebar.style.display = 'inline-flex';
+            } else {
+                badgeSidebar.style.display = 'none';
+            }
+        }
+
+        if (!data.registros.length) {
+            $('#pendentes-list').innerHTML = '<div class="empty-state">Nenhum registro encontrado.</div>';
+            return;
+        }
+
+        const linhas = data.registros.map(r => {
+            const ultimaFmt = new Date(r.ultima_tentativa).toLocaleString('pt-BR');
+            const descricao = r.descricao || (r.cadastrado ? 'Descrição não disponível' : 'Sem cadastro no catálogo');
+            const cadastroBadge = r.cadastrado ? '' : ' <span class="badge" style="background:#e2e8f0; color:#475569;">sem cadastro</span>';
+            return `<tr data-codbar="${escHtml(r.codbar)}">
+                <td data-action="hist-detalhes" data-codbar="${escHtml(r.codbar)}" style="cursor:pointer;" title="Ver detalhes">
+                    <div style="font-weight:500; font-size:0.85rem;">${escHtml(descricao)}${cadastroBadge}</div>
+                    <span class="ean">${escHtml(r.codbar)}</span>
+                </td>
+                <td><span class="badge" style="background:#fef3c7; color:#92400e;">${r.tentativas}×</span></td>
+                <td style="white-space:nowrap; color:var(--muted); font-size:0.8rem;">${ultimaFmt}</td>
+                <td>
+                    <div style="display:flex; gap:0.35rem; flex-wrap:wrap; align-items:center;">
+                        <button class="btn btn-primary btn-sm" data-action="hist-buscar" data-codbar="${escHtml(r.codbar)}">Buscar</button>
+                        <button class="btn btn-secondary btn-sm" data-action="hist-google" data-codbar="${escHtml(r.codbar)}" data-desc="${escHtml(descricao)}">Google Imagens</button>
+                        <button class="btn btn-secondary btn-sm" data-action="hist-copy-ean" data-codbar="${escHtml(r.codbar)}" title="Copiar só o EAN">Copiar EAN</button>
+                        <button class="btn btn-secondary btn-sm" data-action="hist-upload" data-codbar="${escHtml(r.codbar)}">Enviar imagem</button>
+                        <input type="file" accept="image/*" data-upload-input="${escHtml(r.codbar)}" style="display:none;">
+                    </div>
+                </td>
+            </tr>`;
+        }).join('');
+
+        $('#pendentes-list').innerHTML = `<table>
+            <thead><tr><th>Produto</th><th>Tentativas</th><th>Última tentativa</th><th>Ações</th></tr></thead>
+            <tbody>${linhas}</tbody>
+        </table>`;
+    } catch (e) {
+        $('#pendentes-list').innerHTML = `<div class="empty-state">Erro ao carregar imagens pendentes.</div>`;
+        showAlert('alert-pendentes', `Erro: ${e.message}`, 'error');
+    }
+}
+
+$('#btn-pendentes-filtrar').addEventListener('click', () => loadImagensPendentes(1));
+$('#pendentes-codbar').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadImagensPendentes(1); });
+$('#btn-pendentes-prev').addEventListener('click', () => { if (pendentesPage > 1) loadImagensPendentes(pendentesPage - 1); });
+$('#btn-pendentes-next').addEventListener('click', () => loadImagensPendentes(pendentesPage + 1));
 
 // ===== Painel de detalhes do Histórico (lateral direita, ao clicar num produto) =====
 // Mesma ideia do painel de detalhes da Consulta Rápida (openDetailModal) — reaproveita as
@@ -2098,7 +2238,7 @@ async function openHistDetailPanel(ean) {
             if (data.imagem_url && histDetailEan === ean) {
                 $('#hist-detail-modal-image').innerHTML = `<img src="${escHtml(data.imagem_url)}?t=${Date.now()}" alt="Foto do produto">`;
             }
-            removerLinhaHistorico(ean);
+            removerLinhaEmTodasAsListas(ean);
         } catch (e2) {
             toast('Erro ao buscar imagem: ' + e2.message, 'error');
         } finally {
@@ -2111,7 +2251,7 @@ async function openHistDetailPanel(ean) {
     buscarIaBtn.disabled = false;
     buscarIaBtn.textContent = 'Buscar com IA';
     fecharPickerIA($('#hist-detail-ia-picker'));
-    buscarIaBtn.onclick = () => buscarImagensIA(ean, buscarIaBtn, '#hist-detail-ia-picker', '#hist-detail-modal-image', () => removerLinhaHistorico(ean));
+    buscarIaBtn.onclick = () => buscarImagensIA(ean, buscarIaBtn, '#hist-detail-ia-picker', '#hist-detail-modal-image', () => removerLinhaEmTodasAsListas(ean));
 
     const trocarImgBtn = $('#hist-detail-btn-trocar-imagem');
     const inputImagem = $('#hist-detail-input-imagem');
@@ -2137,7 +2277,7 @@ async function openHistDetailPanel(ean) {
             if (histDetailEan === ean) {
                 $('#hist-detail-modal-image').innerHTML = `<img src="${escHtml(data.path ? '/' + data.path.replace(/\\/g, '/') : '')}?t=${Date.now()}" alt="Foto do produto">`;
             }
-            removerLinhaHistorico(ean);
+            removerLinhaEmTodasAsListas(ean);
         } catch (e2) {
             toast('Erro ao enviar imagem: ' + e2.message, 'error');
         } finally {

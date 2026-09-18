@@ -264,25 +264,26 @@ class ImagemQuarentena(db.Model):
 
 def _registrar_busca_imagem(codbar, encontrado, origem=None, via='terminal'):
     """Grava uma linha na fila de pendências (ver docstring de HistoricoBuscaImagem) — só quando
-    as TRÊS condições abaixo são verdadeiras (pedido explícito do usuário, com cada uma delas
-    nomeada separadamente):
-    1. Temos cadastro: `Produto.query...` encontra o EAN no catálogo — sem isso não é um produto
-       nosso, não tem como/por que "resolver" a foto dele.
-    2. NÃO temos a imagem do produto na pasta: checado direto via `find_existing_image` (não só
+    as DUAS condições abaixo são verdadeiras:
+    1. NÃO temos a imagem do produto na pasta: checado direto via `find_existing_image` (não só
        confiando no parâmetro `encontrado` que o chamador passou) — garante que a condição real é
        sempre "o arquivo não existe fisicamente em IMAGES_FOLDER agora", não uma inferência sobre
        como a busca correu.
-    3. `encontrado=False`: sucesso não vira pendência nenhuma (nada a resolver) — verificado
+    2. `encontrado=False`: sucesso não vira pendência nenhuma (nada a resolver) — verificado
        primeiro, como atalho barato antes de tocar o banco/disco; os chamadores continuam
        passando `encontrado=True` nos casos de sucesso (não precisou mudar nenhum call site),
        vira um no-op silencioso aqui.
+
+    Não exige mais que o EAN tenha `Produto` cadastrado (exigência removida a pedido do usuário,
+    pra alimentar a página "Imagens Pendentes" — ver CLAUDE.md — que precisa listar QUALQUER EAN
+    sem imagem, cadastrado ou não). A aba "Histórico → Não encontrados" continua mostrando só
+    produtos cadastrados, mas o filtro agora é aplicado na hora da CONSULTA (`admin_historico_buscas`),
+    não mais na hora de gravar — assim a mesma linha serve as duas telas.
 
     Nunca deixa uma falha de log quebrar o fluxo principal de consulta de imagem."""
     if encontrado:
         return
     try:
-        if not Produto.query.filter_by(codbar=codbar).first():
-            return
         if find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS):
             return
         db.session.add(HistoricoBuscaImagem(codbar=codbar, encontrado=encontrado, origem=origem, via=via))
@@ -450,9 +451,14 @@ def upload_imagem_produto(codbar):
     if file.filename == '':
         return jsonify({'message': 'No file selected'}), 400
     if file and allowed_file(file.filename):
+        dados = file.read()
+        if not _imagem_e_segura(dados):
+            _quarentenar_imagem(dados, codbar, origem='upload_manual')
+            return jsonify({'message': 'Imagem sinalizada pelo filtro de conteúdo e enviada para revisão humana (Configurações → Quarentena) em vez de ser salva'}), 422
         filename = secure_filename(f'{codbar}.{file.filename.rsplit(".", 1)[1].lower()}')
         file_path = os.path.join(IMAGES_FOLDER, filename)
-        file.save(file_path)
+        with open(file_path, 'wb') as f:
+            f.write(dados)
         try:
             _marcar_tem_foto(codbar, True)
             db.session.commit()
@@ -700,7 +706,7 @@ def deletar_imagem_produto(codbar):
     }
 })
 def obter_imagem_produto(codbar):
-    """Obtém a imagem crua do produto (local -> Bing -> Google -> Zaffari -> PrecoMelhor -> Rissul) e, se já
+    """Obtém a imagem crua do produto (local -> Bing -> Google -> Zaffari -> PrecoMelhor -> Rissul -> Sonda) e, se já
     existir, a URL da arte publicitária gerada para ele. Quando a foto existe mas a arte
     ainda não foi gerada, dispara a geração em background (a resposta desta chamada ainda
     sai sem 'imagem_url_arte'; uma consulta seguinte já encontra a arte pronta).
@@ -729,6 +735,7 @@ def obter_imagem_produto(codbar):
             ('zaffari', buscar_e_salvar_imagem_zaffari),
             ('precomelhor', buscar_e_salvar_imagem_precomelhor),
             ('rissul', buscar_e_salvar_imagem_rissul),
+            ('sonda', buscar_e_salvar_imagem_sonda),
         ):
             resultado = buscar(codbar)
             if resultado[1] == 200:
@@ -740,7 +747,7 @@ def obter_imagem_produto(codbar):
                 return jsonify({'imagem_url': imagem_url, 'imagem_url_arte': None}), 200
 
     _registrar_busca_imagem(codbar, False, via='terminal')
-    return jsonify({'message': 'Imagem não encontrada em nenhuma fonte (local, Bing, Google, PrecoMelhor)'}), 404
+    return jsonify({'message': 'Imagem não encontrada em nenhuma fonte (local, Bing, Google, PrecoMelhor, Sonda)'}), 404
 
 
 _fila_arte = queue.Queue()
@@ -1155,6 +1162,60 @@ def buscar_e_salvar_imagem_rissul(codbar):
         return jsonify({'message': f'Error fetching or saving image from Rissul: {str(e)}'}), 500
 
 
+SONDA_IMG_TAMANHO = 800  # px — largura pedida ao endpoint de redimensionamento, ver abaixo
+
+
+def _buscar_imagem_real_sonda(ean):
+    """Busca a URL da foto real do produto no Sonda Delivery (sondadelivery.com.br), a partir de
+    um link de produto de exemplo mandado pelo usuário. Diferente da Zaffari/Rissul (API VTEX
+    limpa) e do PreçoMelhor (og:image), o Sonda roda em ASP.NET WebForms com busca via widget
+    SmartHint — sem API JSON pública conhecida — então a extração é via regex em cima do HTML da
+    própria página de busca (`/delivery/busca/<ean>`), que embute o SKU do primeiro resultado num
+    bloco de analytics (`gtag`) como `item_id: "<sku>"`. Funciona via requisição HTTP simples,
+    sem precisar executar JS (confirmado ao vivo).
+
+    O SKU é OBRIGATÓRIO, não um enfeite da URL: o endpoint de imagem real
+    (`/img.aspx/sku/<sku>/<tamanho>/<ean>.<ext>`) não dá erro com um SKU errado/fake — devolve
+    silenciosamente um placeholder genérico de tamanho FIXO (4434 bytes, sempre o mesmo,
+    confirmado testando com EANs e SKUs diferentes), então pular essa etapa levaria a "imagens"
+    que na verdade são todas a mesma imagem de "sem foto" disfarçada de foto real.
+
+    Só pega o PRIMEIRO `item_id` da página (primeiro resultado da busca) — mesmo risco que já
+    existe nas outras fontes raspadas (a busca pode não ser um match exato pro EAN pedido); a
+    defesa contra conteúdo realmente impróprio continua sendo `_imagem_e_segura`, não esta
+    função."""
+    try:
+        response = requests.get(
+            f'https://www.sondadelivery.com.br/delivery/busca/{ean}',
+            headers={'User-Agent': 'Mozilla/5.0'},
+            timeout=15,
+        )
+        response.raise_for_status()
+        match = re.search(r'item_id:\s*"(\d+)"', response.text)
+        if not match:
+            return None
+        sku = match.group(1)
+        return f'https://www.sondadelivery.com.br/img.aspx/sku/{sku}/{SONDA_IMG_TAMANHO}/{ean}.png'
+    except requests.RequestException as e:
+        logging.error(f"Erro ao buscar página de busca no Sonda Delivery: {e}")
+        return None
+
+
+def buscar_e_salvar_imagem_sonda(codbar):
+    """Busca e salva a imagem real do produto no Sonda Delivery (ver _buscar_imagem_real_sonda)."""
+    image_url = _buscar_imagem_real_sonda(codbar)
+    if not image_url:
+        logging.info(f"Nenhuma imagem real encontrada no Sonda Delivery para o produto {codbar}")
+        return jsonify({'message': 'No image found from Sonda'}), 404
+    try:
+        img_response = requests.get(image_url, timeout=15)
+        img_response.raise_for_status()
+        return save_image_from_response(img_response.content, codbar, origem='sonda')
+    except requests.RequestException as e:
+        logging.error(f"Erro ao buscar ou salvar imagem do Sonda Delivery para o produto {codbar}: {e}")
+        return jsonify({'message': f'Error fetching or saving image from Sonda: {str(e)}'}), 500
+
+
 def _url_e_imagem_valida(url, timeout=5):
     """Confere rapidamente (HEAD, com fallback pra GET em streaming se o servidor não suportar
     HEAD direito) se uma URL aponta de verdade pra um arquivo de imagem (Content-Type image/*),
@@ -1279,6 +1340,10 @@ def serialize_produto_with_image(produto):
                         rissul_result = buscar_e_salvar_imagem_rissul(produto.codbar)
                         if rissul_result[1] == 200:
                             img_url = rissul_result[0].get_json().get('imagem_url')
+                        else:
+                            sonda_result = buscar_e_salvar_imagem_sonda(produto.codbar)
+                            if sonda_result[1] == 200:
+                                img_url = sonda_result[0].get_json().get('imagem_url')
 
     return {
         'codbar': produto.codbar,
@@ -2202,7 +2267,7 @@ def _ler_todas_config():
 
 def _busca_imagem_online_ativa():
     """Kill switch de emergência (Configurações → Flags de Funcionamento): quando desativado, a
-    busca automática de foto crua em fontes externas (Bing/Google/Zaffari/PreçoMelhor/Rissul) é
+    busca automática de foto crua em fontes externas (Bing/Google/Zaffari/PreçoMelhor/Rissul/Sonda) é
     pulada inteiramente — só a imagem já salva localmente continua funcionando. Não afeta
     cadastro de nome/marca (fetch_product_from_*) nem o botão "Buscar com IA" (fluxos
     separados). Pedido do usuário depois de um incidente real com imagem imprópria vinda de uma
@@ -3397,17 +3462,27 @@ def admin_cadastrar_produto_manual(codbar):
     db.session.commit()
 
     imagem_salva = False
+    imagem_quarentenada = False
     file = request.files.get('file')
     if file and file.filename and allowed_file(file.filename):
-        filename = secure_filename(f'{codbar}.{file.filename.rsplit(".", 1)[1].lower()}')
-        file.save(os.path.join(IMAGES_FOLDER, filename))
-        _marcar_tem_foto(novo_produto, True)
-        db.session.commit()
-        imagem_salva = True
+        dados = file.read()
+        if not _imagem_e_segura(dados):
+            _quarentenar_imagem(dados, codbar, origem='upload_manual')
+            imagem_quarentenada = True
+        else:
+            filename = secure_filename(f'{codbar}.{file.filename.rsplit(".", 1)[1].lower()}')
+            with open(os.path.join(IMAGES_FOLDER, filename), 'wb') as f:
+                f.write(dados)
+            _marcar_tem_foto(novo_produto, True)
+            db.session.commit()
+            imagem_salva = True
 
     partes_msg = [f'Produto {codbar} cadastrado manualmente']
     partes_msg.append('com descrição' if description else 'sem descrição')
-    partes_msg.append('e com imagem' if imagem_salva else 'sem imagem')
+    if imagem_quarentenada:
+        partes_msg.append('- imagem enviada foi sinalizada pelo filtro de conteúdo e ficou em quarentena para revisão humana (não foi salva como foto do produto)')
+    else:
+        partes_msg.append('e com imagem' if imagem_salva else 'sem imagem')
     partes_msg.append('(nenhuma fonte externa foi consultada).')
 
     return jsonify({
@@ -3417,17 +3492,25 @@ def admin_cadastrar_produto_manual(codbar):
         'description': novo_produto.description,
         'marca': novo_produto.marca,
         'imagem_salva': imagem_salva,
+        'imagem_quarentenada': imagem_quarentenada,
     }), 201
 
 
 @app.route('/admin/buscar-imagem/<string:codbar>', methods=['POST'])
 @jwt_required()
 def admin_buscar_imagem(codbar):
-    """Busca a imagem crua (fundo branco) do produto: local -> Bing -> Google -> Zaffari -> PrecoMelhor -> Rissul,
-    salvando o resultado em IMAGES_FOLDER."""
+    """Busca a imagem crua (fundo branco) do produto: local -> Bing -> Google -> Zaffari -> PrecoMelhor -> Rissul -> Sonda,
+    salvando o resultado em IMAGES_FOLDER.
+
+    Cria um `Produto` mínimo (só codbar) se o EAN ainda não tiver cadastro, em vez de 404 —
+    mesmo padrão já usado em `deletar_imagem_produto`/`_quarentenar_imagem`. Necessário pra ação
+    "Buscar" funcionar também na página "Imagens Pendentes" (que lista EAN sem cadastro também,
+    ver `_registrar_busca_imagem`/`admin_historico_buscas`)."""
     produto = Produto.query.filter_by(codbar=codbar).first()
     if not produto:
-        return jsonify({'message': 'Produto não encontrado'}), 404
+        produto = Produto(codbar=codbar)
+        db.session.add(produto)
+        db.session.commit()
 
     img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
     if img_path:
@@ -3448,6 +3531,7 @@ def admin_buscar_imagem(codbar):
         ('zaffari', buscar_e_salvar_imagem_zaffari),
         ('precomelhor', buscar_e_salvar_imagem_precomelhor),
         ('rissul', buscar_e_salvar_imagem_rissul),
+        ('sonda', buscar_e_salvar_imagem_sonda),
     ):
         resultado = buscar(codbar)
         if resultado[1] == 200:
@@ -3456,7 +3540,7 @@ def admin_buscar_imagem(codbar):
             return jsonify({'message': f'Imagem encontrada via {fonte}', 'imagem_url': imagem_url, 'fonte': fonte}), 200
 
     _registrar_busca_imagem(codbar, False, via='admin')
-    return jsonify({'message': 'Nenhuma imagem encontrada em nenhuma das fontes (Bing, Google, PrecoMelhor)'}), 404
+    return jsonify({'message': 'Nenhuma imagem encontrada em nenhuma das fontes (Bing, Google, PrecoMelhor, Sonda)'}), 404
 
 
 @app.route('/admin/buscar-imagem-ia/<string:codbar>', methods=['POST'])
@@ -3854,13 +3938,23 @@ def admin_historico_buscas():
     """Histórico de buscas de imagem. `status` filtra por 'encontrado', 'nao_encontrado' ou
     'todos' (padrão).
 
-    'nao_encontrado' tem um formato DIFERENTE dos outros dois: em vez do log bruto (uma linha
-    por tentativa), retorna **agrupado por EAN** — um produto consultado sem sucesso em 12
+    'nao_encontrado' e 'sem_imagem' têm um formato DIFERENTE do log bruto: em vez de uma linha
+    por tentativa, retornam **agrupado por EAN** — um produto consultado sem sucesso em 12
     lojas diferentes antes virava 12 linhas idênticas na lista, obrigando quem for resolver a
     escanear/pular duplicatas manualmente. Agrupado, cada produto aparece uma vez com o total
     de tentativas (`tentativas`), ordenado do mais tentado pro menos tentado — prioriza o
     produto com mais impacto (mais consultas perdidas) primeiro. 'encontrado'/'todos' continuam
     como log bruto (útil pra auditoria/histórico), sem essa agregação.
+
+    Diferença entre os dois modos agrupados (mesma fonte de dados, `HistoricoBuscaImagem`, já
+    que `_registrar_busca_imagem` não exige mais cadastro pra gravar — ver docstring de lá):
+    - 'nao_encontrado' (aba Histórico): só produtos com `Produto` cadastrado — filtro aplicado
+      AQUI, na consulta, pra manter o comportamento de sempre (evitar "poluir" essa lista com
+      EAN que nem é produto nosso, ex. código escaneado errado no terminal).
+    - 'sem_imagem' (página "Imagens Pendentes"): TODOS os EAN sem imagem, cadastrados ou não —
+      pedido explícito do usuário ("não precisa ter cadastro do produto"), pra dar visibilidade
+      de qualquer barcode que o terminal tentou e não achou foto nenhuma, mesmo os que ainda nem
+      viraram produto no catálogo.
 
     Também filtra fora, na hora, qualquer EAN que já tenha uma foto crua salva agora (upload
     manual feito por fora do fluxo de busca não gera uma linha 'encontrado' no histórico, então
@@ -3870,12 +3964,14 @@ def admin_historico_buscas():
     status = request.args.get('status', 'todos')
     codbar_filtro = request.args.get('codbar', '').strip()
 
-    if status == 'nao_encontrado':
+    if status in ('nao_encontrado', 'sem_imagem'):
         grupo = db.session.query(
             HistoricoBuscaImagem.codbar,
             db.func.count(HistoricoBuscaImagem.id).label('tentativas'),
             db.func.max(HistoricoBuscaImagem.criado_em).label('ultima_tentativa'),
         ).filter(HistoricoBuscaImagem.encontrado == False)
+        if status == 'nao_encontrado':
+            grupo = grupo.filter(HistoricoBuscaImagem.codbar.in_(db.session.query(Produto.codbar)))
         if codbar_filtro:
             grupo = grupo.filter(HistoricoBuscaImagem.codbar.like(f'%{codbar_filtro}%'))
         grupo = grupo.group_by(HistoricoBuscaImagem.codbar).order_by(db.desc('tentativas'))
@@ -3890,9 +3986,11 @@ def admin_historico_buscas():
 
         codbars = {g.codbar for g in pagina}
         descricoes = {}
+        cadastrados = set()
         if codbars:
             for p in Produto.query.filter(Produto.codbar.in_(codbars)).all():
                 descricoes[p.codbar] = p.description
+                cadastrados.add(p.codbar)
 
         return jsonify({
             'agrupado': True,
@@ -3901,6 +3999,7 @@ def admin_historico_buscas():
                 'descricao': descricoes.get(g.codbar),
                 'tentativas': g.tentativas,
                 'ultima_tentativa': g.ultima_tentativa.isoformat() + 'Z',
+                'cadastrado': g.codbar in cadastrados,
             } for g in pagina],
             'total': total,
             'page': page,
