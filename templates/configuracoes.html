@@ -452,6 +452,21 @@
         .produto-card-actions { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: auto; padding-top: 0.5rem; }
         .produto-card-actions .btn-sm { flex: 1; min-width: 0; padding-left: 0.4rem; padding-right: 0.4rem; }
 
+        /* ===== Quarentena de imagens: miniatura borrada por padrão, revela com um clique ===== */
+        .quarentena-card-img { position: relative; width: 100%; aspect-ratio: 1/1; background: var(--bg); overflow: hidden; }
+        .quarentena-card-img img { width: 100%; height: 100%; object-fit: contain; filter: blur(22px); transition: filter 0.15s ease; }
+        .quarentena-card-img.revelada img { filter: none; }
+        .quarentena-reveal-btn {
+            position: absolute; inset: 0; width: 100%; height: 100%;
+            background: rgba(15,23,42,0.35); border: none; color: #fff; font-size: 0.78rem; font-weight: 600;
+            display: flex; align-items: center; justify-content: center; cursor: pointer;
+        }
+        .quarentena-card-img.revelada .quarentena-reveal-btn { display: none; }
+        .quarentena-card-badge { font-size: 0.68rem; padding: 0.15rem 0.5rem; border-radius: 999px; font-weight: 600; }
+        .quarentena-card-badge.pendente { background: #fef3c7; color: #92400e; }
+        .quarentena-card-badge.confirmada { background: #fee2e2; color: #991b1b; }
+        .quarentena-card-badge.liberada { background: #dcfce7; color: #166534; }
+
         .detail-panel {
             position: fixed; top: 0; right: 0; bottom: 0;
             width: 440px; max-width: 92vw;
@@ -584,6 +599,10 @@
             <button class="nav-tab" data-tab="historico" data-title="Histórico de Buscas" data-subtitle="Todas as consultas de imagem, encontradas ou não">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                 Histórico
+            </button>
+            <button class="nav-tab" data-tab="quarentena" data-title="Quarentena de Imagens" data-subtitle="Imagens rejeitadas pelo filtro de conteúdo, aguardando revisão">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                Quarentena <span class="badge" id="quarentena-badge-sidebar" style="display:none;"></span>
             </button>
             <button class="nav-tab" data-tab="whatsapp" data-title="WhatsApp" data-subtitle="Conecte um número via Evolution API para receber o resumo diário">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
@@ -1069,6 +1088,42 @@
                 </div>
             </div>
 
+            <!-- ===== TAB: QUARENTENA DE IMAGENS ===== -->
+            <div id="tab-quarentena" class="tab-content" style="display:none;">
+                <div class="card">
+                    <h2>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                        Quarentena de Imagens <span class="badge" id="quarentena-count-badge">carregando...</span>
+                    </h2>
+                    <p style="font-size:0.82rem; color:var(--muted); margin:0 0 0.85rem;">
+                        Imagens que o filtro de conteúdo (<code>_imagem_e_segura</code>) rejeitou automaticamente antes de salvar — ficam aqui pra revisão humana, em vez de descartadas sem deixar rastro. As miniaturas ficam borradas por padrão; clique em "Revelar" pra ver antes de decidir. O EAN já fica bloqueado automaticamente assim que a imagem cai aqui — "Confirmar" só apaga o arquivo e fecha o caso, "Liberar" restaura a imagem como foto oficial do produto (falso positivo do classificador).
+                    </p>
+                    <div id="alert-quarentena"></div>
+                    <div class="form-row" style="flex-direction:row; gap:0.5rem; flex-wrap:wrap; align-items:flex-end; margin-bottom:0.85rem;">
+                        <div style="flex:1; min-width:180px;">
+                            <label for="quarentena-status" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">Status</label>
+                            <select id="quarentena-status" style="width:100%;">
+                                <option value="pendente" selected>Pendentes de revisão</option>
+                                <option value="confirmada">Confirmadas (imprópria)</option>
+                                <option value="liberada">Liberadas (falso positivo)</option>
+                                <option value="todos">Todas</option>
+                            </select>
+                        </div>
+                        <button class="btn btn-primary" id="btn-quarentena-filtrar">Filtrar</button>
+                    </div>
+                    <div id="quarentena-list" class="consulta-grid" style="grid-template-columns:repeat(auto-fill, minmax(220px, 1fr));">
+                        <div class="empty-state">Carregando...</div>
+                    </div>
+                    <div id="quarentena-pagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:0.85rem; font-size:0.82rem; color:var(--muted);">
+                        <span id="quarentena-info">—</span>
+                        <span style="display:flex; gap:0.4rem;">
+                            <button class="btn btn-secondary btn-sm" id="btn-quarentena-prev">← Anterior</button>
+                            <button class="btn btn-secondary btn-sm" id="btn-quarentena-next">Próximo →</button>
+                        </span>
+                    </div>
+                </div>
+            </div>
+
             <!-- ===== TAB: WHATSAPP (Evolution API) ===== -->
             <div id="tab-whatsapp" class="tab-content" style="display:none;">
                 <div class="card">
@@ -1437,7 +1492,7 @@ $$('.nav-tab').forEach(btn => {
         const tab = btn.dataset.tab;
         $$('.tab-content').forEach(tc => tc.style.display = 'none');
         $(`#tab-${tab}`).style.display = 'block';
-        $('#content')?.classList.toggle('wide', tab === 'consulta' || tab === 'historico');
+        $('#content')?.classList.toggle('wide', tab === 'consulta' || tab === 'historico' || tab === 'quarentena');
 
         const titleEl = $('#page-title');
         const subtitleEl = $('#page-subtitle');
@@ -1449,6 +1504,7 @@ $$('.nav-tab').forEach(btn => {
         else pararPollingStatusSistema();
         if (tab === 'config') loadConfig();
         if (tab === 'historico') loadHistorico(1);
+        if (tab === 'quarentena') loadQuarentena(1);
         if (tab === 'whatsapp') loadWhatsapp();
 
         closeSidebarMobile();
@@ -2141,6 +2197,140 @@ function pararPollingStatusSistema() {
 }
 
 $('#btn-atualizar-status-sistema').addEventListener('click', loadStatusSistema);
+
+// ===== TAB: QUARENTENA DE IMAGENS =====
+// Imagens rejeitadas por _imagem_e_segura ficam aqui pra revisão humana (ver CLAUDE.md, seção
+// do incidente de imagem imprópria) — miniatura borrada por padrão (.quarentena-card-img),
+// revelada com um clique. As URLs de imagem são autenticadas (fora de static/, exige JWT), por
+// isso não dá pra usar <img src="..."> direto — busca via fetch() com authHeaders() e vira um
+// blob URL local.
+let quarentenaPage = 1;
+
+async function loadQuarentena(page = 1) {
+    quarentenaPage = page;
+    try {
+        const params = new URLSearchParams({
+            page, per_page: 20,
+            status: $('#quarentena-status').value || 'pendente',
+        });
+        const res = await fetch('/admin/quarentena?' + params.toString(), { headers: authHeaders() });
+        if (!res.ok) {
+            const errBody = await res.json().catch(() => ({}));
+            throw new Error(errBody.message || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+
+        $('#quarentena-count-badge').textContent = `${data.total} registro${data.total === 1 ? '' : 's'}`;
+        $('#quarentena-info').textContent = data.total > 0
+            ? `Página ${data.page} de ${data.pages} · ${data.total} registro(s)`
+            : 'Nenhum registro encontrado';
+        $('#btn-quarentena-prev').disabled = data.page <= 1;
+        $('#btn-quarentena-next').disabled = data.page >= data.pages;
+
+        const badgeSidebar = $('#quarentena-badge-sidebar');
+        if (badgeSidebar) {
+            const pendentesRes = $('#quarentena-status').value === 'pendente' ? data.total : null;
+            if (pendentesRes !== null && pendentesRes > 0) {
+                badgeSidebar.textContent = pendentesRes;
+                badgeSidebar.style.display = 'inline-flex';
+            } else if (pendentesRes === 0) {
+                badgeSidebar.style.display = 'none';
+            }
+        }
+
+        const list = $('#quarentena-list');
+        if (!data.registros.length) {
+            list.innerHTML = `<div class="empty-state">Nenhuma imagem em quarentena com esse filtro.</div>`;
+            return;
+        }
+
+        list.innerHTML = data.registros.map(r => {
+            const dataFmt = new Date(r.criado_em).toLocaleString('pt-BR');
+            const decisao = r.decisao || 'pendente';
+            const badgeTxt = decisao === 'pendente' ? 'Pendente' : decisao === 'confirmada' ? 'Confirmada' : 'Liberada';
+            const acoes = decisao === 'pendente' && r.tem_arquivo
+                ? `<button class="btn btn-danger btn-sm" data-action="quarentena-confirmar" data-id="${r.id}">Confirmar</button>
+                   <button class="btn btn-secondary btn-sm" data-action="quarentena-liberar" data-id="${r.id}">Liberar (falso positivo)</button>`
+                : '';
+            return `<div class="produto-card" data-quarentena-id="${r.id}">
+                <div class="quarentena-card-img" id="quarentena-img-${r.id}">
+                    ${r.tem_arquivo ? `<button type="button" class="quarentena-reveal-btn" data-action="quarentena-revelar" data-id="${r.id}">👁 Revelar</button>` : ''}
+                </div>
+                <div class="produto-card-body">
+                    <div style="display:flex; justify-content:space-between; align-items:center; gap:0.4rem;">
+                        <span class="quarentena-card-badge ${decisao}">${badgeTxt}</span>
+                        <span class="produto-card-ean">${escHtml(r.codbar)}</span>
+                    </div>
+                    <div class="produto-card-desc">${escHtml(r.descricao || 'Descrição não disponível')}</div>
+                    <div class="produto-card-marca">Origem: ${escHtml(r.origem || '—')} · ${dataFmt}</div>
+                    <div class="produto-card-actions">${acoes}</div>
+                </div>
+            </div>`;
+        }).join('');
+    } catch (e) {
+        $('#quarentena-list').innerHTML = `<div class="empty-state">Erro ao carregar quarentena.</div>`;
+        showAlert('alert-quarentena', `Erro: ${e.message}`, 'error');
+    }
+}
+
+$('#btn-quarentena-filtrar').addEventListener('click', () => loadQuarentena(1));
+$('#quarentena-status').addEventListener('change', () => loadQuarentena(1));
+$('#btn-quarentena-prev').addEventListener('click', () => { if (quarentenaPage > 1) loadQuarentena(quarentenaPage - 1); });
+$('#btn-quarentena-next').addEventListener('click', () => loadQuarentena(quarentenaPage + 1));
+
+$('#quarentena-list').addEventListener('click', async (e) => {
+    const revelarBtn = e.target.closest('[data-action="quarentena-revelar"]');
+    if (revelarBtn) {
+        const id = revelarBtn.dataset.id;
+        const container = $(`#quarentena-img-${id}`);
+        revelarBtn.disabled = true;
+        revelarBtn.textContent = 'Carregando...';
+        try {
+            const res = await fetch(`/admin/quarentena-imagem/${id}`, { headers: authHeaders() });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const img = document.createElement('img');
+            img.src = url;
+            container.appendChild(img);
+            container.classList.add('revelada');
+        } catch (err) {
+            toast('Erro ao carregar imagem: ' + err.message, 'error');
+            revelarBtn.disabled = false;
+            revelarBtn.textContent = '👁 Revelar';
+        }
+        return;
+    }
+
+    const confirmarBtn = e.target.closest('[data-action="quarentena-confirmar"]');
+    if (confirmarBtn) {
+        if (!confirm('Confirmar que essa imagem é mesmo imprópria? O arquivo será apagado permanentemente (o EAN já continua bloqueado).')) return;
+        try {
+            const res = await fetch(`/admin/quarentena/${confirmarBtn.dataset.id}/confirmar`, { method: 'POST', headers: authHeaders() });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+            toast(data.message || 'Confirmado', 'success');
+            loadQuarentena(quarentenaPage);
+        } catch (err) {
+            toast('Erro: ' + err.message, 'error');
+        }
+        return;
+    }
+
+    const liberarBtn = e.target.closest('[data-action="quarentena-liberar"]');
+    if (liberarBtn) {
+        if (!confirm('Liberar essa imagem como foto oficial do produto? Isso desbloqueia o EAN e restaura a imagem — use só se tiver certeza que é um falso positivo do classificador.')) return;
+        try {
+            const res = await fetch(`/admin/quarentena/${liberarBtn.dataset.id}/liberar`, { method: 'POST', headers: authHeaders() });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+            toast(data.message || 'Liberado', 'success');
+            loadQuarentena(quarentenaPage);
+        } catch (err) {
+            toast('Erro: ' + err.message, 'error');
+        }
+    }
+});
 
 // ===== TAB: WHATSAPP (Evolution API) =====
 let waStatusTimer = null;

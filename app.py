@@ -1,4 +1,5 @@
 import os
+import io
 import sys
 import csv
 import sqlite3
@@ -14,7 +15,7 @@ import requests
 from io import StringIO, BytesIO
 from io import StringIO
 from datetime import datetime, timedelta
-from flask import Flask, request, jsonify, url_for, render_template, redirect
+from flask import Flask, request, jsonify, url_for, render_template, redirect, send_file
 from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, verify_jwt_in_request
 from werkzeug.utils import secure_filename
@@ -54,6 +55,11 @@ else:
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'}
 IMAGES_FOLDER = 'static/imgs_produtos'
 PROCESSED_IMAGES_FOLDER = 'static/processed_images'
+# Pasta de quarentena (imagens rejeitadas por _imagem_e_segura) — DELIBERADAMENTE fora de
+# static/, que o Flask serve publicamente sem autenticação nenhuma. Uma imagem imprópria não
+# pode acabar acessível via URL direta só porque foi "só" pra quarentena — o único jeito de ver
+# o conteúdo é pela rota autenticada /admin/quarentena-imagem/<id> (ver seção de rotas).
+QUARENTENA_FOLDER = 'quarentena_imagens'
 AUDIO_FOLDER = 'static/audios'
 ARTES_FOLDER = 'static/artes_geradas'
 FONT_PATH = 'static/fonts/Montserrat-Variable.ttf'
@@ -117,6 +123,7 @@ os.makedirs(IMAGES_FOLDER, exist_ok=True)
 os.makedirs(PROCESSED_IMAGES_FOLDER, exist_ok=True)
 os.makedirs(AUDIO_FOLDER, exist_ok=True)
 os.makedirs(ARTES_FOLDER, exist_ok=True)
+os.makedirs(QUARENTENA_FOLDER, exist_ok=True)
 
 # Helper functions
 def allowed_file(filename):
@@ -228,6 +235,31 @@ class HistoricoBuscaImagem(db.Model):
     via = db.Column(db.String(20), nullable=False, default='terminal')  # terminal, admin
     criado_em = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
     notificado_em = db.Column(db.DateTime, nullable=True)
+
+
+class ImagemQuarentena(db.Model):
+    """Fila de auditoria de imagens rejeitadas pelo filtro de conteúdo (`_imagem_e_segura`).
+
+    Pedido do usuário depois do incidente do EAN 7898909864181: em vez de só descartar
+    silenciosamente uma imagem classificada como imprópria (comportamento anterior), o sistema
+    agora GUARDA o arquivo numa pasta separada (`QUARENTENA_FOLDER`, fora de `static/`, nunca
+    servida sem autenticação) e cria uma linha aqui, pra um humano poder revisar depois — tanto
+    pra confirmar casos reais (evidência, útil pra reportar a fonte externa) quanto pra pegar
+    falsos positivos do classificador (a imagem pode ser liberada e volta a ser a foto oficial
+    do produto).
+
+    `decisao` começa `None` (pendente de revisão) e vira `'confirmada'` (era mesmo imprópria —
+    arquivo apagado, só o registro fica) ou `'liberada'` (falso positivo — arquivo movido de
+    volta pra `IMAGES_FOLDER`/`PROCESSED_IMAGES_FOLDER`, produto desbloqueado). `arquivo` vira
+    `None` nos dois casos, já que o arquivo físico não fica mais na pasta de quarentena depois
+    de uma decisão — só enquanto `decisao IS NULL` (pendente) o arquivo ainda existe lá."""
+    id = db.Column(db.Integer, primary_key=True)
+    codbar = db.Column(db.String(64), nullable=False, index=True)
+    arquivo = db.Column(db.String(255), nullable=True)  # nome do arquivo em QUARENTENA_FOLDER; None depois de revisado
+    origem = db.Column(db.String(30), nullable=True)  # de onde veio a imagem (bing/google/zaffari/precomelhor/rissul/ia/cosmos/...)
+    criado_em = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    decisao = db.Column(db.String(20), nullable=True, index=True)  # None=pendente, 'confirmada', 'liberada'
+    revisado_em = db.Column(db.DateTime, nullable=True)
 
 
 def _registrar_busca_imagem(codbar, encontrado, origem=None, via='terminal'):
@@ -882,14 +914,46 @@ def _imagem_e_segura(image_data):
         return True
 
 
-def save_image_from_response(image_data, codbar):
+def _quarentenar_imagem(image_data, codbar, origem=None):
+    """Salva uma imagem rejeitada por `_imagem_e_segura` na pasta de quarentena + registra uma
+    linha em `ImagemQuarentena` pra revisão humana depois (aba "Quarentena" do painel), em vez
+    de só descartar silenciosamente como acontecia antes. Nome do arquivo leva timestamp pra não
+    colidir se o mesmo EAN for rejeitado mais de uma vez (ex.: tentativas em fontes diferentes).
+
+    Bloqueia a busca automática de imagem desse EAN na hora (mesma lógica de
+    `DELETE /deletar-imagem-produto/<codbar>?bloquear=true`, inclusive criando um `Produto`
+    mínimo se o EAN ainda não existir cadastrado) — erra pro lado de proteger o cliente por
+    padrão; a revisão humana decide DEPOIS se era falso positivo (aí libera, ver rota
+    `/admin/quarentena/<id>/liberar`), não antes."""
+    nome_arquivo = f'{codbar}_{int(datetime.utcnow().timestamp())}.jpg'
+    caminho = os.path.join(QUARENTENA_FOLDER, nome_arquivo)
+    try:
+        with open(caminho, 'wb') as f:
+            f.write(image_data)
+        db.session.add(ImagemQuarentena(codbar=codbar, arquivo=nome_arquivo, origem=origem))
+
+        produto = Produto.query.filter_by(codbar=codbar).first()
+        if not produto:
+            produto = Produto(codbar=codbar)
+            db.session.add(produto)
+        produto.busca_imagem_bloqueada = True
+
+        db.session.commit()
+        logging.error(f"Imagem de {codbar} (origem={origem}) colocada em quarentena pra revisão: {caminho}")
+    except Exception as e:
+        db.session.rollback()
+        logging.error(f"Erro ao colocar imagem de {codbar} em quarentena: {e}")
+
+
+def save_image_from_response(image_data, codbar, origem=None):
     """Salva a imagem a partir da resposta de uma requisição"""
     original_file_path = os.path.join(IMAGES_FOLDER, f'{codbar}.jpg')
     processed_file_path = os.path.join(PROCESSED_IMAGES_FOLDER, f'{codbar}.png')  # Mudamos para .png para suportar transparência
 
     if not _imagem_e_segura(image_data):
-        logging.error(f"Imagem REJEITADA por conteúdo impróprio pro produto {codbar} — não foi salva.")
-        return jsonify({'message': 'Imagem rejeitada: conteúdo classificado como impróprio'}), 422
+        logging.error(f"Imagem REJEITADA por conteúdo impróprio pro produto {codbar} (origem={origem}) — indo pra quarentena.")
+        _quarentenar_imagem(image_data, codbar, origem)
+        return jsonify({'message': 'Imagem rejeitada: conteúdo classificado como impróprio (em quarentena pra revisão)'}), 422
 
     try:
         # Salva a imagem original
@@ -935,7 +999,7 @@ def buscar_e_salvar_imagem_bing(codbar):
                 try:
                     img_response = requests.get(image_url)
                     img_response.raise_for_status()
-                    return save_image_from_response(img_response.content, codbar)
+                    return save_image_from_response(img_response.content, codbar, origem='bing')
                 except requests.RequestException as e:
                     logging.warning(f"Erro ao baixar a imagem do URL {image_url}: {e}")
             return jsonify({'message': 'No valid image found from Bing'}), 404
@@ -962,7 +1026,7 @@ def buscar_e_salvar_imagem_google(codbar):
                 try:
                     img_response = requests.get(image_url)
                     img_response.raise_for_status()
-                    return save_image_from_response(img_response.content, codbar)
+                    return save_image_from_response(img_response.content, codbar, origem='google')
                 except requests.RequestException as e:
                     logging.warning(f"Erro ao baixar a imagem do URL {image_url}: {e}")
             return jsonify({'message': 'No valid image found from Google'}), 404
@@ -1015,7 +1079,7 @@ def buscar_e_salvar_imagem_precomelhor(codbar):
     try:
         img_response = requests.get(image_url, timeout=15)
         img_response.raise_for_status()
-        return save_image_from_response(img_response.content, codbar)
+        return save_image_from_response(img_response.content, codbar, origem='precomelhor')
     except requests.RequestException as e:
         logging.error(f"Erro ao buscar ou salvar imagem do PreçoMelhor para o produto {codbar}: {e}")
         return jsonify({'message': f'Error fetching or saving image from PrecoMelhor: {str(e)}'}), 500
@@ -1042,7 +1106,7 @@ def buscar_e_salvar_imagem_zaffari(codbar):
                         try:
                             img_response = requests.get(image_url, timeout=15)
                             img_response.raise_for_status()
-                            return save_image_from_response(img_response.content, codbar)
+                            return save_image_from_response(img_response.content, codbar, origem='zaffari')
                         except requests.RequestException as e:
                             logging.warning(f"Erro ao baixar a imagem do URL {image_url}: {e}")
             return jsonify({'message': 'No valid image found from Zaffari'}), 404
@@ -1079,7 +1143,7 @@ def buscar_e_salvar_imagem_rissul(codbar):
                         try:
                             img_response = requests.get(image_url, timeout=15)
                             img_response.raise_for_status()
-                            return save_image_from_response(img_response.content, codbar)
+                            return save_image_from_response(img_response.content, codbar, origem='rissul')
                         except requests.RequestException as e:
                             logging.warning(f"Erro ao baixar a imagem do URL {image_url}: {e}")
             return jsonify({'message': 'No valid image found from Rissul'}), 404
@@ -2097,7 +2161,7 @@ def consultar_ou_cadastrar_produto(codbar):
             try:
                 img_response = requests.get(thumbnail, timeout=15)
                 img_response.raise_for_status()
-                save_image_from_response(img_response.content, codbar)
+                save_image_from_response(img_response.content, codbar, origem=fonte)
             except requests.RequestException as e:
                 logging.warning(f"Não foi possível salvar a imagem de {fonte} para {codbar}: {e}")
 
@@ -3286,7 +3350,7 @@ def admin_cadastrar_produto_cosmos(codbar):
         try:
             img_response = requests.get(thumbnail, timeout=15)
             img_response.raise_for_status()
-            save_image_from_response(img_response.content, codbar)
+            save_image_from_response(img_response.content, codbar, origem='cosmos')
         except requests.RequestException as e:
             logging.warning(f"Não foi possível salvar a imagem do Cosmos para {codbar}: {e}")
 
@@ -3436,7 +3500,7 @@ def admin_definir_imagem_url(codbar):
         logging.warning(f"Erro ao baixar imagem escolhida na busca com IA para {codbar}: {e}")
         return jsonify({'message': 'Não foi possível baixar essa imagem'}), 400
 
-    resultado = save_image_from_response(img_response.content, codbar)
+    resultado = save_image_from_response(img_response.content, codbar, origem='ia')
     if resultado[1] == 200:
         _registrar_busca_imagem(codbar, True, origem='ia', via='admin')
     return resultado
@@ -3877,6 +3941,139 @@ def admin_historico_buscas():
         'per_page': per_page,
         'pages': (total + per_page - 1) // per_page if total > 0 else 1,
     })
+
+
+@app.route('/admin/quarentena', methods=['GET'])
+@jwt_required()
+def admin_quarentena():
+    """Lista as imagens em quarentena (rejeitadas por `_imagem_e_segura`, ver docstring de
+    `ImagemQuarentena`) pra revisão humana. `status` filtra por 'pendente' (padrão — ainda sem
+    decisão), 'confirmada', 'liberada' ou 'todos'."""
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 20, type=int)
+    status = request.args.get('status', 'pendente')
+
+    query = ImagemQuarentena.query
+    if status == 'pendente':
+        query = query.filter(ImagemQuarentena.decisao.is_(None))
+    elif status in ('confirmada', 'liberada'):
+        query = query.filter_by(decisao=status)
+
+    query = query.order_by(ImagemQuarentena.criado_em.desc())
+    total = query.count()
+    registros = query.offset((page - 1) * per_page).limit(per_page).all()
+
+    codbars = {r.codbar for r in registros}
+    descricoes = {}
+    if codbars:
+        for p in Produto.query.filter(Produto.codbar.in_(codbars)).all():
+            descricoes[p.codbar] = p.description
+
+    return jsonify({
+        'registros': [{
+            'id': r.id,
+            'codbar': r.codbar,
+            'descricao': descricoes.get(r.codbar),
+            'origem': r.origem,
+            'criado_em': r.criado_em.isoformat() + 'Z',
+            'decisao': r.decisao,
+            'revisado_em': r.revisado_em.isoformat() + 'Z' if r.revisado_em else None,
+            'tem_arquivo': r.arquivo is not None,
+        } for r in registros],
+        'total': total,
+        'page': page,
+        'per_page': per_page,
+        'pages': (total + per_page - 1) // per_page if total > 0 else 1,
+    })
+
+
+@app.route('/admin/quarentena-imagem/<int:quarentena_id>', methods=['GET'])
+@jwt_required()
+def admin_quarentena_imagem(quarentena_id):
+    """Serve o ARQUIVO de uma entrada em quarentena — rota autenticada de propósito
+    (`QUARENTENA_FOLDER` fica fora de `static/`, nunca acessível sem passar por aqui e sem JWT
+    válido). Só existe enquanto a entrada estiver pendente ou tiver sido 'confirmada' recém — o
+    arquivo físico é apagado assim que uma decisão é tomada (ver rotas de confirmar/liberar),
+    então uma entrada antiga sem `arquivo` retorna 404."""
+    entrada = ImagemQuarentena.query.get_or_404(quarentena_id)
+    if not entrada.arquivo:
+        return jsonify({'message': 'Arquivo não existe mais (já revisado)'}), 404
+    caminho = os.path.join(QUARENTENA_FOLDER, entrada.arquivo)
+    if not os.path.exists(caminho):
+        return jsonify({'message': 'Arquivo não encontrado no disco'}), 404
+    # Lê pra memória em vez de `send_file(caminho, ...)` direto — no Windows, send_file num
+    # caminho de arquivo pode deixar um handle aberto por um instante além do fim da resposta,
+    # e como essa mesma imagem costuma ser apagada logo em seguida (rota de confirmar/liberar,
+    # chamada pelo usuário assim que termina de revisar), isso causava um WinError 32 real
+    # ("arquivo já está sendo usado por outro processo") pego testando o fluxo completo ao vivo.
+    # Servindo de um BytesIO, o handle do arquivo em disco é fechado assim que a leitura termina.
+    with open(caminho, 'rb') as f:
+        dados = f.read()
+    return send_file(io.BytesIO(dados), mimetype='image/jpeg')
+
+
+@app.route('/admin/quarentena/<int:quarentena_id>/confirmar', methods=['POST'])
+@jwt_required()
+def admin_quarentena_confirmar(quarentena_id):
+    """Humano revisou e confirma que a imagem é mesmo imprópria: apaga o arquivo físico da
+    quarentena (não faz sentido guardar o conteúdo indefinidamente só pelo registro existir) e
+    marca a decisão. O bloqueio permanente do EAN (`Produto.busca_imagem_bloqueada`) já foi
+    aplicado no momento da rejeição (ver `_quarentenar_imagem`) — continua valendo, essa rota só
+    fecha o ciclo de revisão."""
+    entrada = ImagemQuarentena.query.get_or_404(quarentena_id)
+    if entrada.arquivo:
+        caminho = os.path.join(QUARENTENA_FOLDER, entrada.arquivo)
+        if os.path.exists(caminho):
+            os.remove(caminho)
+        entrada.arquivo = None
+    entrada.decisao = 'confirmada'
+    entrada.revisado_em = datetime.utcnow()
+    db.session.commit()
+    return jsonify({'message': 'Confirmado como imagem imprópria — arquivo removido, EAN continua bloqueado.'}), 200
+
+
+@app.route('/admin/quarentena/<int:quarentena_id>/liberar', methods=['POST'])
+@jwt_required()
+def admin_quarentena_liberar(quarentena_id):
+    """Humano revisou e considera FALSO POSITIVO do classificador: move o arquivo de volta pra
+    `IMAGES_FOLDER`, reprocessa (remoção de fundo, igual `save_image_from_response`), desbloqueia
+    o EAN e marca `tem_foto=True`. Não passa pelo classificador de novo — a decisão humana aqui é
+    definitiva, não faz sentido rejeitar de novo automaticamente algo que um humano acabou de
+    revisar e aprovar."""
+    entrada = ImagemQuarentena.query.get_or_404(quarentena_id)
+    if not entrada.arquivo:
+        return jsonify({'message': 'Arquivo não existe mais — não é possível liberar (já revisado antes ou arquivo perdido).'}), 400
+
+    caminho_quarentena = os.path.join(QUARENTENA_FOLDER, entrada.arquivo)
+    if not os.path.exists(caminho_quarentena):
+        return jsonify({'message': 'Arquivo não encontrado no disco'}), 404
+
+    try:
+        original_file_path = os.path.join(IMAGES_FOLDER, f'{entrada.codbar}.jpg')
+        processed_file_path = os.path.join(PROCESSED_IMAGES_FOLDER, f'{entrada.codbar}.png')
+        with open(caminho_quarentena, 'rb') as f:
+            image_data = f.read()
+        with open(original_file_path, 'wb') as f:
+            f.write(image_data)
+        input_image = Image.open(original_file_path)
+        save_image_with_background_removal(input_image, processed_file_path)
+
+        os.remove(caminho_quarentena)
+        entrada.arquivo = None
+        entrada.decisao = 'liberada'
+        entrada.revisado_em = datetime.utcnow()
+
+        produto = Produto.query.filter_by(codbar=entrada.codbar).first()
+        if produto:
+            produto.busca_imagem_bloqueada = False
+        _marcar_tem_foto(entrada.codbar, True)
+
+        db.session.commit()
+        return jsonify({'message': 'Liberado como falso positivo — imagem restaurada como foto do produto, EAN desbloqueado.'}), 200
+    except Exception as e:
+        db.session.rollback()
+        logging.error(f"Erro ao liberar imagem em quarentena {quarentena_id}: {e}")
+        return jsonify({'message': f'Erro ao liberar: {e}'}), 500
 
 
 @app.route('/admin/status-sistema', methods=['GET'])

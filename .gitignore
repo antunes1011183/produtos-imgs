@@ -14,6 +14,10 @@ static/
 instance/
 instance/produtos.db
 
+# Imagens rejeitadas pelo filtro de conteúdo (ver _imagem_e_segura no CLAUDE.md) — nunca
+# versionar, mesmo motivo do static/: dado local, e nesse caso especificamente sensível.
+quarentena_imagens/
+
 # Logs
 *.log
 
