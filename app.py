@@ -757,6 +757,7 @@ def obter_imagem_produto(codbar):
         return jsonify({'imagem_url': img_url, 'imagem_url_arte': arte_url}), 200
 
     if _pode_buscar_imagem_online(codbar):
+        cfg_fontes = _ler_todas_config()
         for fonte, buscar in (
             ('bing', buscar_e_salvar_imagem_bing),
             ('google', buscar_e_salvar_imagem_google),
@@ -766,6 +767,8 @@ def obter_imagem_produto(codbar):
             ('sonda', buscar_e_salvar_imagem_sonda),
             ('unidasul', buscar_e_salvar_imagem_unidasul),
         ):
+            if not _fonte_imagem_ativa(fonte, cfg_fontes):
+                continue
             resultado = buscar(codbar)
             if resultado[1] == 200:
                 imagem_url = resultado[0].get_json().get('imagem_url')
@@ -993,10 +996,17 @@ def save_image_from_response(image_data, codbar, origem=None):
     nenhum, já que não sobra mais uma cópia crua como rede de segurança."""
     processed_file_path = os.path.join(PROCESSED_IMAGES_FOLDER, f'{codbar}.png')
 
-    if not _imagem_e_segura(image_data):
-        logging.error(f"Imagem REJEITADA por conteúdo impróprio pro produto {codbar} (origem={origem}) — indo pra quarentena.")
+    reprovada = not _imagem_e_segura(image_data)
+    revisao_obrigatoria = bool(origem) and _fonte_exige_revisao(origem)
+    if reprovada or revisao_obrigatoria:
+        if reprovada:
+            logging.error(f"Imagem REJEITADA por conteúdo impróprio pro produto {codbar} (origem={origem}) — indo pra quarentena.")
+            mensagem = 'Imagem rejeitada: conteúdo classificado como impróprio (em quarentena pra revisão)'
+        else:
+            logging.warning(f"Imagem de {codbar} (origem={origem}) indo pra quarentena: fonte configurada pra exigir revisão humana.")
+            mensagem = f'Imagem enviada pra revisão humana (fonte "{origem}" configurada pra exigir revisão em Configurações → Fontes de Imagem)'
         _quarentenar_imagem(image_data, codbar, origem)
-        return jsonify({'message': 'Imagem rejeitada: conteúdo classificado como impróprio (em quarentena pra revisão)'}), 422
+        return jsonify({'message': mensagem}), 422
 
     try:
         input_image = Image.open(io.BytesIO(image_data))
@@ -1397,33 +1407,26 @@ def serialize_produto_with_image(produto):
     if img_path:
         img_url = _static_url(img_path)
     elif _busca_imagem_online_ativa() and not produto.busca_imagem_bloqueada:
-        bing_result = buscar_e_salvar_imagem_bing(produto.codbar)
-        if bing_result[1] == 200:
-            img_url = bing_result[0].get_json().get('imagem_url')
-        else:
-            google_result = buscar_e_salvar_imagem_google(produto.codbar)
-            if google_result[1] == 200:
-                img_url = google_result[0].get_json().get('imagem_url')
-            else:
-                zaffari_result = buscar_e_salvar_imagem_zaffari(produto.codbar)
-                if zaffari_result[1] == 200:
-                    img_url = zaffari_result[0].get_json().get('imagem_url')
-                else:
-                    precomelhor_result = buscar_e_salvar_imagem_precomelhor(produto.codbar)
-                    if precomelhor_result[1] == 200:
-                        img_url = precomelhor_result[0].get_json().get('imagem_url')
-                    else:
-                        rissul_result = buscar_e_salvar_imagem_rissul(produto.codbar)
-                        if rissul_result[1] == 200:
-                            img_url = rissul_result[0].get_json().get('imagem_url')
-                        else:
-                            sonda_result = buscar_e_salvar_imagem_sonda(produto.codbar)
-                            if sonda_result[1] == 200:
-                                img_url = sonda_result[0].get_json().get('imagem_url')
-                            else:
-                                unidasul_result = buscar_e_salvar_imagem_unidasul(produto.codbar)
-                                if unidasul_result[1] == 200:
-                                    img_url = unidasul_result[0].get_json().get('imagem_url')
+        # Mesmo padrão em loop de obter_imagem_produto/admin_buscar_imagem (antes era um
+        # if/elif aninhado repetindo a mesma lógica 7 vezes) — refatorado ao adicionar o toggle
+        # individual por fonte, já que checar `_fonte_imagem_ativa` dentro de um loop é bem mais
+        # simples do que dentro de um if/elif aninhado.
+        cfg_fontes = _ler_todas_config()
+        for fonte, buscar in (
+            ('bing', buscar_e_salvar_imagem_bing),
+            ('google', buscar_e_salvar_imagem_google),
+            ('zaffari', buscar_e_salvar_imagem_zaffari),
+            ('precomelhor', buscar_e_salvar_imagem_precomelhor),
+            ('rissul', buscar_e_salvar_imagem_rissul),
+            ('sonda', buscar_e_salvar_imagem_sonda),
+            ('unidasul', buscar_e_salvar_imagem_unidasul),
+        ):
+            if not _fonte_imagem_ativa(fonte, cfg_fontes):
+                continue
+            resultado = buscar(produto.codbar)
+            if resultado[1] == 200:
+                img_url = resultado[0].get_json().get('imagem_url')
+                break
 
     return {
         'codbar': produto.codbar,
@@ -2355,6 +2358,37 @@ def _busca_imagem_online_ativa():
     return _ler_todas_config().get('BUSCA_IMAGEM_ONLINE_ATIVA', 'true') == 'true'
 
 
+# Toda fonte externa de imagem que passa pelas 3 cadeias de busca (obter_imagem_produto,
+# admin_buscar_imagem, serialize_produto_with_image) — usada tanto pro toggle individual
+# (`_fonte_imagem_ativa`) quanto pra montar a UI de Configurações e o JSON de status.
+FONTES_IMAGEM_DISPONIVEIS = ['bing', 'google', 'zaffari', 'precomelhor', 'rissul', 'sonda', 'unidasul']
+
+
+def _fonte_imagem_ativa(fonte, cfg=None):
+    """Toggle individual por fonte (Configurações → Fontes de Imagem), complementar ao kill
+    switch geral (`_busca_imagem_online_ativa`, que desliga TODAS de uma vez). Pedido do
+    usuário: poder desligar só uma fonte específica (ex.: uma que esteja trazendo imagem errada
+    de novo) sem precisar pausar a busca inteira. Config key = `FONTE_<NOME>_ATIVA`
+    (`FONTE_BING_ATIVA`, `FONTE_SONDA_ATIVA`, etc.), default `'true'` — uma fonte nova só fica
+    "desligada por padrão" se alguém desligar explicitamente no painel. `cfg` opcional evita
+    reler `_ler_todas_config()` a cada fonte dentro do mesmo loop de busca."""
+    cfg = cfg if cfg is not None else _ler_todas_config()
+    return cfg.get(f'FONTE_{fonte.upper()}_ATIVA', 'true') == 'true'
+
+
+def _fonte_exige_revisao(fonte, cfg=None):
+    """Segunda flag por fonte (Configurações → Fontes de Imagem), independente do toggle
+    liga/desliga acima: quando marcada, a fonte continua buscando normalmente, mas TODA imagem
+    que vier dela cai em quarentena pra revisão humana antes de virar a foto do produto — mesmo
+    que `_imagem_e_segura` classifique como segura. Pedido do usuário depois do incidente com o
+    PreçoMelhor: poder exigir revisão manual de uma fonte específica sem precisar desligá-la por
+    completo (ela pode continuar trazendo imagens boas na maioria das vezes). Checada dentro de
+    `save_image_from_response`, junto da checagem de conteúdo impróprio — default `'false'`
+    (nenhuma fonte exige revisão até alguém ligar essa flag explicitamente)."""
+    cfg = cfg if cfg is not None else _ler_todas_config()
+    return cfg.get(f'FONTE_{fonte.upper()}_REVISAO_OBRIGATORIA', 'false') == 'true'
+
+
 @app.before_request
 def _proxy_imagens_para_vps():
     """Migração pra VPS (Hostinger): quando ativo (Configurações → "Proxy de imagens pra VPS"),
@@ -2541,6 +2575,32 @@ def configuracoes():
             set_config('BUSCA_IMAGEM_ONLINE_ATIVA', str(ativa).lower())
             return jsonify({'message': f'BUSCA_IMAGEM_ONLINE_ATIVA = {ativa}', 'saved': True})
 
+        elif action.startswith('toggle_fonte_'):
+            # Dois toggles independentes por fonte, mesma action genérica pros dois (o nome da
+            # fonte + qual dos dois vem do próprio nome da action, que já bate com o padrão que
+            # o fallback genérico do toggle no frontend gera sozinho a partir do data-key):
+            # - toggle_fonte_<x>_ativa (ver _fonte_imagem_ativa): liga/desliga a fonte de vez.
+            # - toggle_fonte_<x>_revisao_obrigatoria (ver _fonte_exige_revisao): fonte continua
+            #   ativa, mas TODA imagem que vier dela cai em quarentena pra revisão humana, mesmo
+            #   que o classificador aprove — pedido do usuário pra poder exigir revisão manual
+            #   de uma fonte específica (ex.: PreçoMelhor, depois do incidente) sem precisar
+            #   desligá-la por completo.
+            resto = action[len('toggle_fonte_'):]
+            if resto.endswith('_ativa'):
+                fonte = resto[:-len('_ativa')]
+                config_key = f'FONTE_{fonte.upper()}_ATIVA'
+            elif resto.endswith('_revisao_obrigatoria'):
+                fonte = resto[:-len('_revisao_obrigatoria')]
+                config_key = f'FONTE_{fonte.upper()}_REVISAO_OBRIGATORIA'
+            else:
+                return jsonify({'error': 'Ação desconhecida'}), 400
+            if fonte not in FONTES_IMAGEM_DISPONIVEIS:
+                return jsonify({'error': 'Fonte desconhecida'}), 400
+            val = data.get(config_key)
+            ativa = (val == 'true' or val is True)
+            set_config(config_key, str(ativa).lower())
+            return jsonify({'message': f'{config_key} = {ativa}', 'saved': True})
+
         elif action == 'save_proxy_imagens_vps':
             # Migração pra VPS (ver _proxy_imagens_para_vps) — salva a URL de destino e o toggle
             # juntos na mesma ação, pra nunca dar pra ativar o proxy sem uma URL configurada.
@@ -2601,6 +2661,8 @@ def configuracoes():
         'use_openai': cfg.get('USE_OPENAI_SUGESTIONS', 'true') == 'true',
         'rembg_enabled': cfg.get('REMBG_ENABLED', 'false') == 'true',
         'busca_imagem_online_ativa': cfg.get('BUSCA_IMAGEM_ONLINE_ATIVA', 'true') == 'true',
+        'fontes_imagem_ativas': {fonte: _fonte_imagem_ativa(fonte, cfg) for fonte in FONTES_IMAGEM_DISPONIVEIS},
+        'fontes_imagem_revisao': {fonte: _fonte_exige_revisao(fonte, cfg) for fonte in FONTES_IMAGEM_DISPONIVEIS},
         'proxy_imagens_vps_ativo': cfg.get('PROXY_IMAGENS_VPS_ATIVO', 'false') == 'true',
         'proxy_imagens_vps_url': cfg.get('PROXY_IMAGENS_VPS_URL', '') or '',
     })
@@ -2623,6 +2685,8 @@ def api_config():
         'use_openai': cfg.get('USE_OPENAI_SUGESTIONS', 'true') == 'true',
         'rembg_enabled': cfg.get('REMBG_ENABLED', 'false') == 'true',
         'busca_imagem_online_ativa': cfg.get('BUSCA_IMAGEM_ONLINE_ATIVA', 'true') == 'true',
+        'fontes_imagem_ativas': {fonte: _fonte_imagem_ativa(fonte, cfg) for fonte in FONTES_IMAGEM_DISPONIVEIS},
+        'fontes_imagem_revisao': {fonte: _fonte_exige_revisao(fonte, cfg) for fonte in FONTES_IMAGEM_DISPONIVEIS},
         'proxy_imagens_vps_ativo': cfg.get('PROXY_IMAGENS_VPS_ATIVO', 'false') == 'true',
         'proxy_imagens_vps_url': cfg.get('PROXY_IMAGENS_VPS_URL', '') or '',
     })
@@ -3680,6 +3744,7 @@ def admin_buscar_imagem(codbar):
         _registrar_busca_imagem(codbar, False, via='admin')
         return jsonify({'message': 'Busca automática de imagem bloqueada permanentemente para este EAN (imagem imprópria já foi encontrada aqui antes)'}), 404
 
+    cfg_fontes = _ler_todas_config()
     for fonte, buscar in (
         ('bing', buscar_e_salvar_imagem_bing),
         ('google', buscar_e_salvar_imagem_google),
@@ -3689,6 +3754,8 @@ def admin_buscar_imagem(codbar):
         ('sonda', buscar_e_salvar_imagem_sonda),
         ('unidasul', buscar_e_salvar_imagem_unidasul),
     ):
+        if not _fonte_imagem_ativa(fonte, cfg_fontes):
+            continue
         resultado = buscar(codbar)
         if resultado[1] == 200:
             imagem_url = resultado[0].get_json().get('imagem_url')
