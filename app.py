@@ -146,14 +146,20 @@ def save_image_with_background_removal(image, file_path):
     `optimize=True` no PNG final: compressão SEM PERDA mais agressiva (PNG já é lossless por
     natureza — isso só demora um pouco mais pra salvar, não muda um pixel sequer) — reduz o
     tamanho do arquivo final, pedido do usuário junto com a correção acima ("otimize e não
-    perca qualidade")."""
-    if not REMBG_ENABLED:
-        logging.warning("rembg não disponível - operação ignorada")
-        return
+    perca qualidade").
+
+    SEMPRE salva algo em `file_path`, mesmo com `REMBG_ENABLED=false` (nesse caso, sem remover
+    fundo) — desde que a foto crua deixou de ser guardada em paralelo (ver save_image_from_response),
+    esse é o único lugar onde a imagem é persistida; se essa função "desistisse" silenciosamente
+    (comportamento antigo), a imagem simplesmente não seria salva em lugar nenhum."""
     # Converte para RGBA se necessário
     image = image.convert("RGBA") if image.mode != "RGBA" else image
-    # Remove o fundo, com matting pra não cortar pedaço do produto nas bordas
-    output_image = remove(image, alpha_matting=True)
+    if REMBG_ENABLED:
+        # Remove o fundo, com matting pra não cortar pedaço do produto nas bordas
+        output_image = remove(image, alpha_matting=True)
+    else:
+        logging.warning(f"rembg desativado - salvando {file_path} sem remover o fundo")
+        output_image = image
     # Salva a imagem processada (lossless, só mais compacta)
     output_image.save(file_path, optimize=True)
 
@@ -280,10 +286,12 @@ class ImagemQuarentena(db.Model):
 def _registrar_busca_imagem(codbar, encontrado, origem=None, via='terminal'):
     """Grava uma linha na fila de pendências (ver docstring de HistoricoBuscaImagem) — só quando
     as DUAS condições abaixo são verdadeiras:
-    1. NÃO temos a imagem do produto na pasta: checado direto via `find_existing_image` (não só
-       confiando no parâmetro `encontrado` que o chamador passou) — garante que a condição real é
-       sempre "o arquivo não existe fisicamente em IMAGES_FOLDER agora", não uma inferência sobre
-       como a busca correu.
+    1. NÃO temos a imagem do produto na pasta: checado direto via `find_existing_image` em
+       `PROCESSED_IMAGES_FOLDER` (não só confiando no parâmetro `encontrado` que o chamador
+       passou) — garante que a condição real é sempre "o arquivo não existe fisicamente agora",
+       não uma inferência sobre como a busca correu. `PROCESSED_IMAGES_FOLDER`, não
+       `IMAGES_FOLDER`, porque a foto crua deixou de ser guardada em disco (ver
+       save_image_from_response) — a processada é a única cópia que existe.
     2. `encontrado=False`: sucesso não vira pendência nenhuma (nada a resolver) — verificado
        primeiro, como atalho barato antes de tocar o banco/disco; os chamadores continuam
        passando `encontrado=True` nos casos de sucesso (não precisou mudar nenhum call site),
@@ -299,7 +307,7 @@ def _registrar_busca_imagem(codbar, encontrado, origem=None, via='terminal'):
     if encontrado:
         return
     try:
-        if find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS):
+        if find_existing_image(codbar, PROCESSED_IMAGES_FOLDER, ALLOWED_EXTENSIONS):
             return
         db.session.add(HistoricoBuscaImagem(codbar=codbar, encontrado=encontrado, origem=origem, via=via))
         db.session.commit()
@@ -470,17 +478,18 @@ def upload_imagem_produto(codbar):
         if not _imagem_e_segura(dados):
             _quarentenar_imagem(dados, codbar, origem='upload_manual')
             return jsonify({'message': 'Imagem sinalizada pelo filtro de conteúdo e enviada para revisão humana (Configurações → Quarentena) em vez de ser salva'}), 422
-        filename = secure_filename(f'{codbar}.{file.filename.rsplit(".", 1)[1].lower()}')
-        file_path = os.path.join(IMAGES_FOLDER, filename)
-        with open(file_path, 'wb') as f:
-            f.write(dados)
+        # Sem cópia crua (pedido do usuário) — processa (remove fundo) e salva só em
+        # PROCESSED_IMAGES_FOLDER, mesmo padrão de save_image_from_response.
+        processed_file_path = os.path.join(PROCESSED_IMAGES_FOLDER, f'{codbar}.png')
+        input_image = Image.open(io.BytesIO(dados))
+        save_image_with_background_removal(input_image, processed_file_path)
         try:
             _marcar_tem_foto(codbar, True)
             db.session.commit()
         except Exception as e:
             db.session.rollback()
             logging.warning(f"Não foi possível marcar tem_foto=True para {codbar}: {e}")
-        return jsonify({'message': 'Image successfully uploaded', 'path': file_path}), 200
+        return jsonify({'message': 'Image successfully uploaded', 'path': processed_file_path}), 200
     else:
         return jsonify({'message': 'File format not allowed'}), 400
 
@@ -733,16 +742,13 @@ def obter_imagem_produto(codbar):
     uma vez) — cada chamada à IA custa dinheiro/tempo, não faz sentido gerar uma arte vertical
     pra uma loja que só tem terminais horizontais, e vice-versa."""
     orientacao = 'vertical' if request.args.get('orientacao') == 'vertical' else 'horizontal'
-    img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+    # PROCESSED_IMAGES_FOLDER é a única cópia que existe (pedido do usuário: nunca duplicar
+    # crua+processada em disco) — a checagem "já temos imagem" e a URL servida vêm de lá; a
+    # geração de arte também passou a usar essa mesma imagem (sem fundo) como referência pra IA,
+    # já que a crua não é mais salva em lugar nenhum.
+    img_path = find_existing_image(codbar, PROCESSED_IMAGES_FOLDER, ALLOWED_EXTENSIONS)
     if img_path:
-        # 'imagem_url' pro terminal sempre prioriza a versão PROCESSADA (fundo removido) —
-        # pedido explícito do usuário. `img_path` (cru) continua sendo o que vai pra geração de
-        # arte (_enfileirar_geracao_arte logo abaixo) — a IA precisa da foto original completa
-        # como referência, não da versão já sem fundo. Cai pra imagem crua só se por algum
-        # motivo a processada não existir (ex.: REMBG_ENABLED=false) — nunca 404 por causa dessa
-        # prioridade.
-        processed_path = find_existing_image(codbar, PROCESSED_IMAGES_FOLDER, ALLOWED_EXTENSIONS)
-        img_url = _static_url(processed_path) if processed_path else _static_url(img_path)
+        img_url = _static_url(img_path)
         logging.info(f"Imagem encontrada localmente para o produto {codbar}: {img_url}")
         arte_url = _arte_url(codbar, orientacao)
         if not arte_url:
@@ -763,7 +769,7 @@ def obter_imagem_produto(codbar):
             resultado = buscar(codbar)
             if resultado[1] == 200:
                 imagem_url = resultado[0].get_json().get('imagem_url')
-                novo_img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+                novo_img_path = find_existing_image(codbar, PROCESSED_IMAGES_FOLDER, ALLOWED_EXTENSIONS)
                 if novo_img_path:
                     _enfileirar_geracao_arte(codbar, novo_img_path, orientacao=orientacao)
                 _registrar_busca_imagem(codbar, True, origem=fonte, via='terminal')
@@ -976,9 +982,16 @@ def _quarentenar_imagem(image_data, codbar, origem=None):
 
 
 def save_image_from_response(image_data, codbar, origem=None):
-    """Salva a imagem a partir da resposta de uma requisição"""
-    original_file_path = os.path.join(IMAGES_FOLDER, f'{codbar}.jpg')
-    processed_file_path = os.path.join(PROCESSED_IMAGES_FOLDER, f'{codbar}.png')  # Mudamos para .png para suportar transparência
+    """Salva a imagem a partir da resposta de uma requisição.
+
+    Pedido do usuário: nunca duplicar a mesma imagem em disco (crua + processada) — só
+    `PROCESSED_IMAGES_FOLDER` existe como local de armazenamento daqui pra frente. A foto crua
+    nunca é escrita em `IMAGES_FOLDER`; é aberta direto dos bytes em memória (`io.BytesIO`),
+    processada (remoção de fundo) e só o resultado final vai pro disco. `save_image_with_background_removal`
+    sempre salva algo em `file_path`, mesmo com `REMBG_ENABLED=false` (salva sem remover fundo
+    nesse caso) — sem essa garantia, desativar o rembg faria a imagem não ser salva em lugar
+    nenhum, já que não sobra mais uma cópia crua como rede de segurança."""
+    processed_file_path = os.path.join(PROCESSED_IMAGES_FOLDER, f'{codbar}.png')
 
     if not _imagem_e_segura(image_data):
         logging.error(f"Imagem REJEITADA por conteúdo impróprio pro produto {codbar} (origem={origem}) — indo pra quarentena.")
@@ -986,15 +999,7 @@ def save_image_from_response(image_data, codbar, origem=None):
         return jsonify({'message': 'Imagem rejeitada: conteúdo classificado como impróprio (em quarentena pra revisão)'}), 422
 
     try:
-        # Salva a imagem original
-        with open(original_file_path, 'wb') as f:
-            f.write(image_data)
-
-        img_url = _static_url(original_file_path)
-        logging.info(f"Imagem salva para o produto {codbar}: {img_url}")
-
-        # Processa a imagem para remover o fundo
-        input_image = Image.open(original_file_path)
+        input_image = Image.open(io.BytesIO(image_data))
         save_image_with_background_removal(input_image, processed_file_path)
 
         img_url = _static_url(processed_file_path)
@@ -1387,12 +1392,10 @@ def _buscar_imagens_gemini_web(nome_produto, marca, codbar):
 def serialize_produto_with_image(produto):
     """Serializa um produto com a imagem"""
     img_url = None
-    img_path = find_existing_image(produto.codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+    # PROCESSED_IMAGES_FOLDER é a única cópia que existe (nunca duplicamos crua+processada).
+    img_path = find_existing_image(produto.codbar, PROCESSED_IMAGES_FOLDER, ALLOWED_EXTENSIONS)
     if img_path:
-        # Mesma prioridade de obter_imagem_produto: versão processada (sem fundo) primeiro,
-        # crua só como fallback se a processada não existir por algum motivo.
-        processed_path = find_existing_image(produto.codbar, PROCESSED_IMAGES_FOLDER, ALLOWED_EXTENSIONS)
-        img_url = _static_url(processed_path) if processed_path else _static_url(img_path)
+        img_url = _static_url(img_path)
     elif _busca_imagem_online_ativa() and not produto.busca_imagem_bloqueada:
         bing_result = buscar_e_salvar_imagem_bing(produto.codbar)
         if bing_result[1] == 200:
@@ -1510,7 +1513,7 @@ def get_produtos():
     produtos_sem_imagem = []
 
     for produto in produtos:
-        img_path = find_existing_image(produto.codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+        img_path = find_existing_image(produto.codbar, PROCESSED_IMAGES_FOLDER, ALLOWED_EXTENSIONS)
         if img_path:
             produto.foto_png = img_path
             produtos_com_imagem.append(produto)
@@ -1875,9 +1878,9 @@ def fetch_description_from_ean(ean):
 @jwt_required()
 def listar_imagens():
     try:
-        files = os.listdir(IMAGES_FOLDER)
+        files = os.listdir(PROCESSED_IMAGES_FOLDER)
         images = [f for f in files if allowed_file(f)]
-        image_urls = [url_for('static', filename='imgs_produtos/' + image, _external=True) for image in images]
+        image_urls = [url_for('static', filename='processed_images/' + image, _external=True) for image in images]
         return jsonify({'images': image_urls}), 200
     except Exception as e:
         return jsonify({'message': 'Error listing images', 'error': str(e)}), 500
@@ -2299,7 +2302,7 @@ def consultar_ou_cadastrar_produto(codbar):
 
         # Aproveita a imagem da própria fonte para já salvar a foto crua do produto
         thumbnail = dados.get('thumbnail')
-        if thumbnail and thumbnail.startswith('http') and not find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS):
+        if thumbnail and thumbnail.startswith('http') and not find_existing_image(codbar, PROCESSED_IMAGES_FOLDER, ALLOWED_EXTENSIONS):
             try:
                 img_response = requests.get(thumbnail, timeout=15)
                 img_response.raise_for_status()
@@ -3562,7 +3565,7 @@ def admin_cadastrar_produto_cosmos(codbar):
         return jsonify({'message': 'O Cosmos retornou dados para esse EAN, mas houve um erro ao salvar o produto no banco.'}), 500
 
     thumbnail = dados.get('thumbnail')
-    if thumbnail and isinstance(thumbnail, str) and thumbnail.startswith('http') and not find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS):
+    if thumbnail and isinstance(thumbnail, str) and thumbnail.startswith('http') and not find_existing_image(codbar, PROCESSED_IMAGES_FOLDER, ALLOWED_EXTENSIONS):
         try:
             img_response = requests.get(thumbnail, timeout=15)
             img_response.raise_for_status()
@@ -3621,9 +3624,10 @@ def admin_cadastrar_produto_manual(codbar):
             _quarentenar_imagem(dados, codbar, origem='upload_manual')
             imagem_quarentenada = True
         else:
-            filename = secure_filename(f'{codbar}.{file.filename.rsplit(".", 1)[1].lower()}')
-            with open(os.path.join(IMAGES_FOLDER, filename), 'wb') as f:
-                f.write(dados)
+            # Sem cópia crua (pedido do usuário) — processa e salva só em PROCESSED_IMAGES_FOLDER.
+            processed_file_path = os.path.join(PROCESSED_IMAGES_FOLDER, f'{codbar}.png')
+            input_image = Image.open(io.BytesIO(dados))
+            save_image_with_background_removal(input_image, processed_file_path)
             _marcar_tem_foto(novo_produto, True)
             db.session.commit()
             imagem_salva = True
@@ -3650,8 +3654,8 @@ def admin_cadastrar_produto_manual(codbar):
 @app.route('/admin/buscar-imagem/<string:codbar>', methods=['POST'])
 @jwt_required()
 def admin_buscar_imagem(codbar):
-    """Busca a imagem crua (fundo branco) do produto: local -> Bing -> Google -> Zaffari -> PrecoMelhor -> Rissul -> Sonda,
-    salvando o resultado em IMAGES_FOLDER.
+    """Busca a imagem do produto: local -> Bing -> Google -> Zaffari -> PrecoMelhor -> Rissul -> Sonda,
+    salvando o resultado (já processado, sem fundo) em PROCESSED_IMAGES_FOLDER.
 
     Cria um `Produto` mínimo (só codbar) se o EAN ainda não tiver cadastro, em vez de 404 —
     mesmo padrão já usado em `deletar_imagem_produto`/`_quarentenar_imagem`. Necessário pra ação
@@ -3663,9 +3667,9 @@ def admin_buscar_imagem(codbar):
         db.session.add(produto)
         db.session.commit()
 
-    img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+    img_path = find_existing_image(codbar, PROCESSED_IMAGES_FOLDER, ALLOWED_EXTENSIONS)
     if img_path:
-        img_url = url_for('static', filename=f'imgs_produtos/{os.path.basename(img_path)}', _external=True)
+        img_url = url_for('static', filename=f'processed_images/{os.path.basename(img_path)}', _external=True)
         return jsonify({'message': 'Produto já possui foto', 'imagem_url': img_url, 'fonte': 'local'}), 200
 
     if not _busca_imagem_online_ativa():
@@ -3745,15 +3749,16 @@ def admin_definir_imagem_url(codbar):
 @app.route('/admin/gerar-arte/<string:codbar>', methods=['POST'])
 @jwt_required()
 def admin_gerar_arte(codbar):
-    """Gera (ou regenera) a arte publicitária de um produto a partir da sua foto crua. A
-    geração em si acontece na fila única (ver _enfileirar_geracao_arte) — essa rota aguarda o
-    próprio job terminar antes de responder, então o contrato não muda (ainda retorna a URL
-    pronta), só passa a esperar a vez se houver outras gerações em andamento na fila."""
+    """Gera (ou regenera) a arte publicitária de um produto a partir da sua foto (processada,
+    sem fundo — única cópia que existe). A geração em si acontece na fila única (ver
+    _enfileirar_geracao_arte) — essa rota aguarda o próprio job terminar antes de responder,
+    então o contrato não muda (ainda retorna a URL pronta), só passa a esperar a vez se houver
+    outras gerações em andamento na fila."""
     produto = Produto.query.filter_by(codbar=codbar).first()
     if not produto:
         return jsonify({'message': 'Produto não encontrado'}), 404
 
-    img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+    img_path = find_existing_image(codbar, PROCESSED_IMAGES_FOLDER, ALLOWED_EXTENSIONS)
     if not img_path:
         return jsonify({'message': 'Produto não possui foto cadastrada para servir de base'}), 400
 
@@ -3837,14 +3842,19 @@ def gerar_arte_publica(codbar):
             if not produto:
                 return jsonify({'message': 'Produto não encontrado em nenhuma fonte (Cosmos, Open Food Facts, PreçoMelhor)'}), 404
 
-        content_type = (request.content_type or '').lower()
-        ext = 'png' if 'png' in content_type else 'webp' if 'webp' in content_type else 'jpg'
-        img_path = os.path.join(IMAGES_FOLDER, f'{codbar}.{ext}')
-        if not find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS):
-            with open(img_path, 'wb') as f:
-                f.write(image_data)
-        else:
-            img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+        # Idempotente: só salva a foto enviada nesta requisição se AINDA não tivermos uma —
+        # se o produto já tem imagem, usa a que já existe em vez de sobrescrever. A gravação em
+        # si passa por save_image_from_response (mesmo chokepoint de todas as outras fontes) —
+        # antes essa rota escrevia os bytes crus direto em disco, sem passar pelo filtro de
+        # conteúdo impróprio nem pela remoção de fundo; um gap real, corrigido de passagem ao
+        # consolidar tudo pra salvar só em PROCESSED_IMAGES_FOLDER (nunca mais duplicar
+        # crua+processada em disco).
+        img_path = find_existing_image(codbar, PROCESSED_IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+        if not img_path:
+            resultado_save = save_image_from_response(image_data, codbar, origem='app_gerar_arte')
+            if resultado_save[1] != 200:
+                return resultado_save
+            img_path = find_existing_image(codbar, PROCESSED_IMAGES_FOLDER, ALLOWED_EXTENSIONS)
 
         job = _enfileirar_geracao_arte(codbar, img_path, aguardar=True, orientacao=orientacao)
         if job is not None:
@@ -3866,7 +3876,7 @@ def admin_estatisticas():
     try:
         total = conn.execute("SELECT COUNT(*) FROM produto").fetchone()[0]
         with_photo = len([
-            f for f in os.listdir(IMAGES_FOLDER)
+            f for f in os.listdir(PROCESSED_IMAGES_FOLDER)
             if os.path.splitext(f)[1].lstrip('.').lower() in ALLOWED_EXTENSIONS
         ])
         brands = conn.execute(
@@ -3889,17 +3899,18 @@ def admin_estatisticas():
 @app.route('/admin/produtos-com-foto', methods=['GET'])
 @jwt_required()
 def admin_produtos_com_foto():
-    """Lista produtos que possuem foto crua salva localmente (paginação).
+    """Lista produtos que possuem foto salva localmente (paginação).
 
-    A existência de foto é determinada pelos arquivos em IMAGES_FOLDER, não pela
-    coluna foto_png do banco (que fica vazia na importação em massa do CSV).
+    A existência de foto é determinada pelos arquivos em PROCESSED_IMAGES_FOLDER (única cópia
+    que existe — nunca duplicamos crua+processada em disco), não pela coluna foto_png do banco
+    (que fica vazia na importação em massa do CSV).
     """
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 15, type=int)
     search = request.args.get('search', '').strip()
 
     arquivo_por_codbar = {}
-    for filename in os.listdir(IMAGES_FOLDER):
+    for filename in os.listdir(PROCESSED_IMAGES_FOLDER):
         codbar, ext = os.path.splitext(filename)
         if ext.lstrip('.').lower() in ALLOWED_EXTENSIONS:
             arquivo_por_codbar[codbar] = filename
@@ -3937,7 +3948,7 @@ def admin_produtos_com_foto():
             'descricao': desc,
             'marca': marca,
             'categoria': cat,
-            'foto_png': url_for('static', filename=f'imgs_produtos/{arquivo_por_codbar[codbar]}', _external=True),
+            'foto_png': url_for('static', filename=f'processed_images/{arquivo_por_codbar[codbar]}', _external=True),
             'preco_medio': preco,
             'arte_url': _arte_url(codbar),
         })
@@ -3952,50 +3963,55 @@ def admin_produtos_com_foto():
 
 
 def _listar_imagens_orfas(search=''):
-    """Lista arquivos já salvos em `IMAGES_FOLDER` cujo EAN (nome do arquivo) NÃO tem `Produto`
-    correspondente — pedido do usuário: essas imagens "órfãs" ficavam completamente invisíveis
-    na Consulta Rápida, já que a rota sempre partiu de `SELECT ... FROM produto` (não tem como
-    aparecer algo que não é uma linha dessa tabela). Existem de verdade — ex.: uma busca
-    automática que criou um `Produto` mínimo só pra bloquear/registrar (ver
-    `_quarentenar_imagem`/`deletar_imagem_produto`) e depois esse `Produto` foi apagado por
-    algum motivo, ou um upload manual apontando um EAN que nunca virou cadastro completo.
+    """Lista arquivos já salvos (em `PROCESSED_IMAGES_FOLDER`, a única cópia que existe daqui pra
+    frente — e ainda em `IMAGES_FOLDER` também, por compatibilidade com arquivos crus que
+    sobraram de antes dessa mudança) cujo EAN (nome do arquivo) NÃO tem `Produto` correspondente
+    — pedido do usuário: essas imagens "órfãs" ficavam completamente invisíveis na Consulta
+    Rápida, já que a rota sempre partiu de `SELECT ... FROM produto` (não tem como aparecer algo
+    que não é uma linha dessa tabela). Existem de verdade — ex.: uma busca automática que criou
+    um `Produto` mínimo só pra bloquear/registrar (ver `_quarentenar_imagem`/`deletar_imagem_produto`)
+    e depois esse `Produto` foi apagado por algum motivo, ou um upload manual apontando um EAN
+    que nunca virou cadastro completo.
 
-    Varrer a PASTA (não a tabela) é barato aqui porque o volume de arquivos é sempre muito menor
-    que o catálogo inteiro (~945 mil produtos) — o oposto (escanear todo o catálogo procurando
-    quem não tem arquivo) seria caro demais pra fazer a cada consulta, por isso nunca foi feito
-    assim. `search`, quando preenchido, filtra pelo EAN em si (substring) — órfão não tem
-    descrição/marca pra buscar por outros campos."""
-    if not os.path.isdir(IMAGES_FOLDER):
-        return []
-    try:
-        arquivos = os.listdir(IMAGES_FOLDER)
-    except OSError:
-        return []
-
-    candidatos = {}
+    Varrer as PASTAS (não a tabela) é barato aqui porque o volume de arquivos é sempre muito
+    menor que o catálogo inteiro (~945 mil produtos) — o oposto (escanear todo o catálogo
+    procurando quem não tem arquivo) seria caro demais pra fazer a cada consulta, por isso nunca
+    foi feito assim. `search`, quando preenchido, filtra pelo EAN em si (substring) — órfão não
+    tem descrição/marca pra buscar por outros campos."""
     termo = search.upper() if search else None
-    for nome in arquivos:
-        codbar, ext = os.path.splitext(nome)
-        if ext.lstrip('.').lower() not in ALLOWED_EXTENSIONS:
+    candidatos_processada = {}
+    candidatos_crua = {}
+    for pasta, destino in ((PROCESSED_IMAGES_FOLDER, candidatos_processada), (IMAGES_FOLDER, candidatos_crua)):
+        if not os.path.isdir(pasta):
             continue
-        if termo and termo not in codbar.upper():
+        try:
+            arquivos = os.listdir(pasta)
+        except OSError:
             continue
-        candidatos[codbar] = nome
-    if not candidatos:
+        for nome in arquivos:
+            codbar, ext = os.path.splitext(nome)
+            if ext.lstrip('.').lower() not in ALLOWED_EXTENSIONS:
+                continue
+            if termo and termo not in codbar.upper():
+                continue
+            destino[codbar] = nome
+
+    todos_codbars = set(candidatos_processada.keys()) | set(candidatos_crua.keys())
+    if not todos_codbars:
         return []
 
-    cadastrados = {p.codbar for p in Produto.query.filter(Produto.codbar.in_(candidatos.keys())).all()}
-    orfaos = sorted(set(candidatos.keys()) - cadastrados)
+    cadastrados = {p.codbar for p in Produto.query.filter(Produto.codbar.in_(todos_codbars)).all()}
+    orfaos = sorted(todos_codbars - cadastrados)
     return [{
         'ean': codbar,
         'descricao': None,
         'marca': None,
         'categoria': None,
         'preco_medio': None,
-        # Mesma prioridade das outras rotas: processada (sem fundo) primeiro, crua como fallback.
+        # Processada primeiro (o normal daqui pra frente); crua só sobra de arquivos antigos.
         'foto_png': _static_url(
-            find_existing_image(codbar, PROCESSED_IMAGES_FOLDER, ALLOWED_EXTENSIONS)
-            or os.path.join(IMAGES_FOLDER, candidatos[codbar])
+            os.path.join(PROCESSED_IMAGES_FOLDER, candidatos_processada[codbar]) if codbar in candidatos_processada
+            else os.path.join(IMAGES_FOLDER, candidatos_crua[codbar])
         ),
         'arte_url': None,
         'orfao': True,
@@ -4012,8 +4028,9 @@ def admin_consulta_produtos():
     search = request.args.get('q', '').strip()
 
     # Produtos com foto sempre primeiro (pedido do usuário) — tem_foto é mantida em sincronia
-    # com static/imgs_produtos/ por _marcar_tem_foto em todo ponto que salva/remove a foto crua
-    # (ver Produto.tem_foto). Na busca, o EAN exato pesquisado continua tendo prioridade máxima
+    # com static/processed_images/ (única cópia que existe) por _marcar_tem_foto em todo ponto
+    # que salva/remove a foto do produto (ver Produto.tem_foto). Na busca, o EAN exato
+    # pesquisado continua tendo prioridade máxima
     # (achar o produto que a pessoa procurou é mais importante que a ordem geral), mas entre os
     # resultados o critério "com foto primeiro" também se aplica.
     if search:
@@ -4092,13 +4109,13 @@ def admin_consulta_simples():
         ).fetchone()
         if row:
             codbar, desc, marca, foto, cat, preco = row
-            img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+            img_path = find_existing_image(codbar, PROCESSED_IMAGES_FOLDER, ALLOWED_EXTENSIONS)
             resultado = {
                 'ean': codbar,
                 'descricao': desc,
                 'marca': marca,
                 'categoria': cat,
-                'foto_png': url_for('static', filename=f'imgs_produtos/{os.path.basename(img_path)}', _external=True) if img_path else 'No image available',
+                'foto_png': url_for('static', filename=f'processed_images/{os.path.basename(img_path)}', _external=True) if img_path else 'No image available',
                 'preco_medio': preco,
             }
             return jsonify({'results': [resultado], 'tipo_busca': 'ean_exact', 'count': 1})
@@ -4112,13 +4129,13 @@ def admin_consulta_simples():
         if rows:
             resultados = []
             for r in rows:
-                img_path = find_existing_image(r[0], IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+                img_path = find_existing_image(r[0], PROCESSED_IMAGES_FOLDER, ALLOWED_EXTENSIONS)
                 resultados.append({
                     'ean': r[0],
                     'descricao': r[1],
                     'marca': r[2],
                     'categoria': r[4],
-                    'foto_png': url_for('static', filename=f'imgs_produtos/{os.path.basename(img_path)}', _external=True) if img_path else 'No image available',
+                    'foto_png': url_for('static', filename=f'processed_images/{os.path.basename(img_path)}', _external=True) if img_path else 'No image available',
                     'preco_medio': r[5],
                 })
             return jsonify({'results': resultados, 'tipo_busca': 'descricao_like', 'count': len(resultados)})
@@ -4131,13 +4148,13 @@ def admin_consulta_simples():
         if rows:
             resultados = []
             for r in rows:
-                img_path = find_existing_image(r[0], IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+                img_path = find_existing_image(r[0], PROCESSED_IMAGES_FOLDER, ALLOWED_EXTENSIONS)
                 resultados.append({
                     'ean': r[0],
                     'descricao': r[1],
                     'marca': r[2],
                     'categoria': r[4],
-                    'foto_png': url_for('static', filename=f'imgs_produtos/{os.path.basename(img_path)}', _external=True) if img_path else 'No image available',
+                    'foto_png': url_for('static', filename=f'processed_images/{os.path.basename(img_path)}', _external=True) if img_path else 'No image available',
                     'preco_medio': r[5],
                 })
             return jsonify({'results': resultados, 'tipo_busca': 'marca_like', 'count': len(resultados)})
@@ -4194,7 +4211,7 @@ def admin_historico_buscas():
         # Tira quem já tem foto agora (resolvido por upload manual, sem passar pela busca).
         pendentes = [
             g for g in grupo.all()
-            if not find_existing_image(g.codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+            if not find_existing_image(g.codbar, PROCESSED_IMAGES_FOLDER, ALLOWED_EXTENSIONS)
         ]
         total = len(pendentes)
         pagina = pendentes[(page - 1) * per_page: (page - 1) * per_page + per_page]
@@ -4369,11 +4386,12 @@ def admin_quarentena_confirmar(quarentena_id):
 @app.route('/admin/quarentena/<int:quarentena_id>/liberar', methods=['POST'])
 @jwt_required()
 def admin_quarentena_liberar(quarentena_id):
-    """Humano revisou e considera FALSO POSITIVO do classificador: move o arquivo de volta pra
-    `IMAGES_FOLDER`, reprocessa (remoção de fundo, igual `save_image_from_response`), desbloqueia
-    o EAN e marca `tem_foto=True`. Não passa pelo classificador de novo — a decisão humana aqui é
-    definitiva, não faz sentido rejeitar de novo automaticamente algo que um humano acabou de
-    revisar e aprovar."""
+    """Humano revisou e considera FALSO POSITIVO do classificador: reprocessa o arquivo
+    (remoção de fundo, igual `save_image_from_response`) e salva SÓ em `PROCESSED_IMAGES_FOLDER`
+    (nunca uma cópia crua — mesma regra do resto do sistema), desbloqueia o EAN e marca
+    `tem_foto=True`. Não passa pelo classificador de novo — a decisão humana aqui é definitiva,
+    não faz sentido rejeitar de novo automaticamente algo que um humano acabou de revisar e
+    aprovar."""
     entrada = ImagemQuarentena.query.get_or_404(quarentena_id)
     if not entrada.arquivo:
         return jsonify({'message': 'Arquivo não existe mais — não é possível liberar (já revisado antes ou arquivo perdido).'}), 400
@@ -4383,13 +4401,10 @@ def admin_quarentena_liberar(quarentena_id):
         return jsonify({'message': 'Arquivo não encontrado no disco'}), 404
 
     try:
-        original_file_path = os.path.join(IMAGES_FOLDER, f'{entrada.codbar}.jpg')
         processed_file_path = os.path.join(PROCESSED_IMAGES_FOLDER, f'{entrada.codbar}.png')
         with open(caminho_quarentena, 'rb') as f:
             image_data = f.read()
-        with open(original_file_path, 'wb') as f:
-            f.write(image_data)
-        input_image = Image.open(original_file_path)
+        input_image = Image.open(io.BytesIO(image_data))
         save_image_with_background_removal(input_image, processed_file_path)
 
         os.remove(caminho_quarentena)
@@ -4443,7 +4458,7 @@ def _estatisticas_gerais():
     arquivos nas pastas em vez de checar produto por produto (o catálogo tem ~945 mil linhas,
     então checar arquivo por arquivo pra cada uma seria caro demais pra rodar num resumo diário)."""
     total = Produto.query.count()
-    com_foto = len([f for f in os.listdir(IMAGES_FOLDER) if os.path.splitext(f)[1].lstrip('.').lower() in ALLOWED_EXTENSIONS])
+    com_foto = len([f for f in os.listdir(PROCESSED_IMAGES_FOLDER) if os.path.splitext(f)[1].lstrip('.').lower() in ALLOWED_EXTENSIONS])
     com_arte = len([f for f in os.listdir(ARTES_FOLDER) if f.lower().endswith('.webp')])
     return {'total_produtos': total, 'com_foto': com_foto, 'sem_foto': total - com_foto, 'com_arte': com_arte}
 
