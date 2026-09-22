@@ -3941,6 +3941,53 @@ def admin_produtos_com_foto():
     })
 
 
+def _listar_imagens_orfas(search=''):
+    """Lista arquivos já salvos em `IMAGES_FOLDER` cujo EAN (nome do arquivo) NÃO tem `Produto`
+    correspondente — pedido do usuário: essas imagens "órfãs" ficavam completamente invisíveis
+    na Consulta Rápida, já que a rota sempre partiu de `SELECT ... FROM produto` (não tem como
+    aparecer algo que não é uma linha dessa tabela). Existem de verdade — ex.: uma busca
+    automática que criou um `Produto` mínimo só pra bloquear/registrar (ver
+    `_quarentenar_imagem`/`deletar_imagem_produto`) e depois esse `Produto` foi apagado por
+    algum motivo, ou um upload manual apontando um EAN que nunca virou cadastro completo.
+
+    Varrer a PASTA (não a tabela) é barato aqui porque o volume de arquivos é sempre muito menor
+    que o catálogo inteiro (~945 mil produtos) — o oposto (escanear todo o catálogo procurando
+    quem não tem arquivo) seria caro demais pra fazer a cada consulta, por isso nunca foi feito
+    assim. `search`, quando preenchido, filtra pelo EAN em si (substring) — órfão não tem
+    descrição/marca pra buscar por outros campos."""
+    if not os.path.isdir(IMAGES_FOLDER):
+        return []
+    try:
+        arquivos = os.listdir(IMAGES_FOLDER)
+    except OSError:
+        return []
+
+    candidatos = {}
+    termo = search.upper() if search else None
+    for nome in arquivos:
+        codbar, ext = os.path.splitext(nome)
+        if ext.lstrip('.').lower() not in ALLOWED_EXTENSIONS:
+            continue
+        if termo and termo not in codbar.upper():
+            continue
+        candidatos[codbar] = nome
+    if not candidatos:
+        return []
+
+    cadastrados = {p.codbar for p in Produto.query.filter(Produto.codbar.in_(candidatos.keys())).all()}
+    orfaos = sorted(set(candidatos.keys()) - cadastrados)
+    return [{
+        'ean': codbar,
+        'descricao': None,
+        'marca': None,
+        'categoria': None,
+        'preco_medio': None,
+        'foto_png': _static_url(os.path.join(IMAGES_FOLDER, candidatos[codbar])),
+        'arte_url': None,
+        'orfao': True,
+    } for codbar in orfaos]
+
+
 @app.route('/admin/consulta-produtos', methods=['GET'])
 @jwt_required()
 def admin_consulta_produtos():
@@ -3967,20 +4014,28 @@ def admin_consulta_produtos():
         order_clause = " ORDER BY tem_foto DESC, description"
         order_params = []
 
+    # Imagens órfãs (arquivo sem Produto) só entram na página 1 — "tem imagem" as coloca junto
+    # do grupo prioritário, mas não faz sentido replicar essa varredura em toda página seguinte
+    # (o conjunto é sempre pequeno, cabe inteiro ali). Reduz o LIMIT da consulta SQL da página 1
+    # na mesma proporção, pra página continuar com ~per_page itens no total, não per_page + N.
+    orfaos = _listar_imagens_orfas(search) if page == 1 else []
+    limit_sql = max(per_page - len(orfaos), 0) if page == 1 else per_page
+
     conn = sqlite3.connect(DB_PATH)
     try:
         total = conn.execute("SELECT COUNT(*) FROM produto" + where_clause, where_params).fetchone()[0]
 
-        offset = (page - 1) * per_page
+        offset = 0 if page == 1 else (page - 1) * per_page - len(orfaos)
+        offset = max(offset, 0)
         rows = conn.execute(
             "SELECT codbar, description, marca, categoriaText, preco_medio FROM produto"
             + where_clause + order_clause + " LIMIT ? OFFSET ?",
-            where_params + order_params + [per_page, offset],
+            where_params + order_params + [limit_sql, offset],
         ).fetchall()
     finally:
         conn.close()
 
-    produtos = []
+    produtos = list(orfaos)
     for codbar, desc, marca, cat, preco in rows:
         img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
         produtos.append({

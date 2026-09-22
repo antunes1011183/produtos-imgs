@@ -2903,6 +2903,18 @@ function renderConsultaTableHtml(produtos) {
             <th style="width:90px;"></th>
         </tr></thead><tbody>`;
     produtos.forEach(p => {
+        if (p.orfao) {
+            html += `
+            <tr style="background:var(--hover);">
+                <td><span class="ean">${escHtml(p.ean)}</span></td>
+                <td colspan="3" style="color:var(--muted); font-style:italic;">Imagem sem cadastro no catálogo</td>
+                <td>${p.foto_png
+                    ? `<img src="${p.foto_png}" class="foto-thumb" alt="foto">`
+                    : `<span class="foto-thumb-placeholder">${CAMERA_ICON}</span>`}</td>
+                <td colspan="2"><button class="btn btn-primary btn-sm" data-action="cadastrar-orfao" data-codbar="${escHtml(p.ean)}">Cadastrar</button></td>
+            </tr>`;
+            return;
+        }
         html += `
         <tr>
             <td><span class="ean">${escHtml(p.ean)}</span></td>
@@ -2923,7 +2935,23 @@ function renderConsultaTableHtml(produtos) {
 function renderConsultaGrid(produtos) {
     // Mesmos data-action/data-codbar da tabela — o handler delegado em #consulta-list (click)
     // já funciona sem mudança nenhuma, tanto na grade quanto na tabela.
-    const cards = produtos.map(p => `
+    const cards = produtos.map(p => {
+        if (p.orfao) {
+            return `
+            <div class="produto-card" style="background:var(--hover);">
+                <div class="produto-card-img">${p.foto_png
+                    ? `<img src="${p.foto_png}" alt="foto">`
+                    : `<span class="foto-thumb-placeholder">${CAMERA_ICON}</span>`}</div>
+                <div class="produto-card-body">
+                    <span class="produto-card-ean">${escHtml(p.ean)}</span>
+                    <span class="produto-card-desc" style="font-style:italic; color:var(--muted);">Imagem sem cadastro no catálogo</span>
+                    <div class="produto-card-actions">
+                        <button class="btn btn-primary btn-sm" data-action="cadastrar-orfao" data-codbar="${escHtml(p.ean)}">Cadastrar</button>
+                    </div>
+                </div>
+            </div>`;
+        }
+        return `
         <div class="produto-card">
             <div class="produto-card-img">${p.foto_png
                 ? `<img src="${p.foto_png}" alt="foto">`
@@ -2940,7 +2968,8 @@ function renderConsultaGrid(produtos) {
                     <button class="btn btn-secondary btn-sm" data-action="detalhes" data-codbar="${escHtml(p.ean)}">Detalhes</button>
                 </div>
             </div>
-        </div>`).join('');
+        </div>`;
+    }).join('');
     return `<div class="consulta-grid">${cards}</div>`;
 }
 
@@ -3007,13 +3036,19 @@ $('#btn-consulta-prev').addEventListener('click', () => loadConsulta(consultaPag
 $('#btn-consulta-next').addEventListener('click', () => loadConsulta(consultaPage + 1));
 
 // ===== Popup central: Cadastrar produto pelo EAN (busca no Cosmos / manual) =====
-function abrirModalCadastro() {
+function abrirModalCadastro(eanPrefill) {
     $('#cadastro-modal-overlay').classList.add('show');
-    $('#cadastro-ean').value = '';
+    $('#cadastro-ean').value = eanPrefill || '';
     $('#cadastro-descricao').value = '';
     $('#cadastro-imagem').value = '';
     $('#alert-cadastro-cosmos').innerHTML = '';
-    $('#cadastro-ean').focus();
+    // Com EAN pré-preenchido (veio de uma imagem órfã, já sabemos o código) o campo que falta
+    // preencher é a descrição, não o EAN — foca ali em vez de sobrescrever o que já veio certo.
+    if (eanPrefill) {
+        $('#cadastro-descricao').focus();
+    } else {
+        $('#cadastro-ean').focus();
+    }
 }
 function fecharModalCadastro() {
     $('#cadastro-modal-overlay').classList.remove('show');
@@ -3250,6 +3285,12 @@ $('#consulta-list').addEventListener('click', async (e) => {
     const gerarBtn = e.target.closest('[data-action="gerar-arte"]');
     if (gerarBtn) {
         await gerarArteParaBotao(gerarBtn, gerarBtn.dataset.codbar, () => loadConsulta(consultaPage));
+        return;
+    }
+
+    const cadastrarOrfaoBtn = e.target.closest('[data-action="cadastrar-orfao"]');
+    if (cadastrarOrfaoBtn) {
+        abrirModalCadastro(cadastrarOrfaoBtn.dataset.codbar);
     }
 });
 
