@@ -3992,7 +3992,11 @@ def _listar_imagens_orfas(search=''):
         'marca': None,
         'categoria': None,
         'preco_medio': None,
-        'foto_png': _static_url(os.path.join(IMAGES_FOLDER, candidatos[codbar])),
+        # Mesma prioridade das outras rotas: processada (sem fundo) primeiro, crua como fallback.
+        'foto_png': _static_url(
+            find_existing_image(codbar, PROCESSED_IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+            or os.path.join(IMAGES_FOLDER, candidatos[codbar])
+        ),
         'arte_url': None,
         'orfao': True,
     } for codbar in orfaos]
@@ -4047,14 +4051,18 @@ def admin_consulta_produtos():
 
     produtos = list(orfaos)
     for codbar, desc, marca, cat, preco in rows:
+        # Mesma prioridade de obter_imagem_produto/serialize_produto_with_image: processada
+        # (sem fundo) primeiro, crua só como fallback se a processada não existir.
         img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+        processed_path = find_existing_image(codbar, PROCESSED_IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+        foto_url = _static_url(processed_path) if processed_path else (_static_url(img_path) if img_path else None)
         produtos.append({
             'ean': codbar,
             'descricao': desc,
             'marca': marca,
             'categoria': cat,
             'preco_medio': preco,
-            'foto_png': _static_url(img_path) if img_path else None,
+            'foto_png': foto_url,
             'arte_url': _arte_url(codbar),
         })
 
