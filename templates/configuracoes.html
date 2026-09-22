@@ -838,6 +838,13 @@
                         </div>
                         <div class="toggle" id="toggle-busca-imagem-online" data-key="BUSCA_IMAGEM_ONLINE_ATIVA"></div>
                     </div>
+                    <div class="toggle-row">
+                        <div class="toggle-label">
+                            <span class="name">Verificação imagem × descrição (OCR/IA)</span>
+                            <span class="desc">Antes de salvar qualquer imagem (busca automática, "Buscar com IA" ou upload manual), confere se ela plausivelmente é do produto cadastrado — só roda quando o produto já tem uma descrição pra comparar. Imagem que não parece corresponder vai pra quarentena (Configurações → Quarentena) em vez de virar a foto pública. Desative se estiver gerando falsos positivos demais (ex.: descrições muito abreviadas no catálogo).</span>
+                        </div>
+                        <div class="toggle" id="toggle-verificacao-descricao" data-key="VERIFICACAO_DESCRICAO_ATIVA"></div>
+                    </div>
                 </div>
 
                 <div class="card">
@@ -1667,6 +1674,7 @@ async function loadConfig() {
         setToggle('toggle-use-openai', cfg.use_openai);
         setToggle('toggle-rembg', cfg.rembg_enabled);
         setToggle('toggle-busca-imagem-online', cfg.busca_imagem_online_ativa);
+        setToggle('toggle-verificacao-descricao', cfg.verificacao_descricao_ativa);
         const fontesAtivas = cfg.fontes_imagem_ativas || {};
         const fontesRevisao = cfg.fontes_imagem_revisao || {};
         ['google', 'zaffari', 'precomelhor', 'rissul', 'sonda', 'unidasul', 'serper'].forEach(fonte => {
@@ -2581,6 +2589,7 @@ async function loadQuarentena(page = 1) {
             const dataFmt = new Date(r.criado_em).toLocaleString('pt-BR');
             const decisao = r.decisao || 'pendente';
             const badgeTxt = decisao === 'pendente' ? 'Pendente' : decisao === 'confirmada' ? 'Confirmada' : 'Liberada';
+            const motivoTxt = { impropria: 'Conteúdo impróprio', revisao_obrigatoria_fonte: 'Fonte exige revisão', descricao_incompativel: 'Não corresponde à descrição' }[r.motivo] || r.motivo || 'Conteúdo impróprio';
             const acoes = decisao === 'pendente' && r.tem_arquivo
                 ? `<button class="btn btn-danger btn-sm" data-action="quarentena-confirmar" data-id="${r.id}">Confirmar</button>
                    <button class="btn btn-secondary btn-sm" data-action="quarentena-liberar" data-id="${r.id}">Liberar (falso positivo)</button>`
@@ -2595,6 +2604,7 @@ async function loadQuarentena(page = 1) {
                         <span class="produto-card-ean">${escHtml(r.codbar)}</span>
                     </div>
                     <div class="produto-card-desc">${escHtml(r.descricao || 'Descrição não disponível')}</div>
+                    <div class="produto-card-marca" style="font-weight:600;">Motivo: ${escHtml(motivoTxt)}</div>
                     <div class="produto-card-marca">Origem: ${escHtml(r.origem || '—')} · ${dataFmt}</div>
                     <div class="produto-card-actions">${acoes}</div>
                 </div>

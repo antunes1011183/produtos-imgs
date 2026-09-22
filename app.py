@@ -280,6 +280,13 @@ class ImagemQuarentena(db.Model):
     criado_em = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
     decisao = db.Column(db.String(20), nullable=True, index=True)  # None=pendente, 'confirmada', 'liberada'
     revisado_em = db.Column(db.DateTime, nullable=True)
+    # Por que foi pra quarentena — distingue os 3 motivos possíveis hoje: 'impropria' (conteúdo
+    # sexual/violento, ver _imagem_e_segura), 'revisao_obrigatoria_fonte' (política da fonte, ver
+    # _fonte_exige_revisao) ou 'descricao_incompativel' (a foto não parece ser do produto
+    # cadastrado, ver _imagem_corresponde_descricao). Nullable porque linhas criadas antes dessa
+    # coluna existir (só existia o motivo 'impropria' na prática) não têm esse dado — tratadas
+    # como 'impropria' pelo frontend quando None, já que era o único motivo possível na época.
+    motivo = db.Column(db.String(30), nullable=True)
 
 
 def _registrar_busca_imagem(codbar, encontrado, origem=None, via='terminal'):
@@ -475,8 +482,15 @@ def upload_imagem_produto(codbar):
     if file and allowed_file(file.filename):
         dados = file.read()
         if not _imagem_e_segura(dados):
-            _quarentenar_imagem(dados, codbar, origem='upload_manual')
+            _quarentenar_imagem(dados, codbar, origem='upload_manual', motivo='impropria')
             return jsonify({'message': 'Imagem sinalizada pelo filtro de conteúdo e enviada para revisão humana (Configurações → Quarentena) em vez de ser salva'}), 422
+        # Verificação de correspondência imagem/descrição (mesmo padrão de
+        # save_image_from_response) — só roda se o produto já tem description cadastrada.
+        produto_upload = Produto.query.filter_by(codbar=codbar).first()
+        descricao_upload = (produto_upload.description or '').strip() if produto_upload else ''
+        if descricao_upload and not _imagem_corresponde_descricao(dados, descricao_upload, produto_upload.marca):
+            _quarentenar_imagem(dados, codbar, origem='upload_manual', motivo='descricao_incompativel')
+            return jsonify({'message': 'Imagem enviada pra revisão humana: parece não corresponder à descrição cadastrada do produto (Configurações → Quarentena)'}), 422
         # Sem cópia crua (pedido do usuário) — processa (remove fundo) e salva só em
         # PROCESSED_IMAGES_FOLDER, mesmo padrão de save_image_from_response.
         processed_file_path = os.path.join(PROCESSED_IMAGES_FOLDER, f'{codbar}.png')
@@ -952,23 +966,83 @@ def _imagem_e_segura(image_data):
         return True
 
 
-def _quarentenar_imagem(image_data, codbar, origem=None):
-    """Salva uma imagem rejeitada por `_imagem_e_segura` na pasta de quarentena + registra uma
-    linha em `ImagemQuarentena` pra revisão humana depois (aba "Quarentena" do painel), em vez
-    de só descartar silenciosamente como acontecia antes. Nome do arquivo leva timestamp pra não
-    colidir se o mesmo EAN for rejeitado mais de uma vez (ex.: tentativas em fontes diferentes).
+def _verificacao_descricao_ativa():
+    """Kill switch (Configurações → Flags de Funcionamento) pra `_imagem_corresponde_descricao` —
+    mesma filosofia do kill switch de busca online: se o classificador começar a rejeitar demais
+    (ex.: descrições do catálogo abreviadas demais pro Gemini reconhecer o produto), dá pra
+    desligar na hora sem deploy, sem precisar desligar a busca de imagem inteira nem as outras
+    checagens de segurança."""
+    return _ler_todas_config().get('VERIFICACAO_DESCRICAO_ATIVA', 'true') == 'true'
 
-    Bloqueia a busca automática de imagem desse EAN na hora (mesma lógica de
-    `DELETE /deletar-imagem-produto/<codbar>?bloquear=true`, inclusive criando um `Produto`
-    mínimo se o EAN ainda não existir cadastrado) — erra pro lado de proteger o cliente por
-    padrão; a revisão humana decide DEPOIS se era falso positivo (aí libera, ver rota
-    `/admin/quarentena/<id>/liberar`), não antes."""
+
+def _imagem_corresponde_descricao(image_data, descricao, marca=None):
+    """Verifica se a imagem plausivelmente é do produto cadastrado (`Produto.description`/
+    `Produto.marca`) — pedido do usuário depois do incidente do PreçoMelhor (ver CLAUDE.md):
+    `_imagem_e_segura` só pega conteúdo IMPRÓPRIO, não pega uma imagem perfeitamente segura mas
+    ERRADA (foto de um produto completamente diferente do cadastrado). Só faz sentido comparar
+    quando existe uma descrição real pra comparar — os 3 chamadores só chamam esta função quando
+    o produto já está cadastrado com `description` preenchida (sem isso, não haveria contra o
+    que verificar); é o motivo do pedido explícito "precisa ter o cadastro do produto".
+
+    Reaproveita o Gemini multimodal (mesma infraestrutura de `_imagem_e_segura`) em vez de uma
+    biblioteca de OCR dedicada (ex.: Tesseract): o modelo já lê texto impresso na embalagem como
+    parte de entender a cena, e além disso julga por contexto visual (formato da embalagem, cor,
+    categoria) mesmo quando o texto não é 100% legível na foto — mais robusto que OCR literal
+    (que só extrai caracteres, sem julgar se batem SEMANTICAMENTE com a descrição, ex.:
+    "Refrigerante Cola 2L" bate com "Coca-Cola 2 Litros" mesmo sem nenhuma palavra idêntica).
+    Evita também instalar um binário externo (Tesseract não é só `pip install`, precisa do
+    executável no sistema) nesta máquina Windows já documentada como "sem reloader confiável".
+
+    Falha aberta deliberada, mesmo padrão de `_imagem_e_segura`: erro de classificação (sem
+    chave, rede, cota esgotada) libera a imagem em vez de travar a busca inteira — essa camada é
+    um reforço de qualidade, não a única linha de defesa (o bloqueio manual por EAN continua
+    disponível se algo passar despercebido)."""
+    if not _verificacao_descricao_ativa():
+        return True
+    api_key = _ler_todas_config().get('GEMINI_API_KEY', '').strip()
+    if not api_key:
+        return True
+    try:
+        client = genai.Client(vertexai=True, api_key=api_key)
+        produto_ref = descricao if not marca else f'{descricao} (marca: {marca})'
+        response = client.models.generate_content(
+            model='gemini-2.5-flash-lite',
+            contents=[
+                genai_types.Part.from_bytes(data=image_data, mime_type='image/jpeg'),
+                f'Esta imagem vai virar a foto pública de um produto de supermercado cadastrado '
+                f'como "{produto_ref}". Leia qualquer texto/marca impressa na embalagem e observe '
+                f'o tipo de produto retratado. A imagem plausivelmente mostra ESSE produto (mesmo '
+                f'que embalagem, tampa, tamanho, etc. variem um pouco)? Responda só com uma '
+                f'palavra, sem explicação: CORRESPONDE ou NAO_CORRESPONDE.',
+            ],
+        )
+        texto = (response.text or '').strip().upper()
+        return 'NAO_CORRESPONDE' not in texto
+    except Exception as e:
+        logging.warning(f"Erro ao verificar correspondência imagem/descrição (permitindo por padrão): {e}")
+        return True
+
+
+def _quarentenar_imagem(image_data, codbar, origem=None, motivo=None):
+    """Salva uma imagem rejeitada (por `_imagem_e_segura`, política de fonte ou
+    `_imagem_corresponde_descricao`) na pasta de quarentena + registra uma linha em
+    `ImagemQuarentena` pra revisão humana depois (aba "Quarentena" do painel), em vez de só
+    descartar silenciosamente como acontecia antes. Nome do arquivo leva timestamp pra não
+    colidir se o mesmo EAN for rejeitado mais de uma vez (ex.: tentativas em fontes diferentes).
+    `motivo` (ver ImagemQuarentena.motivo) distingue POR QUE foi rejeitada — ajuda quem revisa a
+    entender o que checar sem depender só do texto do log do servidor.
+
+    Bloqueia a busca automática de imagem desse EAN na hora, independente do motivo (mesma
+    lógica de `DELETE /deletar-imagem-produto/<codbar>?bloquear=true`, inclusive criando um
+    `Produto` mínimo se o EAN ainda não existir cadastrado) — erra pro lado de proteger o
+    cliente por padrão; a revisão humana decide DEPOIS se era falso positivo (aí libera, ver
+    rota `/admin/quarentena/<id>/liberar`), não antes."""
     nome_arquivo = f'{codbar}_{int(datetime.utcnow().timestamp())}.jpg'
     caminho = os.path.join(QUARENTENA_FOLDER, nome_arquivo)
     try:
         with open(caminho, 'wb') as f:
             f.write(image_data)
-        db.session.add(ImagemQuarentena(codbar=codbar, arquivo=nome_arquivo, origem=origem))
+        db.session.add(ImagemQuarentena(codbar=codbar, arquivo=nome_arquivo, origem=origem, motivo=motivo))
 
         produto = Produto.query.filter_by(codbar=codbar).first()
         if not produto:
@@ -977,7 +1051,7 @@ def _quarentenar_imagem(image_data, codbar, origem=None):
         produto.busca_imagem_bloqueada = True
 
         db.session.commit()
-        logging.error(f"Imagem de {codbar} (origem={origem}) colocada em quarentena pra revisão: {caminho}")
+        logging.error(f"Imagem de {codbar} (origem={origem}, motivo={motivo}) colocada em quarentena pra revisão: {caminho}")
     except Exception as e:
         db.session.rollback()
         logging.error(f"Erro ao colocar imagem de {codbar} em quarentena: {e}")
@@ -1001,11 +1075,24 @@ def save_image_from_response(image_data, codbar, origem=None):
         if reprovada:
             logging.error(f"Imagem REJEITADA por conteúdo impróprio pro produto {codbar} (origem={origem}) — indo pra quarentena.")
             mensagem = 'Imagem rejeitada: conteúdo classificado como impróprio (em quarentena pra revisão)'
+            motivo = 'impropria'
         else:
             logging.warning(f"Imagem de {codbar} (origem={origem}) indo pra quarentena: fonte configurada pra exigir revisão humana.")
             mensagem = f'Imagem enviada pra revisão humana (fonte "{origem}" configurada pra exigir revisão em Configurações → Fontes de Imagem)'
-        _quarentenar_imagem(image_data, codbar, origem)
+            motivo = 'revisao_obrigatoria_fonte'
+        _quarentenar_imagem(image_data, codbar, origem, motivo=motivo)
         return jsonify({'message': mensagem}), 422
+
+    # Verificação de correspondência imagem/descrição (pedido do usuário) — só roda quando o
+    # produto já está cadastrado com uma description real pra comparar; sem isso não há contra
+    # o que verificar. Roda DEPOIS da checagem de impropriedade (não faz sentido gastar uma
+    # chamada extra ao Gemini numa imagem que já vai pra quarentena por outro motivo).
+    produto = Produto.query.filter_by(codbar=codbar).first()
+    descricao_cadastrada = (produto.description or '').strip() if produto else ''
+    if descricao_cadastrada and not _imagem_corresponde_descricao(image_data, descricao_cadastrada, produto.marca):
+        logging.warning(f"Imagem de {codbar} (origem={origem}) NÃO corresponde à descrição cadastrada ('{descricao_cadastrada}') — indo pra quarentena.")
+        _quarentenar_imagem(image_data, codbar, origem, motivo='descricao_incompativel')
+        return jsonify({'message': 'Imagem enviada pra revisão humana: parece não corresponder à descrição cadastrada do produto'}), 422
 
     try:
         input_image = Image.open(io.BytesIO(image_data))
@@ -2601,6 +2688,12 @@ def configuracoes():
             set_config('BUSCA_IMAGEM_ONLINE_ATIVA', str(ativa).lower())
             return jsonify({'message': f'BUSCA_IMAGEM_ONLINE_ATIVA = {ativa}', 'saved': True})
 
+        elif action == 'toggle_verificacao_descricao_ativa':
+            val = data.get('VERIFICACAO_DESCRICAO_ATIVA')
+            ativa = (val == 'true' or val is True)
+            set_config('VERIFICACAO_DESCRICAO_ATIVA', str(ativa).lower())
+            return jsonify({'message': f'VERIFICACAO_DESCRICAO_ATIVA = {ativa}', 'saved': True})
+
         elif action.startswith('toggle_fonte_'):
             # Dois toggles independentes por fonte, mesma action genérica pros dois (o nome da
             # fonte + qual dos dois vem do próprio nome da action, que já bate com o padrão que
@@ -2689,6 +2782,7 @@ def configuracoes():
         'use_openai': cfg.get('USE_OPENAI_SUGESTIONS', 'true') == 'true',
         'rembg_enabled': cfg.get('REMBG_ENABLED', 'false') == 'true',
         'busca_imagem_online_ativa': cfg.get('BUSCA_IMAGEM_ONLINE_ATIVA', 'true') == 'true',
+        'verificacao_descricao_ativa': cfg.get('VERIFICACAO_DESCRICAO_ATIVA', 'true') == 'true',
         'fontes_imagem_ativas': {fonte: _fonte_imagem_ativa(fonte, cfg) for fonte in FONTES_IMAGEM_DISPONIVEIS},
         'fontes_imagem_revisao': {fonte: _fonte_exige_revisao(fonte, cfg) for fonte in FONTES_IMAGEM_DISPONIVEIS},
         'proxy_imagens_vps_ativo': cfg.get('PROXY_IMAGENS_VPS_ATIVO', 'false') == 'true',
@@ -2715,6 +2809,7 @@ def api_config():
         'use_openai': cfg.get('USE_OPENAI_SUGESTIONS', 'true') == 'true',
         'rembg_enabled': cfg.get('REMBG_ENABLED', 'false') == 'true',
         'busca_imagem_online_ativa': cfg.get('BUSCA_IMAGEM_ONLINE_ATIVA', 'true') == 'true',
+        'verificacao_descricao_ativa': cfg.get('VERIFICACAO_DESCRICAO_ATIVA', 'true') == 'true',
         'fontes_imagem_ativas': {fonte: _fonte_imagem_ativa(fonte, cfg) for fonte in FONTES_IMAGEM_DISPONIVEIS},
         'fontes_imagem_revisao': {fonte: _fonte_exige_revisao(fonte, cfg) for fonte in FONTES_IMAGEM_DISPONIVEIS},
         'proxy_imagens_vps_ativo': cfg.get('PROXY_IMAGENS_VPS_ATIVO', 'false') == 'true',
@@ -3711,12 +3806,20 @@ def admin_cadastrar_produto_manual(codbar):
 
     imagem_salva = False
     imagem_quarentenada = False
+    motivo_quarentena = None
     file = request.files.get('file')
     if file and file.filename and allowed_file(file.filename):
         dados = file.read()
         if not _imagem_e_segura(dados):
-            _quarentenar_imagem(dados, codbar, origem='upload_manual')
+            _quarentenar_imagem(dados, codbar, origem='upload_manual', motivo='impropria')
             imagem_quarentenada = True
+            motivo_quarentena = 'impropria'
+        elif description and not _imagem_corresponde_descricao(dados, description):
+            # Verificação de correspondência (mesmo padrão de save_image_from_response) — só
+            # roda quando a própria requisição já trouxe uma description pra comparar.
+            _quarentenar_imagem(dados, codbar, origem='upload_manual', motivo='descricao_incompativel')
+            imagem_quarentenada = True
+            motivo_quarentena = 'descricao_incompativel'
         else:
             # Sem cópia crua (pedido do usuário) — processa e salva só em PROCESSED_IMAGES_FOLDER.
             processed_file_path = os.path.join(PROCESSED_IMAGES_FOLDER, f'{codbar}.png')
@@ -3729,7 +3832,10 @@ def admin_cadastrar_produto_manual(codbar):
     partes_msg = [f'Produto {codbar} cadastrado manualmente']
     partes_msg.append('com descrição' if description else 'sem descrição')
     if imagem_quarentenada:
-        partes_msg.append('- imagem enviada foi sinalizada pelo filtro de conteúdo e ficou em quarentena para revisão humana (não foi salva como foto do produto)')
+        if motivo_quarentena == 'descricao_incompativel':
+            partes_msg.append('- imagem enviada não parece corresponder à descrição informada e ficou em quarentena para revisão humana (não foi salva como foto do produto)')
+        else:
+            partes_msg.append('- imagem enviada foi sinalizada pelo filtro de conteúdo e ficou em quarentena para revisão humana (não foi salva como foto do produto)')
     else:
         partes_msg.append('e com imagem' if imagem_salva else 'sem imagem')
     partes_msg.append('(nenhuma fonte externa foi consultada).')
@@ -4394,9 +4500,10 @@ def zerar_imagens_pendentes():
 @app.route('/admin/quarentena', methods=['GET'])
 @jwt_required()
 def admin_quarentena():
-    """Lista as imagens em quarentena (rejeitadas por `_imagem_e_segura`, ver docstring de
-    `ImagemQuarentena`) pra revisão humana. `status` filtra por 'pendente' (padrão — ainda sem
-    decisão), 'confirmada', 'liberada' ou 'todos'."""
+    """Lista as imagens em quarentena (rejeitadas por `_imagem_e_segura`, política de fonte ou
+    `_imagem_corresponde_descricao` — ver `motivo` e docstring de `ImagemQuarentena`) pra revisão
+    humana. `status` filtra por 'pendente' (padrão — ainda sem decisão), 'confirmada', 'liberada'
+    ou 'todos'."""
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 20, type=int)
     status = request.args.get('status', 'pendente')
@@ -4423,6 +4530,7 @@ def admin_quarentena():
             'codbar': r.codbar,
             'descricao': descricoes.get(r.codbar),
             'origem': r.origem,
+            'motivo': r.motivo or 'impropria',  # linhas de antes desta coluna existir só tinham esse motivo possível
             'criado_em': r.criado_em.isoformat() + 'Z',
             'decisao': r.decisao,
             'revisado_em': r.revisado_em.isoformat() + 'Z' if r.revisado_em else None,
@@ -4463,11 +4571,12 @@ def admin_quarentena_imagem(quarentena_id):
 @app.route('/admin/quarentena/<int:quarentena_id>/confirmar', methods=['POST'])
 @jwt_required()
 def admin_quarentena_confirmar(quarentena_id):
-    """Humano revisou e confirma que a imagem é mesmo imprópria: apaga o arquivo físico da
-    quarentena (não faz sentido guardar o conteúdo indefinidamente só pelo registro existir) e
-    marca a decisão. O bloqueio permanente do EAN (`Produto.busca_imagem_bloqueada`) já foi
-    aplicado no momento da rejeição (ver `_quarentenar_imagem`) — continua valendo, essa rota só
-    fecha o ciclo de revisão."""
+    """Humano revisou e confirma que a rejeição estava certa — imprópria, imagem do produto
+    errado, ou fonte configurada pra exigir revisão (qualquer `motivo`, ver ImagemQuarentena):
+    apaga o arquivo físico da quarentena (não faz sentido guardar o conteúdo indefinidamente só
+    pelo registro existir) e marca a decisão. O bloqueio permanente do EAN
+    (`Produto.busca_imagem_bloqueada`) já foi aplicado no momento da rejeição (ver
+    `_quarentenar_imagem`) — continua valendo, essa rota só fecha o ciclo de revisão."""
     entrada = ImagemQuarentena.query.get_or_404(quarentena_id)
     if entrada.arquivo:
         caminho = os.path.join(QUARENTENA_FOLDER, entrada.arquivo)
@@ -4477,7 +4586,7 @@ def admin_quarentena_confirmar(quarentena_id):
     entrada.decisao = 'confirmada'
     entrada.revisado_em = datetime.utcnow()
     db.session.commit()
-    return jsonify({'message': 'Confirmado como imagem imprópria — arquivo removido, EAN continua bloqueado.'}), 200
+    return jsonify({'message': 'Rejeição confirmada — arquivo removido, EAN continua bloqueado.'}), 200
 
 
 @app.route('/admin/quarentena/<int:quarentena_id>/liberar', methods=['POST'])
