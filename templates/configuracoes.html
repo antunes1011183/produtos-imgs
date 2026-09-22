@@ -2903,20 +2903,11 @@ function renderConsultaTableHtml(produtos) {
             <th style="width:90px;"></th>
         </tr></thead><tbody>`;
     produtos.forEach(p => {
-        if (p.orfao) {
-            html += `
-            <tr style="background:var(--hover);">
-                <td><span class="ean">${escHtml(p.ean)}</span></td>
-                <td colspan="3" style="color:var(--muted); font-style:italic;">Imagem sem cadastro no catálogo</td>
-                <td>${p.foto_png
-                    ? `<img src="${p.foto_png}" class="foto-thumb" alt="foto">`
-                    : `<span class="foto-thumb-placeholder">${CAMERA_ICON}</span>`}</td>
-                <td colspan="2"><button class="btn btn-primary btn-sm" data-action="cadastrar-orfao" data-codbar="${escHtml(p.ean)}">Cadastrar</button></td>
-            </tr>`;
-            return;
-        }
+        const cadastrarBtn = p.orfao
+            ? `<button class="btn btn-primary btn-sm" data-action="cadastrar-orfao" data-codbar="${escHtml(p.ean)}">Cadastrar</button> `
+            : '';
         html += `
-        <tr>
+        <tr${p.orfao ? ' style="background:var(--hover);"' : ''}>
             <td><span class="ean">${escHtml(p.ean)}</span></td>
             <td>${escHtml(p.descricao || '—')}</td>
             <td style="color:var(--muted);">${escHtml(p.marca || '—')}</td>
@@ -2925,7 +2916,7 @@ function renderConsultaTableHtml(produtos) {
                 ? `<img src="${p.foto_png}" class="foto-thumb" alt="foto">`
                 : `<span class="foto-thumb-placeholder">${CAMERA_ICON}</span>`}</td>
             <td>${renderArteCell(p)}</td>
-            <td><button class="btn btn-secondary btn-sm" data-action="detalhes" data-codbar="${escHtml(p.ean)}">Detalhes</button></td>
+            <td>${cadastrarBtn}<button class="btn btn-secondary btn-sm" data-action="detalhes" data-codbar="${escHtml(p.ean)}">Detalhes</button></td>
         </tr>`;
     });
     html += '</tbody></table>';
@@ -2936,23 +2927,11 @@ function renderConsultaGrid(produtos) {
     // Mesmos data-action/data-codbar da tabela — o handler delegado em #consulta-list (click)
     // já funciona sem mudança nenhuma, tanto na grade quanto na tabela.
     const cards = produtos.map(p => {
-        if (p.orfao) {
-            return `
-            <div class="produto-card" style="background:var(--hover);">
-                <div class="produto-card-img">${p.foto_png
-                    ? `<img src="${p.foto_png}" alt="foto">`
-                    : `<span class="foto-thumb-placeholder">${CAMERA_ICON}</span>`}</div>
-                <div class="produto-card-body">
-                    <span class="produto-card-ean">${escHtml(p.ean)}</span>
-                    <span class="produto-card-desc" style="font-style:italic; color:var(--muted);">Imagem sem cadastro no catálogo</span>
-                    <div class="produto-card-actions">
-                        <button class="btn btn-primary btn-sm" data-action="cadastrar-orfao" data-codbar="${escHtml(p.ean)}">Cadastrar</button>
-                    </div>
-                </div>
-            </div>`;
-        }
+        const cadastrarBtn = p.orfao
+            ? `<button class="btn btn-primary btn-sm" data-action="cadastrar-orfao" data-codbar="${escHtml(p.ean)}">Cadastrar</button>`
+            : '';
         return `
-        <div class="produto-card">
+        <div class="produto-card"${p.orfao ? ' style="background:var(--hover);"' : ''}>
             <div class="produto-card-img">${p.foto_png
                 ? `<img src="${p.foto_png}" alt="foto">`
                 : `<span class="foto-thumb-placeholder">${CAMERA_ICON}</span>`}</div>
@@ -2962,6 +2941,7 @@ function renderConsultaGrid(produtos) {
                 <span class="produto-card-marca">${escHtml(p.marca || '—')}</span>
                 <span class="produto-card-preco">${p.preco_medio && p.preco_medio > 0 ? 'R$ ' + p.preco_medio.toFixed(2) : '—'}</span>
                 <div class="produto-card-actions">
+                    ${cadastrarBtn}
                     ${p.arte_url
                         ? `<button class="btn btn-secondary btn-sm" data-action="ver-arte" data-url="${escHtml(p.arte_url)}">Arte</button>`
                         : `<button class="btn btn-primary btn-sm" data-action="gerar-arte" data-codbar="${escHtml(p.ean)}">Gerar arte</button>`}
