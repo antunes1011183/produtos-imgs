@@ -63,7 +63,6 @@ QUARENTENA_FOLDER = 'quarentena_imagens'
 AUDIO_FOLDER = 'static/audios'
 ARTES_FOLDER = 'static/artes_geradas'
 FONT_PATH = 'static/fonts/Montserrat-Variable.ttf'
-BING_API_KEY = 'fd94e4427d7c4622919f8ac561818e94'
 GOOGLE_API_KEY = 'AIzaSyDcgpSF9cRmzLwGqIk44x-3_GZjTfUChtM'
 GOOGLE_CX = '053e66708840f4936'
 ZAFFARI_SEARCH_URL = 'https://zaffari.vtexcommercestable.com.br/api/catalog_system/pub/products/search'
@@ -730,7 +729,7 @@ def deletar_imagem_produto(codbar):
     }
 })
 def obter_imagem_produto(codbar):
-    """Obtém a imagem crua do produto (local -> Bing -> Google -> Zaffari -> PrecoMelhor -> Rissul -> Sonda) e, se já
+    """Obtém a imagem crua do produto (local -> Google -> Zaffari -> PrecoMelhor -> Rissul -> Sonda) e, se já
     existir, a URL da arte publicitária gerada para ele. Quando a foto existe mas a arte
     ainda não foi gerada, dispara a geração em background (a resposta desta chamada ainda
     sai sem 'imagem_url_arte'; uma consulta seguinte já encontra a arte pronta).
@@ -759,7 +758,6 @@ def obter_imagem_produto(codbar):
     if _pode_buscar_imagem_online(codbar):
         cfg_fontes = _ler_todas_config()
         for fonte, buscar in (
-            ('bing', buscar_e_salvar_imagem_bing),
             ('google', buscar_e_salvar_imagem_google),
             ('zaffari', buscar_e_salvar_imagem_zaffari),
             ('precomelhor', buscar_e_salvar_imagem_precomelhor),
@@ -779,7 +777,7 @@ def obter_imagem_produto(codbar):
                 return jsonify({'imagem_url': imagem_url, 'imagem_url_arte': None}), 200
 
     _registrar_busca_imagem(codbar, False, via='terminal')
-    return jsonify({'message': 'Imagem não encontrada em nenhuma fonte (local, Bing, Google, PrecoMelhor, Sonda, Unidasul)'}), 404
+    return jsonify({'message': 'Imagem não encontrada em nenhuma fonte (local, Google, PrecoMelhor, Sonda, Unidasul)'}), 404
 
 
 _fila_arte = queue.Queue()
@@ -1026,34 +1024,6 @@ def save_image_from_response(image_data, codbar, origem=None):
     except Exception as e:
         logging.error(f"Erro ao salvar a imagem do produto {codbar}: {e}")
         return jsonify({'message': 'Error saving image'}), 500
-
-def buscar_e_salvar_imagem_bing(codbar):
-    """Busca e salva a imagem do produto no Bing"""
-    search_url = f"https://api.bing.microsoft.com/v7.0/images/search?q={codbar}"
-    headers = {'Ocp-Apim-Subscription-Key': BING_API_KEY}
-    try:
-        response = requests.get(search_url, headers=headers)
-        response.raise_for_status()
-        results = response.json()
-        
-        if results.get('value'):
-            for item in results['value']:
-                image_url = item['contentUrl']
-                if "https://cdn-cosmos.bluesoft.com.br/products/" in image_url:
-                    continue
-                try:
-                    img_response = requests.get(image_url)
-                    img_response.raise_for_status()
-                    return save_image_from_response(img_response.content, codbar, origem='bing')
-                except requests.RequestException as e:
-                    logging.warning(f"Erro ao baixar a imagem do URL {image_url}: {e}")
-            return jsonify({'message': 'No valid image found from Bing'}), 404
-        else:
-            logging.info(f"Nenhuma imagem encontrada no Bing para o produto {codbar}")
-            return jsonify({'message': 'No image found from Bing'}), 404
-    except requests.RequestException as e:
-        logging.error(f"Erro ao buscar ou salvar imagem do Bing para o produto {codbar}: {e}")
-        return jsonify({'message': f'Error fetching or saving image from Bing: {str(e)}'}), 500
 
 def buscar_e_salvar_imagem_google(codbar):
     # safe=active: ver comentário em fetch_product_from_google — mesma busca genérica só pelo
@@ -1413,7 +1383,6 @@ def serialize_produto_with_image(produto):
         # simples do que dentro de um if/elif aninhado.
         cfg_fontes = _ler_todas_config()
         for fonte, buscar in (
-            ('bing', buscar_e_salvar_imagem_bing),
             ('google', buscar_e_salvar_imagem_google),
             ('zaffari', buscar_e_salvar_imagem_zaffari),
             ('precomelhor', buscar_e_salvar_imagem_precomelhor),
@@ -2350,7 +2319,7 @@ def _ler_todas_config():
 
 def _busca_imagem_online_ativa():
     """Kill switch de emergência (Configurações → Flags de Funcionamento): quando desativado, a
-    busca automática de foto crua em fontes externas (Bing/Google/Zaffari/PreçoMelhor/Rissul/Sonda) é
+    busca automática de foto crua em fontes externas (Google/Zaffari/PreçoMelhor/Rissul/Sonda/Unidasul) é
     pulada inteiramente — só a imagem já salva localmente continua funcionando. Não afeta
     cadastro de nome/marca (fetch_product_from_*) nem o botão "Buscar com IA" (fluxos
     separados). Pedido do usuário depois de um incidente real com imagem imprópria vinda de uma
@@ -2361,7 +2330,7 @@ def _busca_imagem_online_ativa():
 # Toda fonte externa de imagem que passa pelas 3 cadeias de busca (obter_imagem_produto,
 # admin_buscar_imagem, serialize_produto_with_image) — usada tanto pro toggle individual
 # (`_fonte_imagem_ativa`) quanto pra montar a UI de Configurações e o JSON de status.
-FONTES_IMAGEM_DISPONIVEIS = ['bing', 'google', 'zaffari', 'precomelhor', 'rissul', 'sonda', 'unidasul']
+FONTES_IMAGEM_DISPONIVEIS = ['google', 'zaffari', 'precomelhor', 'rissul', 'sonda', 'unidasul']
 
 
 def _fonte_imagem_ativa(fonte, cfg=None):
@@ -2369,7 +2338,7 @@ def _fonte_imagem_ativa(fonte, cfg=None):
     switch geral (`_busca_imagem_online_ativa`, que desliga TODAS de uma vez). Pedido do
     usuário: poder desligar só uma fonte específica (ex.: uma que esteja trazendo imagem errada
     de novo) sem precisar pausar a busca inteira. Config key = `FONTE_<NOME>_ATIVA`
-    (`FONTE_BING_ATIVA`, `FONTE_SONDA_ATIVA`, etc.), default `'true'` — uma fonte nova só fica
+    (`FONTE_GOOGLE_ATIVA`, `FONTE_SONDA_ATIVA`, etc.), default `'true'` — uma fonte nova só fica
     "desligada por padrão" se alguém desligar explicitamente no painel. `cfg` opcional evita
     reler `_ler_todas_config()` a cada fonte dentro do mesmo loop de busca."""
     cfg = cfg if cfg is not None else _ler_todas_config()
@@ -3718,7 +3687,7 @@ def admin_cadastrar_produto_manual(codbar):
 @app.route('/admin/buscar-imagem/<string:codbar>', methods=['POST'])
 @jwt_required()
 def admin_buscar_imagem(codbar):
-    """Busca a imagem do produto: local -> Bing -> Google -> Zaffari -> PrecoMelhor -> Rissul -> Sonda,
+    """Busca a imagem do produto: local -> Google -> Zaffari -> PrecoMelhor -> Rissul -> Sonda,
     salvando o resultado (já processado, sem fundo) em PROCESSED_IMAGES_FOLDER.
 
     Cria um `Produto` mínimo (só codbar) se o EAN ainda não tiver cadastro, em vez de 404 —
@@ -3746,7 +3715,6 @@ def admin_buscar_imagem(codbar):
 
     cfg_fontes = _ler_todas_config()
     for fonte, buscar in (
-        ('bing', buscar_e_salvar_imagem_bing),
         ('google', buscar_e_salvar_imagem_google),
         ('zaffari', buscar_e_salvar_imagem_zaffari),
         ('precomelhor', buscar_e_salvar_imagem_precomelhor),
@@ -3763,7 +3731,7 @@ def admin_buscar_imagem(codbar):
             return jsonify({'message': f'Imagem encontrada via {fonte}', 'imagem_url': imagem_url, 'fonte': fonte}), 200
 
     _registrar_busca_imagem(codbar, False, via='admin')
-    return jsonify({'message': 'Nenhuma imagem encontrada em nenhuma das fontes (Bing, Google, PrecoMelhor, Sonda, Unidasul)'}), 404
+    return jsonify({'message': 'Nenhuma imagem encontrada em nenhuma das fontes (Google, PrecoMelhor, Sonda, Unidasul)'}), 404
 
 
 @app.route('/admin/buscar-imagem-ia/<string:codbar>', methods=['POST'])
