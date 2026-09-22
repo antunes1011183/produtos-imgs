@@ -1137,11 +1137,14 @@
             <!-- ===== TAB: IMAGENS PENDENTES ===== -->
             <div id="tab-pendentes" class="tab-content" style="display:none;">
                 <div class="card">
-                    <h2>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>
-                        Imagens Pendentes <span class="badge" id="pendentes-count-badge">carregando...</span>
-                    </h2>
-                    <p style="margin:-0.4rem 0 0.85rem; color:var(--muted); font-size:0.85rem;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+                        <h2 style="margin:0;">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>
+                            Imagens Pendentes <span class="badge" id="pendentes-count-badge">carregando...</span>
+                        </h2>
+                        <button class="btn btn-secondary btn-sm" id="btn-zerar-pendentes">Zerar registros</button>
+                    </div>
+                    <p style="margin:0.4rem 0 0.85rem; color:var(--muted); font-size:0.85rem;">
                         Todo EAN que o sistema tentou e não conseguiu baixar imagem nenhuma, e que ainda não tem foto salva na pasta agora — cadastrado no catálogo ou não. Some da lista assim que uma imagem for salva pra ele.
                     </p>
                     <div id="alert-pendentes"></div>
@@ -2261,6 +2264,26 @@ async function loadImagensPendentes(page = 1) {
         showAlert('alert-pendentes', `Erro: ${e.message}`, 'error');
     }
 }
+
+$('#btn-zerar-pendentes').addEventListener('click', async () => {
+    if (!confirm('Isso apaga TODO o histórico de tentativas sem sucesso (cadastrado ou não) — inclusive o que aparece na aba Histórico → "Não encontrados", já que as duas listas usam os mesmos registros. Não apaga nenhuma imagem nem bloqueio, só o histórico de tentativas. Confirma?')) return;
+    const btn = $('#btn-zerar-pendentes');
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Zerando...';
+    try {
+        const res = await fetch('/admin/imagens-pendentes/zerar', { method: 'POST', headers: authHeaders() });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+        toast(data.message || 'Registros zerados', 'success');
+        loadImagensPendentes(1);
+    } catch (e) {
+        showAlert('alert-pendentes', `Erro: ${e.message}`, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+    }
+});
 
 $('#btn-pendentes-filtrar').addEventListener('click', () => loadImagensPendentes(1));
 $('#pendentes-codbar').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadImagensPendentes(1); });

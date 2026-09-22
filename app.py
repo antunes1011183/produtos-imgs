@@ -4184,6 +4184,26 @@ def admin_historico_buscas():
     })
 
 
+@app.route('/admin/imagens-pendentes/zerar', methods=['POST'])
+@jwt_required()
+def zerar_imagens_pendentes():
+    """Botão "Zerar registros" da página Imagens Pendentes — apaga TODAS as linhas de pendência
+    (`HistoricoBuscaImagem` com `encontrado=False`), cadastradas ou não. Como as duas telas
+    agrupadas (`status=nao_encontrado` do Histórico e `status=sem_imagem` das Imagens Pendentes)
+    são views diferentes sobre a MESMA tabela (ver `admin_historico_buscas`), zerar aqui também
+    esvazia a aba Histórico → Não encontrados — efeito colateral esperado de um "reset" completo
+    da fila de pendências, não um bug. Não mexe em nada além dessa tabela: nenhum arquivo, nenhum
+    `Produto`, nenhum bloqueio por EAN é tocado — só o histórico de tentativas registradas."""
+    try:
+        apagadas = HistoricoBuscaImagem.query.filter_by(encontrado=False).delete()
+        db.session.commit()
+        return jsonify({'message': f'{apagadas} registro(s) de pendência apagado(s)', 'apagadas': apagadas}), 200
+    except Exception as e:
+        db.session.rollback()
+        logging.error(f"Erro ao zerar registros de imagens pendentes: {e}")
+        return jsonify({'message': 'Erro ao zerar registros'}), 500
+
+
 @app.route('/admin/quarentena', methods=['GET'])
 @jwt_required()
 def admin_quarentena():
