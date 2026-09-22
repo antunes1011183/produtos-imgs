@@ -735,7 +735,14 @@ def obter_imagem_produto(codbar):
     orientacao = 'vertical' if request.args.get('orientacao') == 'vertical' else 'horizontal'
     img_path = find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
     if img_path:
-        img_url = _static_url(img_path)
+        # 'imagem_url' pro terminal sempre prioriza a versão PROCESSADA (fundo removido) —
+        # pedido explícito do usuário. `img_path` (cru) continua sendo o que vai pra geração de
+        # arte (_enfileirar_geracao_arte logo abaixo) — a IA precisa da foto original completa
+        # como referência, não da versão já sem fundo. Cai pra imagem crua só se por algum
+        # motivo a processada não existir (ex.: REMBG_ENABLED=false) — nunca 404 por causa dessa
+        # prioridade.
+        processed_path = find_existing_image(codbar, PROCESSED_IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+        img_url = _static_url(processed_path) if processed_path else _static_url(img_path)
         logging.info(f"Imagem encontrada localmente para o produto {codbar}: {img_url}")
         arte_url = _arte_url(codbar, orientacao)
         if not arte_url:
@@ -1382,7 +1389,10 @@ def serialize_produto_with_image(produto):
     img_url = None
     img_path = find_existing_image(produto.codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
     if img_path:
-        img_url = _static_url(img_path)
+        # Mesma prioridade de obter_imagem_produto: versão processada (sem fundo) primeiro,
+        # crua só como fallback se a processada não existir por algum motivo.
+        processed_path = find_existing_image(produto.codbar, PROCESSED_IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+        img_url = _static_url(processed_path) if processed_path else _static_url(img_path)
     elif _busca_imagem_online_ativa() and not produto.busca_imagem_bloqueada:
         bing_result = buscar_e_salvar_imagem_bing(produto.codbar)
         if bing_result[1] == 200:
