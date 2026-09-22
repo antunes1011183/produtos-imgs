@@ -15,7 +15,7 @@ import requests
 from io import StringIO, BytesIO
 from io import StringIO
 from datetime import datetime, timedelta
-from flask import Flask, request, jsonify, url_for, render_template, redirect, send_file
+from flask import Flask, request, jsonify, url_for, render_template, redirect, send_file, Response
 from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, verify_jwt_in_request
 from werkzeug.utils import secure_filename
@@ -131,16 +131,31 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def save_image_with_background_removal(image, file_path):
-    """Remove o fundo da imagem e salva no caminho especificado"""
+    """Remove o fundo da imagem e salva no caminho especificado.
+
+    `alpha_matting=True` (pedido do usuário, depois de notar produto "cortado" na imagem
+    processada): sem isso, o rembg usa só a máscara binária crua do modelo de segmentação
+    (u2net, o padrão) — em bordas finas ou claras da embalagem (etiqueta translúcida, tampa
+    branca contra fundo também claro, reflexo/brilho na superfície) o modelo às vezes classifica
+    um pedaço do PRODUTO em si como fundo, "comendo" aquele pedaço na imagem final. Alpha
+    matting (via `pymatting`, já instalado) refina a borda numa segunda passada — em vez de um
+    corte binário direto, suaviza a transição real fundo/produto — reduz bastante esse efeito.
+    Custa um pouco mais de tempo por imagem, aceitável (roda em background, não bloqueia
+    resposta pro terminal).
+
+    `optimize=True` no PNG final: compressão SEM PERDA mais agressiva (PNG já é lossless por
+    natureza — isso só demora um pouco mais pra salvar, não muda um pixel sequer) — reduz o
+    tamanho do arquivo final, pedido do usuário junto com a correção acima ("otimize e não
+    perca qualidade")."""
     if not REMBG_ENABLED:
         logging.warning("rembg não disponível - operação ignorada")
         return
     # Converte para RGBA se necessário
     image = image.convert("RGBA") if image.mode != "RGBA" else image
-    # Remove o fundo
-    output_image = remove(image)
-    # Salva a imagem processada
-    output_image.save(file_path)
+    # Remove o fundo, com matting pra não cortar pedaço do produto nas bordas
+    output_image = remove(image, alpha_matting=True)
+    # Salva a imagem processada (lossless, só mais compacta)
+    output_image.save(file_path, optimize=True)
 
 def fetch_product_from_google(ean):
     # safe=active: filtra conteúdo explícito no resultado — CRÍTICO aqui porque a busca é feita
@@ -736,6 +751,7 @@ def obter_imagem_produto(codbar):
             ('precomelhor', buscar_e_salvar_imagem_precomelhor),
             ('rissul', buscar_e_salvar_imagem_rissul),
             ('sonda', buscar_e_salvar_imagem_sonda),
+            ('unidasul', buscar_e_salvar_imagem_unidasul),
         ):
             resultado = buscar(codbar)
             if resultado[1] == 200:
@@ -747,7 +763,7 @@ def obter_imagem_produto(codbar):
                 return jsonify({'imagem_url': imagem_url, 'imagem_url_arte': None}), 200
 
     _registrar_busca_imagem(codbar, False, via='terminal')
-    return jsonify({'message': 'Imagem não encontrada em nenhuma fonte (local, Bing, Google, PrecoMelhor, Sonda)'}), 404
+    return jsonify({'message': 'Imagem não encontrada em nenhuma fonte (local, Bing, Google, PrecoMelhor, Sonda, Unidasul)'}), 404
 
 
 _fila_arte = queue.Queue()
@@ -1216,6 +1232,53 @@ def buscar_e_salvar_imagem_sonda(codbar):
         return jsonify({'message': f'Error fetching or saving image from Sonda: {str(e)}'}), 500
 
 
+UNIDASUL_BLOB_BASE_URL = 'https://sabancoimagenspng.blob.core.windows.net/png1000x1000'
+
+
+def _buscar_imagem_real_unidasul(ean):
+    """Busca a URL da foto real do produto no Azure Blob Storage da Unidasul (container
+    `png1000x1000` da storage account `sabancoimagenspng`) — pedido do usuário, mandando uma URL
+    de container com SAS token de exemplo. Sem API/busca nenhuma: o nome do blob já é
+    `<ean>_1.png` direto (confirmado listando o container com `restype=container&comp=list`,
+    permitido pelo SAS token porque ele tem permissão `l`/list) — só monta a URL e confere se
+    existe com HEAD.
+
+    O SAS token (`UNIDASUL_SAS_TOKEN`, Config) é só a query string depois do `?` — igual ao
+    resto do sistema, fica salvo no banco (não no código), editável em Configurações, porque um
+    SAS token da Azure sempre tem validade (`se=` na query) e vai precisar ser trocado por um
+    novo de tempos em tempos, sem precisar de deploy. Sem token configurado, retorna `None` sem
+    tentar nada (`_pode_buscar_imagem_online`/kill switch continuam valendo por cima disso, como
+    em qualquer outra fonte)."""
+    token = _ler_todas_config().get('UNIDASUL_SAS_TOKEN', '').strip()
+    if not token:
+        return None
+    url = f'{UNIDASUL_BLOB_BASE_URL}/{ean}_1.png?{token}'
+    try:
+        resp = requests.head(url, timeout=15)
+        if resp.status_code == 200:
+            return url
+        return None
+    except requests.RequestException as e:
+        logging.error(f"Erro ao checar imagem da Unidasul: {e}")
+        return None
+
+
+def buscar_e_salvar_imagem_unidasul(codbar):
+    """Busca e salva a imagem real do produto no Azure Blob da Unidasul (ver
+    _buscar_imagem_real_unidasul)."""
+    image_url = _buscar_imagem_real_unidasul(codbar)
+    if not image_url:
+        logging.info(f"Nenhuma imagem real encontrada na Unidasul para o produto {codbar}")
+        return jsonify({'message': 'No image found from Unidasul'}), 404
+    try:
+        img_response = requests.get(image_url, timeout=15)
+        img_response.raise_for_status()
+        return save_image_from_response(img_response.content, codbar, origem='unidasul')
+    except requests.RequestException as e:
+        logging.error(f"Erro ao buscar ou salvar imagem da Unidasul para o produto {codbar}: {e}")
+        return jsonify({'message': f'Error fetching or saving image from Unidasul: {str(e)}'}), 500
+
+
 def _url_e_imagem_valida(url, timeout=5):
     """Confere rapidamente (HEAD, com fallback pra GET em streaming se o servidor não suportar
     HEAD direito) se uma URL aponta de verdade pra um arquivo de imagem (Content-Type image/*),
@@ -1344,6 +1407,10 @@ def serialize_produto_with_image(produto):
                             sonda_result = buscar_e_salvar_imagem_sonda(produto.codbar)
                             if sonda_result[1] == 200:
                                 img_url = sonda_result[0].get_json().get('imagem_url')
+                            else:
+                                unidasul_result = buscar_e_salvar_imagem_unidasul(produto.codbar)
+                                if unidasul_result[1] == 200:
+                                    img_url = unidasul_result[0].get_json().get('imagem_url')
 
     return {
         'codbar': produto.codbar,
@@ -2275,6 +2342,49 @@ def _busca_imagem_online_ativa():
     return _ler_todas_config().get('BUSCA_IMAGEM_ONLINE_ATIVA', 'true') == 'true'
 
 
+@app.before_request
+def _proxy_imagens_para_vps():
+    """Migração pra VPS (Hostinger): quando ativo (Configurações → "Proxy de imagens pra VPS"),
+    TODA requisição em `/produto-imagem/...` é encaminhada pra VPS nova em vez de processada
+    aqui — os terminais em campo continuam apontando pro mesmo host/porta de sempre
+    (`srv-mupa.ddns.net:5050`, configurado em cada aparelho), sem precisar reconfigurar nenhum
+    dispositivo; o corte de verdade pra VPS vira só ligar este toggle. Path checado por prefixo
+    exato (`/produto-imagem/`), não um proxy genérico pra tudo — as outras rotas (painel admin,
+    cadastro, etc.) continuam sendo atendidas aqui normalmente enquanto a migração não terminar.
+
+    `before_request` (não um decorator por rota) pra não precisar tocar nas duas view functions
+    (`obter_imagem_produto`/`gerar_arte_publica`) nem arriscar esquecer uma futura — qualquer
+    rota nova sob esse prefixo já cai no proxy automaticamente.
+
+    Repassa método, corpo (bytes crus, sem reinterpretar — `gerar_arte_publica` recebe a foto
+    como corpo binário) e query string; NÃO repassa o header `Host` nem `Content-Length` (o
+    `requests` recalcula os dois sozinho pro destino certo). Timeout de 30s: geração de arte na
+    VPS pode legitimamente demorar (fila do Gemini), mas não pode travar pra sempre se a VPS cair
+    — nesse caso responde 502 pro terminal em vez de pendurar a requisição."""
+    if not request.path.startswith('/produto-imagem/'):
+        return None
+    if _ler_todas_config().get('PROXY_IMAGENS_VPS_ATIVO', 'false') != 'true':
+        return None
+    destino = _ler_todas_config().get('PROXY_IMAGENS_VPS_URL', '').strip().rstrip('/')
+    if not destino:
+        return None
+
+    qs = request.query_string.decode()
+    url = f'{destino}{request.path}' + (f'?{qs}' if qs else '')
+    try:
+        resp = requests.request(
+            method=request.method,
+            url=url,
+            headers={k: v for k, v in request.headers if k.lower() not in ('host', 'content-length')},
+            data=request.get_data(),
+            timeout=30,
+        )
+        return Response(resp.content, status=resp.status_code, content_type=resp.headers.get('Content-Type'))
+    except requests.RequestException as e:
+        logging.error(f"Erro ao encaminhar {request.path} pra VPS ({destino}): {e}")
+        return jsonify({'message': 'Erro ao encaminhar requisição para a VPS'}), 502
+
+
 def _pode_buscar_imagem_online(codbar):
     """Combina as duas travas de segurança da busca automática de imagem: o kill switch
     global (`_busca_imagem_online_ativa`, afeta todo produto) e o bloqueio permanente por
@@ -2383,6 +2493,17 @@ def configuracoes():
             else:
                 return jsonify({'message': 'Chave inválida', 'saved': False}), 400
 
+        elif action == 'save_unidasul_token':
+            # Só a query string do SAS token (tudo depois do "?" na URL que a Unidasul manda) —
+            # ver _buscar_imagem_real_unidasul. Sempre tem validade (parâmetro "se="), então fica
+            # no banco em vez de no código pra dar pra trocar sem precisar de deploy.
+            new_token = (data.get('unidasul_token') or '').strip().lstrip('?')
+            if new_token:
+                set_config('UNIDASUL_SAS_TOKEN', new_token)
+                return jsonify({'message': 'Token Unidasul salvo com sucesso', 'saved': True})
+            else:
+                return jsonify({'message': 'Token inválido', 'saved': False}), 400
+
         elif action == 'toggle_use_openai':
             # Lia 'use_openai' aqui, mas o frontend sempre mandou o campo com o mesmo nome do
             # data-key do toggle ('USE_OPENAI_SUGESTIONS') — bug real, achado de passagem
@@ -2406,6 +2527,18 @@ def configuracoes():
             ativa = (val == 'true' or val is True)
             set_config('BUSCA_IMAGEM_ONLINE_ATIVA', str(ativa).lower())
             return jsonify({'message': f'BUSCA_IMAGEM_ONLINE_ATIVA = {ativa}', 'saved': True})
+
+        elif action == 'save_proxy_imagens_vps':
+            # Migração pra VPS (ver _proxy_imagens_para_vps) — salva a URL de destino e o toggle
+            # juntos na mesma ação, pra nunca dar pra ativar o proxy sem uma URL configurada.
+            url_destino = (data.get('PROXY_IMAGENS_VPS_URL') or '').strip().rstrip('/')
+            val = data.get('PROXY_IMAGENS_VPS_ATIVO')
+            ativo = (val == 'true' or val is True)
+            if ativo and not url_destino:
+                return jsonify({'message': 'Informe a URL da VPS antes de ativar o proxy', 'saved': False}), 400
+            set_config('PROXY_IMAGENS_VPS_URL', url_destino)
+            set_config('PROXY_IMAGENS_VPS_ATIVO', str(ativo).lower())
+            return jsonify({'message': f'Proxy de imagens pra VPS: {"ATIVO" if ativo else "inativo"} (destino: {url_destino or "—"})', 'saved': True})
 
         elif action == 'toggle_resumo_ativo':
             val = data.get('RESUMO_ATIVO')
@@ -2441,18 +2574,22 @@ def configuracoes():
     cfg = _ler_todas_config()
     openai_key_full = cfg.get('OPENAI_API_KEY', '') or ''
     gemini_key_full = cfg.get('GEMINI_API_KEY', '') or ''
+    unidasul_token_full = cfg.get('UNIDASUL_SAS_TOKEN', '') or ''
     cosmos_status = _status_tokens_cosmos()
     return jsonify({
         'openai_key': openai_key_full[:8] + '...' if openai_key_full and len(openai_key_full) > 8 else openai_key_full or '(não configurado)',
         'openai_key_full': openai_key_full,
         'gemini_key': gemini_key_full[:8] + '...' if gemini_key_full and len(gemini_key_full) > 8 else gemini_key_full or '(não configurado)',
         'gemini_key_full': gemini_key_full,
+        'unidasul_token_full': unidasul_token_full,
         'cosmos_tokens_full': '\n'.join(_lista_tokens_cosmos()),
         'cosmos_status': cosmos_status,
         'notificacoes': {chave: cfg.get(chave, '') for chave in NOTIFICACAO_CONFIG_KEYS},
         'use_openai': cfg.get('USE_OPENAI_SUGESTIONS', 'true') == 'true',
         'rembg_enabled': cfg.get('REMBG_ENABLED', 'false') == 'true',
         'busca_imagem_online_ativa': cfg.get('BUSCA_IMAGEM_ONLINE_ATIVA', 'true') == 'true',
+        'proxy_imagens_vps_ativo': cfg.get('PROXY_IMAGENS_VPS_ATIVO', 'false') == 'true',
+        'proxy_imagens_vps_url': cfg.get('PROXY_IMAGENS_VPS_URL', '') or '',
     })
 
 
@@ -2463,14 +2600,18 @@ def api_config():
     cfg = _ler_todas_config()
     openai_key_full = cfg.get('OPENAI_API_KEY', '') or ''
     gemini_key_full = cfg.get('GEMINI_API_KEY', '') or ''
+    unidasul_token_full = cfg.get('UNIDASUL_SAS_TOKEN', '') or ''
     return jsonify({
         'openai_key': openai_key_full[:8] + '...' if openai_key_full and len(openai_key_full) > 8 else openai_key_full or '(não configurado)',
         'openai_key_full': openai_key_full,
         'gemini_key': gemini_key_full[:8] + '...' if gemini_key_full and len(gemini_key_full) > 8 else gemini_key_full or '(não configurado)',
         'gemini_key_full': gemini_key_full,
+        'unidasul_token_full': unidasul_token_full,
         'use_openai': cfg.get('USE_OPENAI_SUGESTIONS', 'true') == 'true',
         'rembg_enabled': cfg.get('REMBG_ENABLED', 'false') == 'true',
         'busca_imagem_online_ativa': cfg.get('BUSCA_IMAGEM_ONLINE_ATIVA', 'true') == 'true',
+        'proxy_imagens_vps_ativo': cfg.get('PROXY_IMAGENS_VPS_ATIVO', 'false') == 'true',
+        'proxy_imagens_vps_url': cfg.get('PROXY_IMAGENS_VPS_URL', '') or '',
     })
 
 
@@ -3532,6 +3673,7 @@ def admin_buscar_imagem(codbar):
         ('precomelhor', buscar_e_salvar_imagem_precomelhor),
         ('rissul', buscar_e_salvar_imagem_rissul),
         ('sonda', buscar_e_salvar_imagem_sonda),
+        ('unidasul', buscar_e_salvar_imagem_unidasul),
     ):
         resultado = buscar(codbar)
         if resultado[1] == 200:
@@ -3540,7 +3682,7 @@ def admin_buscar_imagem(codbar):
             return jsonify({'message': f'Imagem encontrada via {fonte}', 'imagem_url': imagem_url, 'fonte': fonte}), 200
 
     _registrar_busca_imagem(codbar, False, via='admin')
-    return jsonify({'message': 'Nenhuma imagem encontrada em nenhuma das fontes (Bing, Google, PrecoMelhor, Sonda)'}), 404
+    return jsonify({'message': 'Nenhuma imagem encontrada em nenhuma das fontes (Bing, Google, PrecoMelhor, Sonda, Unidasul)'}), 404
 
 
 @app.route('/admin/buscar-imagem-ia/<string:codbar>', methods=['POST'])

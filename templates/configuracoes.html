@@ -710,6 +710,24 @@
                 <div class="card">
                     <h2>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-3 3m-6.34 6.34a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5M19 4l-3.5 3.5"/></svg>
+                        Token Unidasul (Azure Blob) <span class="badge">UNIDASUL_SAS_TOKEN</span>
+                    </h2>
+                    <div id="alert-unidasul"></div>
+                    <div class="form-row">
+                        <label for="unidasul-token">SAS token do container de imagens (só a query string, com ou sem o "?" inicial)</label>
+                        <input type="password" id="unidasul-token" placeholder="sp=rl&amp;st=...&amp;se=...&amp;sig=..." autocomplete="off">
+                    </div>
+                    <div class="form-row" style="flex-direction:row; gap:0.6rem; align-items:center; flex-wrap:wrap;">
+                        <button class="btn btn-primary" id="btn-save-unidasul">Salvar Token</button>
+                    </div>
+                    <p style="font-size:0.76rem; color:var(--muted); margin-top:0.75rem; margin-bottom:0;">
+                        Fonte de imagem real por EAN (blob <code>&lt;ean&gt;_1.png</code>). O token tem validade (parâmetro "se=" na URL que a Unidasul manda) — quando expirar, a busca nessa fonte simplesmente para de achar imagem (sem quebrar nada, cai pra próxima fonte); cole o token novo aqui pra reativar.
+                    </p>
+                </div>
+
+                <div class="card">
+                    <h2>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-3 3m-6.34 6.34a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5M19 4l-3.5 3.5"/></svg>
                         Tokens Cosmos (Bluesoft) <span class="badge">COSMOS_API_TOKENS</span>
                     </h2>
                     <div id="alert-cosmos"></div>
@@ -797,10 +815,34 @@
                     </div>
                     <div class="toggle-row">
                         <div class="toggle-label">
-                            <span class="name">Busca de imagem online (Bing/Google/Zaffari/PreçoMelhor/Rissul/Sonda)</span>
+                            <span class="name">Busca de imagem online (Bing/Google/Zaffari/PreçoMelhor/Rissul/Sonda/Unidasul)</span>
                             <span class="desc">Desativa a busca automática de foto crua em fontes externas — o terminal e o painel passam a usar só a imagem local já salva. Não afeta cadastro de nome/marca nem a aba "Buscar com IA". Use pra pausar tudo rapidamente em caso de imagem imprópria vindo de fonte externa.</span>
                         </div>
                         <div class="toggle" id="toggle-busca-imagem-online" data-key="BUSCA_IMAGEM_ONLINE_ATIVA"></div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+                        Proxy de imagens para VPS (migração)
+                    </h2>
+                    <p style="margin:-0.4rem 0 0.85rem; color:var(--muted); font-size:0.85rem;">
+                        Quando ativo, <strong>toda</strong> requisição em <code>/produto-imagem/...</code> (a rota que os terminais/app usam pra consultar imagem e arte) é encaminhada pra VPS abaixo, em vez de processada aqui — os terminais em campo continuam apontando pra este host/porta de sempre, sem precisar reconfigurar nenhum aparelho. As demais rotas (painel, cadastro, etc.) continuam sendo atendidas normalmente aqui enquanto a migração não terminar.
+                    </p>
+                    <div id="alert-proxy-vps"></div>
+                    <div class="form-row">
+                        <label for="proxy-vps-url">URL base da VPS (ex: http://IP:5050, sem barra no final)</label>
+                        <input type="text" id="proxy-vps-url" placeholder="http://2.25.239.153:5050" autocomplete="off">
+                    </div>
+                    <div class="form-row" style="flex-direction:row; gap:0.6rem; align-items:center;">
+                        <label style="display:flex; align-items:center; gap:0.5rem; font-size:0.85rem; cursor:pointer;">
+                            <input type="checkbox" id="proxy-vps-ativo" style="width:auto;">
+                            Proxy ativo (encaminhar de verdade)
+                        </label>
+                    </div>
+                    <div class="form-row" style="flex-direction:row; gap:0.6rem; align-items:center; flex-wrap:wrap; margin-top:0.4rem;">
+                        <button class="btn btn-primary" id="btn-save-proxy-vps">Salvar</button>
                     </div>
                 </div>
 
@@ -1569,6 +1611,9 @@ async function loadConfig() {
 
         $('#openai-key').value = cfg.openai_key_full || '';
         $('#gemini-key').value = cfg.gemini_key_full || '';
+        $('#unidasul-token').value = cfg.unidasul_token_full || '';
+        $('#proxy-vps-url').value = cfg.proxy_imagens_vps_url || '';
+        $('#proxy-vps-ativo').checked = !!cfg.proxy_imagens_vps_ativo;
         $('#cosmos-tokens').value = cfg.cosmos_tokens_full || '';
         const cosmosStatus = cfg.cosmos_status || {};
         $('#cosmos-status-text').textContent = cosmosStatus.total_tokens
@@ -1719,6 +1764,57 @@ $('#btn-save-gemini').addEventListener('click', async () => {
         }
     } catch (e) {
         showAlert('alert-gemini', `Erro: ${e.message}`, 'error');
+    }
+});
+
+$('#btn-save-unidasul').addEventListener('click', async () => {
+    const token = $('#unidasul-token').value.trim();
+    if (!token) {
+        showAlert('alert-unidasul', 'Por favor, insira o token da Unidasul.', 'error');
+        return;
+    }
+    try {
+        const res = await fetch('/configuracoes', {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ action: 'save_unidasul_token', unidasul_token: token })
+        });
+        if (!res.ok) {
+            const errBody = await res.json().catch(() => ({}));
+            throw new Error(errBody.msg || errBody.error || `HTTP ${res.status}: falha ao salvar`);
+        }
+        const data = await res.json();
+        if (data.saved) {
+            showAlert('alert-unidasul', 'Token Unidasul salvo com sucesso!', 'success');
+        } else {
+            showAlert('alert-unidasul', data.message || 'Falha ao salvar', 'error');
+        }
+    } catch (e) {
+        showAlert('alert-unidasul', `Erro: ${e.message}`, 'error');
+    }
+});
+
+$('#btn-save-proxy-vps').addEventListener('click', async () => {
+    const url = $('#proxy-vps-url').value.trim();
+    const ativo = $('#proxy-vps-ativo').checked;
+    if (ativo && !url) {
+        showAlert('alert-proxy-vps', 'Informe a URL da VPS antes de ativar o proxy.', 'error');
+        return;
+    }
+    if (ativo && !confirm(`Isso vai encaminhar TODA requisição de imagem/arte dos terminais pra ${url} agora mesmo. Confirma?`)) {
+        return;
+    }
+    try {
+        const res = await fetch('/configuracoes', {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ action: 'save_proxy_imagens_vps', PROXY_IMAGENS_VPS_URL: url, PROXY_IMAGENS_VPS_ATIVO: ativo ? 'true' : 'false' })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.saved) throw new Error(data.message || `HTTP ${res.status}`);
+        showAlert('alert-proxy-vps', data.message || 'Salvo com sucesso!', 'success');
+    } catch (e) {
+        showAlert('alert-proxy-vps', `Erro: ${e.message}`, 'error');
     }
 });
 
