@@ -727,6 +727,24 @@
 
                 <div class="card">
                     <h2>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+                        Token Serper (serper.dev) <span class="badge">SERPER_API_KEY</span>
+                    </h2>
+                    <div id="alert-serper"></div>
+                    <div class="form-row">
+                        <label for="serper-key">Chave da API (serper.dev/playground → API Key)</label>
+                        <input type="password" id="serper-key" placeholder="chave da Serper" autocomplete="off">
+                    </div>
+                    <div class="form-row" style="flex-direction:row; gap:0.6rem; align-items:center; flex-wrap:wrap;">
+                        <button class="btn btn-primary" id="btn-save-serper">Salvar Token</button>
+                    </div>
+                    <p style="font-size:0.76rem; color:var(--muted); margin-top:0.75rem; margin-bottom:0;">
+                        Proxy pago da busca de imagens do Google de verdade (<code>google.serper.dev/images</code>) — alternativa quando a cota diária grátis do Google Custom Search (100 buscas/dia) esgota. Busca sempre com <code>safe=active</code>; mesmo assim toda imagem passa pela checagem de conteúdo (Gemini) antes de ser salva, igual às outras fontes.
+                    </p>
+                </div>
+
+                <div class="card">
+                    <h2>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-3 3m-6.34 6.34a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5M19 4l-3.5 3.5"/></svg>
                         Tokens Cosmos (Bluesoft) <span class="badge">COSMOS_API_TOKENS</span>
                     </h2>
@@ -815,7 +833,7 @@
                     </div>
                     <div class="toggle-row">
                         <div class="toggle-label">
-                            <span class="name">Busca de imagem online (Google/Zaffari/PreçoMelhor/Rissul/Sonda/Unidasul)</span>
+                            <span class="name">Busca de imagem online (Google/Zaffari/PreçoMelhor/Rissul/Sonda/Unidasul/Serper)</span>
                             <span class="desc">Desativa a busca automática de foto crua em fontes externas — o terminal e o painel passam a usar só a imagem local já salva. Não afeta cadastro de nome/marca nem a aba "Buscar com IA". Use pra pausar tudo rapidamente em caso de imagem imprópria vindo de fonte externa.</span>
                         </div>
                         <div class="toggle" id="toggle-busca-imagem-online" data-key="BUSCA_IMAGEM_ONLINE_ATIVA"></div>
@@ -839,6 +857,7 @@
                             <tr><td>Rissul</td><td style="text-align:center;"><div class="toggle" id="toggle-fonte-rissul-ativa" data-key="FONTE_RISSUL_ATIVA" style="margin:0 auto;"></div></td><td style="text-align:center;"><div class="toggle" id="toggle-fonte-rissul-revisao" data-key="FONTE_RISSUL_REVISAO_OBRIGATORIA" style="margin:0 auto;"></div></td></tr>
                             <tr><td>Sonda</td><td style="text-align:center;"><div class="toggle" id="toggle-fonte-sonda-ativa" data-key="FONTE_SONDA_ATIVA" style="margin:0 auto;"></div></td><td style="text-align:center;"><div class="toggle" id="toggle-fonte-sonda-revisao" data-key="FONTE_SONDA_REVISAO_OBRIGATORIA" style="margin:0 auto;"></div></td></tr>
                             <tr><td>Unidasul</td><td style="text-align:center;"><div class="toggle" id="toggle-fonte-unidasul-ativa" data-key="FONTE_UNIDASUL_ATIVA" style="margin:0 auto;"></div></td><td style="text-align:center;"><div class="toggle" id="toggle-fonte-unidasul-revisao" data-key="FONTE_UNIDASUL_REVISAO_OBRIGATORIA" style="margin:0 auto;"></div></td></tr>
+                            <tr><td>Serper</td><td style="text-align:center;"><div class="toggle" id="toggle-fonte-serper-ativa" data-key="FONTE_SERPER_ATIVA" style="margin:0 auto;"></div></td><td style="text-align:center;"><div class="toggle" id="toggle-fonte-serper-revisao" data-key="FONTE_SERPER_REVISAO_OBRIGATORIA" style="margin:0 auto;"></div></td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -1636,6 +1655,7 @@ async function loadConfig() {
         $('#openai-key').value = cfg.openai_key_full || '';
         $('#gemini-key').value = cfg.gemini_key_full || '';
         $('#unidasul-token').value = cfg.unidasul_token_full || '';
+        $('#serper-key').value = cfg.serper_key_full || '';
         $('#proxy-vps-url').value = cfg.proxy_imagens_vps_url || '';
         $('#proxy-vps-ativo').checked = !!cfg.proxy_imagens_vps_ativo;
         $('#cosmos-tokens').value = cfg.cosmos_tokens_full || '';
@@ -1649,7 +1669,7 @@ async function loadConfig() {
         setToggle('toggle-busca-imagem-online', cfg.busca_imagem_online_ativa);
         const fontesAtivas = cfg.fontes_imagem_ativas || {};
         const fontesRevisao = cfg.fontes_imagem_revisao || {};
-        ['google', 'zaffari', 'precomelhor', 'rissul', 'sonda', 'unidasul'].forEach(fonte => {
+        ['google', 'zaffari', 'precomelhor', 'rissul', 'sonda', 'unidasul', 'serper'].forEach(fonte => {
             setToggle(`toggle-fonte-${fonte}-ativa`, fontesAtivas[fonte] !== false);
             setToggle(`toggle-fonte-${fonte}-revisao`, !!fontesRevisao[fonte]);
         });
@@ -1821,6 +1841,33 @@ $('#btn-save-unidasul').addEventListener('click', async () => {
         }
     } catch (e) {
         showAlert('alert-unidasul', `Erro: ${e.message}`, 'error');
+    }
+});
+
+$('#btn-save-serper').addEventListener('click', async () => {
+    const key = $('#serper-key').value.trim();
+    if (!key) {
+        showAlert('alert-serper', 'Por favor, insira a chave da Serper.', 'error');
+        return;
+    }
+    try {
+        const res = await fetch('/configuracoes', {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ action: 'save_serper_key', serper_key: key })
+        });
+        if (!res.ok) {
+            const errBody = await res.json().catch(() => ({}));
+            throw new Error(errBody.msg || errBody.error || `HTTP ${res.status}: falha ao salvar`);
+        }
+        const data = await res.json();
+        if (data.saved) {
+            showAlert('alert-serper', 'Token Serper salvo com sucesso!', 'success');
+        } else {
+            showAlert('alert-serper', data.message || 'Falha ao salvar', 'error');
+        }
+    } catch (e) {
+        showAlert('alert-serper', `Erro: ${e.message}`, 'error');
     }
 });
 

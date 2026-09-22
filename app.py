@@ -764,6 +764,7 @@ def obter_imagem_produto(codbar):
             ('rissul', buscar_e_salvar_imagem_rissul),
             ('sonda', buscar_e_salvar_imagem_sonda),
             ('unidasul', buscar_e_salvar_imagem_unidasul),
+            ('serper', buscar_e_salvar_imagem_serper),
         ):
             if not _fonte_imagem_ativa(fonte, cfg_fontes):
                 continue
@@ -777,7 +778,7 @@ def obter_imagem_produto(codbar):
                 return jsonify({'imagem_url': imagem_url, 'imagem_url_arte': None}), 200
 
     _registrar_busca_imagem(codbar, False, via='terminal')
-    return jsonify({'message': 'Imagem não encontrada em nenhuma fonte (local, Google, PrecoMelhor, Sonda, Unidasul)'}), 404
+    return jsonify({'message': 'Imagem não encontrada em nenhuma fonte (local, Google, PrecoMelhor, Sonda, Unidasul, Serper)'}), 404
 
 
 _fila_arte = queue.Queue()
@@ -1271,6 +1272,51 @@ def buscar_e_salvar_imagem_unidasul(codbar):
         return jsonify({'message': f'Error fetching or saving image from Unidasul: {str(e)}'}), 500
 
 
+def buscar_e_salvar_imagem_serper(codbar):
+    """Busca e salva a imagem do produto via Serper (serper.dev) — um proxy pago da busca de
+    imagens do Google de verdade (`google.serper.dev/images`), pedido do usuário como fonte
+    adicional. Útil em particular como alternativa quando a cota diária do Google Custom Search
+    (100 buscas/dia, grátis) esgota — já aconteceu várias vezes nesta sessão e travava a cadeia
+    até o dia seguinte.
+
+    **`safe=active`, testado e confirmado que a API aceita** (o parâmetro volta ecoado em
+    `searchParameters` da resposta) — mesma convenção do Google Custom Search, já que a Serper
+    só repassa pro backend real do Google. Mesmo assim, `_imagem_e_segura` (dentro de
+    `save_image_from_response`, chamada logo abaixo) continua sendo a checagem de verdade — o
+    `safe=active` da fonte é defesa em profundidade, não motivo pra pular a checagem de
+    conteúdo (mesma lição do incidente do PreçoMelhor: nenhuma fonte é 100% confiável sozinha).
+
+    Token (`SERPER_API_KEY`, Config, header `X-API-KEY`) fica no banco, não no código — mesmo
+    padrão do token Unidasul, editável em Configurações sem precisar de deploy."""
+    api_key = _ler_todas_config().get('SERPER_API_KEY', '').strip()
+    if not api_key:
+        return jsonify({'message': 'Token Serper não configurado'}), 404
+    try:
+        response = requests.post(
+            'https://google.serper.dev/images',
+            headers={'X-API-KEY': api_key, 'Content-Type': 'application/json'},
+            json={'q': codbar, 'safe': 'active', 'num': 5},
+            timeout=15,
+        )
+        response.raise_for_status()
+        resultados = response.json()
+        for item in resultados.get('images', []):
+            image_url = item.get('imageUrl')
+            if not image_url or 'https://cdn-cosmos.bluesoft.com.br/products/' in image_url:
+                continue
+            try:
+                img_response = requests.get(image_url, timeout=15)
+                img_response.raise_for_status()
+                return save_image_from_response(img_response.content, codbar, origem='serper')
+            except requests.RequestException as e:
+                logging.warning(f"Erro ao baixar a imagem do URL {image_url}: {e}")
+        logging.info(f"Nenhuma imagem encontrada na Serper para o produto {codbar}")
+        return jsonify({'message': 'No valid image found from Serper'}), 404
+    except requests.RequestException as e:
+        logging.error(f"Erro ao buscar ou salvar imagem da Serper para o produto {codbar}: {e}")
+        return jsonify({'message': f'Error fetching or saving image from Serper: {str(e)}'}), 500
+
+
 def _url_e_imagem_valida(url, timeout=5):
     """Confere rapidamente (HEAD, com fallback pra GET em streaming se o servidor não suportar
     HEAD direito) se uma URL aponta de verdade pra um arquivo de imagem (Content-Type image/*),
@@ -1389,6 +1435,7 @@ def serialize_produto_with_image(produto):
             ('rissul', buscar_e_salvar_imagem_rissul),
             ('sonda', buscar_e_salvar_imagem_sonda),
             ('unidasul', buscar_e_salvar_imagem_unidasul),
+            ('serper', buscar_e_salvar_imagem_serper),
         ):
             if not _fonte_imagem_ativa(fonte, cfg_fontes):
                 continue
@@ -2330,7 +2377,7 @@ def _busca_imagem_online_ativa():
 # Toda fonte externa de imagem que passa pelas 3 cadeias de busca (obter_imagem_produto,
 # admin_buscar_imagem, serialize_produto_with_image) — usada tanto pro toggle individual
 # (`_fonte_imagem_ativa`) quanto pra montar a UI de Configurações e o JSON de status.
-FONTES_IMAGEM_DISPONIVEIS = ['google', 'zaffari', 'precomelhor', 'rissul', 'sonda', 'unidasul']
+FONTES_IMAGEM_DISPONIVEIS = ['google', 'zaffari', 'precomelhor', 'rissul', 'sonda', 'unidasul', 'serper']
 
 
 def _fonte_imagem_ativa(fonte, cfg=None):
@@ -2509,6 +2556,16 @@ def configuracoes():
             else:
                 return jsonify({'message': 'Chave inválida', 'saved': False}), 400
 
+        elif action == 'save_serper_key':
+            # Token da Serper (serper.dev, X-API-KEY) — ver buscar_e_salvar_imagem_serper. Mesmo
+            # padrão do token Unidasul: fica no banco, editável sem deploy.
+            new_key = (data.get('serper_key') or '').strip()
+            if new_key:
+                set_config('SERPER_API_KEY', new_key)
+                return jsonify({'message': 'Token Serper salvo com sucesso', 'saved': True})
+            else:
+                return jsonify({'message': 'Token inválido', 'saved': False}), 400
+
         elif action == 'save_unidasul_token':
             # Só a query string do SAS token (tudo depois do "?" na URL que a Unidasul manda) —
             # ver _buscar_imagem_real_unidasul. Sempre tem validade (parâmetro "se="), então fica
@@ -2617,6 +2674,7 @@ def configuracoes():
     openai_key_full = cfg.get('OPENAI_API_KEY', '') or ''
     gemini_key_full = cfg.get('GEMINI_API_KEY', '') or ''
     unidasul_token_full = cfg.get('UNIDASUL_SAS_TOKEN', '') or ''
+    serper_key_full = cfg.get('SERPER_API_KEY', '') or ''
     cosmos_status = _status_tokens_cosmos()
     return jsonify({
         'openai_key': openai_key_full[:8] + '...' if openai_key_full and len(openai_key_full) > 8 else openai_key_full or '(não configurado)',
@@ -2624,6 +2682,7 @@ def configuracoes():
         'gemini_key': gemini_key_full[:8] + '...' if gemini_key_full and len(gemini_key_full) > 8 else gemini_key_full or '(não configurado)',
         'gemini_key_full': gemini_key_full,
         'unidasul_token_full': unidasul_token_full,
+        'serper_key_full': serper_key_full,
         'cosmos_tokens_full': '\n'.join(_lista_tokens_cosmos()),
         'cosmos_status': cosmos_status,
         'notificacoes': {chave: cfg.get(chave, '') for chave in NOTIFICACAO_CONFIG_KEYS},
@@ -2645,12 +2704,14 @@ def api_config():
     openai_key_full = cfg.get('OPENAI_API_KEY', '') or ''
     gemini_key_full = cfg.get('GEMINI_API_KEY', '') or ''
     unidasul_token_full = cfg.get('UNIDASUL_SAS_TOKEN', '') or ''
+    serper_key_full = cfg.get('SERPER_API_KEY', '') or ''
     return jsonify({
         'openai_key': openai_key_full[:8] + '...' if openai_key_full and len(openai_key_full) > 8 else openai_key_full or '(não configurado)',
         'openai_key_full': openai_key_full,
         'gemini_key': gemini_key_full[:8] + '...' if gemini_key_full and len(gemini_key_full) > 8 else gemini_key_full or '(não configurado)',
         'gemini_key_full': gemini_key_full,
         'unidasul_token_full': unidasul_token_full,
+        'serper_key_full': serper_key_full,
         'use_openai': cfg.get('USE_OPENAI_SUGESTIONS', 'true') == 'true',
         'rembg_enabled': cfg.get('REMBG_ENABLED', 'false') == 'true',
         'busca_imagem_online_ativa': cfg.get('BUSCA_IMAGEM_ONLINE_ATIVA', 'true') == 'true',
@@ -3687,8 +3748,8 @@ def admin_cadastrar_produto_manual(codbar):
 @app.route('/admin/buscar-imagem/<string:codbar>', methods=['POST'])
 @jwt_required()
 def admin_buscar_imagem(codbar):
-    """Busca a imagem do produto: local -> Google -> Zaffari -> PrecoMelhor -> Rissul -> Sonda,
-    salvando o resultado (já processado, sem fundo) em PROCESSED_IMAGES_FOLDER.
+    """Busca a imagem do produto: local -> Google -> Zaffari -> PrecoMelhor -> Rissul -> Sonda ->
+    Unidasul -> Serper, salvando o resultado (já processado, sem fundo) em PROCESSED_IMAGES_FOLDER.
 
     Cria um `Produto` mínimo (só codbar) se o EAN ainda não tiver cadastro, em vez de 404 —
     mesmo padrão já usado em `deletar_imagem_produto`/`_quarentenar_imagem`. Necessário pra ação
@@ -3721,6 +3782,7 @@ def admin_buscar_imagem(codbar):
         ('rissul', buscar_e_salvar_imagem_rissul),
         ('sonda', buscar_e_salvar_imagem_sonda),
         ('unidasul', buscar_e_salvar_imagem_unidasul),
+        ('serper', buscar_e_salvar_imagem_serper),
     ):
         if not _fonte_imagem_ativa(fonte, cfg_fontes):
             continue
@@ -3731,7 +3793,7 @@ def admin_buscar_imagem(codbar):
             return jsonify({'message': f'Imagem encontrada via {fonte}', 'imagem_url': imagem_url, 'fonte': fonte}), 200
 
     _registrar_busca_imagem(codbar, False, via='admin')
-    return jsonify({'message': 'Nenhuma imagem encontrada em nenhuma das fontes (Google, PrecoMelhor, Sonda, Unidasul)'}), 404
+    return jsonify({'message': 'Nenhuma imagem encontrada em nenhuma das fontes (Google, PrecoMelhor, Sonda, Unidasul, Serper)'}), 404
 
 
 @app.route('/admin/buscar-imagem-ia/<string:codbar>', methods=['POST'])
