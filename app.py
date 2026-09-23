@@ -15,7 +15,7 @@ import requests
 from io import StringIO, BytesIO
 from io import StringIO
 from datetime import datetime, timedelta
-from flask import Flask, request, jsonify, url_for, render_template, redirect, send_file, Response
+from flask import Flask, request, jsonify, url_for, render_template, redirect, send_file, send_from_directory, Response
 from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, verify_jwt_in_request
 from werkzeug.utils import secure_filename
@@ -328,6 +328,21 @@ def index():
     si continua existindo, migrada pra dentro do painel autenticado (aba "Remover Fundo",
     ver /remove_background_upload e /remove_background_url)."""
     return redirect('/configuracoes')
+
+
+@app.route('/sw.js')
+def service_worker():
+    """Serve static/sw.js na raiz (não em /static/sw.js) de propósito — o escopo padrão de um
+    service worker é o diretório da URL do próprio script, então servir em /sw.js dá escopo de
+    site inteiro (/) sem precisar do header Service-Worker-Allowed; em /static/sw.js o escopo
+    ficaria restrito só a /static/*, inútil pra controlar o painel. Pedido do usuário ("um pwa
+    top") — ver docstring do próprio sw.js pra detalhes de por que ele é deliberadamente
+    conservador (só cacheia ícone/manifest, nunca o HTML nem chamada de API nenhuma)."""
+    resposta = send_from_directory('static', 'sw.js', mimetype='text/javascript')
+    resposta.headers['Cache-Control'] = 'no-cache'
+    resposta.headers['Service-Worker-Allowed'] = '/'
+    return resposta
+
 
 @app.route('/remove_background_url', methods=['POST'])
 @jwt_required()

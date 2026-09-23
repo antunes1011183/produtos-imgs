@@ -10,9 +10,19 @@ __pycache__/
 
 # Dados locais (banco de dados, fotos de produto, artes geradas) — não fazem parte do código,
 # ficam de fora do repositório (um clone novo não traz banco nem imagens).
-static/
+static/*
 instance/
 instance/produtos.db
+
+# Exceção: ativos do PWA (manifest/service worker/ícones, ver CLAUDE.md) SÃO código, não dado
+# local gerado — ao contrário do resto de static/ (fotos/artes por produto), precisam ir pro
+# git pra chegar no deploy via `git pull`. `static/*` (em vez de `static/`) acima é o que
+# permite negar arquivos específicos aqui; sem essa troca, git nem desceria pra dentro da pasta
+# pra considerar as negações.
+!static/manifest.json
+!static/sw.js
+!static/icons
+!static/icons/**
 
 # Imagens rejeitadas pelo filtro de conteúdo (ver _imagem_e_segura no CLAUDE.md) — nunca
 # versionar, mesmo motivo do static/: dado local, e nesse caso especificamente sensível.

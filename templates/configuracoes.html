@@ -2,8 +2,19 @@
 <html lang="pt-BR" data-theme="dark">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Painel de Configurações — Mupa Brain</title>
+
+    <!-- PWA: instalável no celular (Android/Chrome via manifest+SW, iOS/Safari via os
+         apple-mobile-web-app-*) — pedido do usuário. Ver static/manifest.json e static/sw.js
+         (servido em /sw.js, não /static/sw.js, pra ganhar escopo de site inteiro). -->
+    <link rel="manifest" href="/static/manifest.json">
+    <meta name="theme-color" content="#0b1120">
+    <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Mupa Brain">
+    <meta name="mobile-web-app-capable" content="yes">
     <style>
         :root {
             --sidebar-bg: #0f172a;
@@ -67,6 +78,7 @@
         .sidebar {
             width: 260px;
             flex-shrink: 0;
+            padding-left: env(safe-area-inset-left);
             background: linear-gradient(180deg, var(--sidebar-bg), var(--sidebar-bg-2));
             color: var(--sidebar-text);
             display: flex;
@@ -134,7 +146,7 @@
         .nav-tab.active svg { opacity: 1; }
 
         .sidebar-footer {
-            padding: 1rem 1.25rem 1.25rem;
+            padding: 1rem 1.25rem calc(1.25rem + env(safe-area-inset-bottom));
             border-top: 1px solid rgba(255,255,255,0.06);
         }
         .status-pill {
@@ -157,6 +169,12 @@
             align-items: center;
             gap: 0.75rem;
             padding: 1.1rem 2rem;
+            /* Área segura do notch/ilha dinâmica quando instalado como PWA em modo standalone
+               (viewport-fit=cover no <meta viewport> é o que faz env() reportar valor != 0 em
+               vez de sempre 0) — em navegador comum isso sempre resolve pra 0px, inofensivo. */
+            padding-top: calc(1.1rem + env(safe-area-inset-top));
+            padding-left: calc(2rem + env(safe-area-inset-left));
+            padding-right: calc(2rem + env(safe-area-inset-right));
             background: var(--card);
             border-bottom: 1px solid var(--border);
             position: sticky;
@@ -188,7 +206,7 @@
         }
         .sidebar-backdrop.show { display: block; }
 
-        .content { padding: 1.5rem 2rem 3rem; max-width: 1080px; width: 100%; margin: 0 auto; }
+        .content { padding: 1.5rem 2rem calc(3rem + env(safe-area-inset-bottom)); max-width: 1080px; width: 100%; margin: 0 auto; }
         .content.wide { max-width: none; }
 
         /* ===== Cards & form ===== */
@@ -254,6 +272,48 @@
             border-color: var(--accent);
             box-shadow: 0 0 0 3px rgba(79,70,229,0.13);
         }
+
+        /* ===== Sub-navegação da aba Configurações ===== */
+        /* Antes eram 11 cards empilhados numa rolagem só, sem nenhum agrupamento (chaves de
+           API intercaladas com notificações, flags, ferramenta de emergência...) — pedido do
+           usuário pra reorganizar. Agrupa em seções temáticas navegáveis por pill, mesmo padrão
+           visual de aba secundária (sublinhado + cor de destaque), não um conjunto de botões
+           cheios pra não competir visualmente com a barra lateral principal. */
+        .config-subnav {
+            display: flex;
+            gap: 0.15rem;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            margin-bottom: 1.35rem;
+            border-bottom: 1px solid var(--border);
+        }
+        .config-subnav-btn {
+            display: flex;
+            align-items: center;
+            gap: 0.45rem;
+            white-space: nowrap;
+            flex-shrink: 0;
+            padding: 0.65rem 0.9rem;
+            border: none;
+            background: none;
+            color: var(--muted);
+            font-size: 0.84rem;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -1px;
+            transition: color 0.15s, border-color 0.15s;
+        }
+        .config-subnav-btn svg { width: 15px; height: 15px; flex-shrink: 0; opacity: 0.75; }
+        .config-subnav-btn:hover { color: var(--text); }
+        .config-subnav-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+        .config-subnav-btn.active svg { opacity: 1; }
+        .config-section { display: none; }
+        .config-section.active { display: block; }
+        @media (max-width: 560px) {
+            .config-subnav-btn { padding: 0.6rem 0.65rem; font-size: 0.78rem; }
+        }
         .btn {
             display: inline-flex;
             align-items: center;
@@ -286,6 +346,7 @@
             padding: 0.75rem 0;
             border-bottom: 1px solid var(--border);
             gap: 1rem;
+            cursor: pointer;
         }
         .toggle-row:last-child { border-bottom: none; padding-bottom: 0; }
         .toggle-label { display: flex; flex-direction: column; gap: 0.15rem; }
@@ -624,11 +685,17 @@
             </button>
         </nav>
 
-        <div class="sidebar-footer" style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem;">
-            <span class="status-pill"><span class="dot"></span>Servidor local ativo</span>
-            <button id="btn-logout" title="Sair" style="background:none; border:none; color:#64748b; cursor:pointer; padding:0.3rem; display:flex; align-items:center;">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:16px; height:16px;"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        <div class="sidebar-footer">
+            <button id="btn-instalar-pwa" type="button" style="display:none; width:100%; align-items:center; justify-content:center; gap:0.5rem; margin-bottom:0.75rem; padding:0.55rem 0.75rem; background:rgba(99,102,241,0.16); border:1px solid rgba(99,102,241,0.35); border-radius:8px; color:#c7d2fe; font-size:0.8rem; font-weight:600; cursor:pointer; font-family:inherit;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:15px; height:15px; flex-shrink:0;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Instalar app
             </button>
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem;">
+                <span class="status-pill"><span class="dot"></span>Servidor local ativo</span>
+                <button id="btn-logout" title="Sair" style="background:none; border:none; color:#64748b; cursor:pointer; padding:0.3rem; display:flex; align-items:center;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:16px; height:16px;"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                </button>
+            </div>
         </div>
     </aside>
 
@@ -659,6 +726,38 @@
         <div class="content" id="content">
             <!-- ===== TAB: CONFIGURAÇÕES ===== -->
             <div id="tab-config" class="tab-content">
+                <div class="config-subnav">
+                    <button type="button" class="config-subnav-btn active" data-section="chaves">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-3 3m-6.34 6.34a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5M19 4l-3.5 3.5"/></svg>
+                        Chaves de API
+                    </button>
+                    <button type="button" class="config-subnav-btn" data-section="comportamento">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+                        Comportamento
+                    </button>
+                    <button type="button" class="config-subnav-btn" data-section="fontes">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                        Fontes de Imagem
+                    </button>
+                    <button type="button" class="config-subnav-btn" data-section="notificacoes">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M22 6l-10 7L2 6"/></svg>
+                        Notificações
+                    </button>
+                    <button type="button" class="config-subnav-btn" data-section="infra">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+                        Infraestrutura
+                    </button>
+                    <button type="button" class="config-subnav-btn" data-section="emergencia">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                        Emergência
+                    </button>
+                    <button type="button" class="config-subnav-btn" data-section="sobre">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                        Sobre
+                    </button>
+                </div>
+
+                <div class="config-section active" data-section="chaves">
                 <div class="card">
                     <h2>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-3 3m-6.34 6.34a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5M19 4l-3.5 3.5"/></svg>
@@ -761,7 +860,9 @@
                         Sem nenhum token configurado, o cadastro automático continua funcionando via outras fontes (o Cosmos só é pulado).
                     </p>
                 </div>
+                </div><!-- /config-section: chaves -->
 
+                <div class="config-section" data-section="notificacoes">
                 <div class="card">
                     <h2>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M22 6l-10 7L2 6"/></svg>
@@ -811,7 +912,9 @@
                         <button class="btn btn-secondary" id="btn-testar-resumo">Enviar resumo agora (teste)</button>
                     </div>
                 </div>
+                </div><!-- /config-section: notificacoes -->
 
+                <div class="config-section" data-section="comportamento">
                 <div class="card">
                     <h2>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
@@ -846,7 +949,9 @@
                         <div class="toggle" id="toggle-verificacao-descricao" data-key="VERIFICACAO_DESCRICAO_ATIVA"></div>
                     </div>
                 </div>
+                </div><!-- /config-section: comportamento -->
 
+                <div class="config-section" data-section="fontes">
                 <div class="card">
                     <h2>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
@@ -868,7 +973,9 @@
                         </tbody>
                     </table>
                 </div>
+                </div><!-- /config-section: fontes -->
 
+                <div class="config-section" data-section="infra">
                 <div class="card">
                     <h2>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
@@ -892,7 +999,9 @@
                         <button class="btn btn-primary" id="btn-save-proxy-vps">Salvar</button>
                     </div>
                 </div>
+                </div><!-- /config-section: infra -->
 
+                <div class="config-section" data-section="emergencia">
                 <div class="card">
                     <h2>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
@@ -914,7 +1023,9 @@
                         Bloquear busca automática de imagem pra esse EAN permanentemente (recomendado — evita que o sistema traga a mesma imagem ruim de volta sozinho)
                     </label>
                 </div>
+                </div><!-- /config-section: emergencia -->
 
+                <div class="config-section" data-section="sobre">
                 <div class="card">
                     <h2>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
@@ -927,6 +1038,7 @@
                         <tr><td style="width:180px; color:var(--muted);">Com foto</td><td id="stat-foto">—</td></tr>
                     </table>
                 </div>
+                </div><!-- /config-section: sobre -->
             </div>
 
             <!-- ===== TAB: CONSULTA RÁPIDA (unifica busca + catálogo + arte + detalhes) ===== -->
@@ -1425,6 +1537,37 @@
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 
+// ===== PWA: registra o service worker + botão "Instalar app" (pedido do usuário) =====
+// Roda incondicionalmente (fora do gate de login) — instalabilidade não depende de estar
+// autenticado. Ver /sw.js (rota em app.py) pro porquê de não ficar em /static/sw.js direto.
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch(() => {});
+    });
+}
+// beforeinstallprompt só dispara em navegadores baseados em Chromium que ainda não consideram
+// o app "instalado" — Safari/iOS não tem esse evento (lá a instalação é manual, Compartilhar →
+// Adicionar à Tela de Início); o botão simplesmente nunca aparece nesses casos, sem quebrar nada.
+let installPromptEvent = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    installPromptEvent = e;
+    const btn = $('#btn-instalar-pwa');
+    if (btn) btn.style.display = 'flex';
+});
+window.addEventListener('appinstalled', () => {
+    installPromptEvent = null;
+    const btn = $('#btn-instalar-pwa');
+    if (btn) btn.style.display = 'none';
+});
+$('#btn-instalar-pwa')?.addEventListener('click', async () => {
+    if (!installPromptEvent) return;
+    installPromptEvent.prompt();
+    await installPromptEvent.userChoice;
+    installPromptEvent = null;
+    $('#btn-instalar-pwa').style.display = 'none';
+});
+
 // ===== Tema (dark por padrão, pedido do usuário — com toggle pra claro) =====
 // O <html> já nasce com data-theme="dark" (renderizado assim pelo servidor, evita flash de
 // tema claro antes do JS rodar); aqui só aplicamos a preferência salva, se o usuário já tiver
@@ -1638,6 +1781,27 @@ $$('.nav-tab').forEach(btn => {
         closeSidebarMobile();
     });
 });
+
+// Sub-navegação da aba Configurações (pedido do usuário: reorganizar os 11 cards que
+// ficavam todos empilhados numa rolagem só, sem nenhum agrupamento) — mesmo padrão de
+// visibilidade dos tabs principais (.tab-content), só que escopado dentro de #tab-config.
+// Preferência de seção persistida em localStorage (mesmo padrão de mupa_painel_consulta_view),
+// pra não voltar sempre pra "Chaves de API" se o usuário costuma mexer em outra seção.
+function abrirSecaoConfig(secao) {
+    $$('.config-subnav-btn').forEach(b => b.classList.toggle('active', b.dataset.section === secao));
+    $$('.config-section').forEach(s => s.classList.toggle('active', s.dataset.section === secao));
+    try { localStorage.setItem('mupa_painel_config_secao', secao); } catch (e) {}
+}
+$$('.config-subnav-btn').forEach(btn => {
+    btn.addEventListener('click', () => abrirSecaoConfig(btn.dataset.section));
+});
+(() => {
+    let secaoSalva = null;
+    try { secaoSalva = localStorage.getItem('mupa_painel_config_secao'); } catch (e) {}
+    if (secaoSalva && $(`.config-subnav-btn[data-section="${secaoSalva}"]`)) {
+        abrirSecaoConfig(secaoSalva);
+    }
+})();
 
 const menuToggle = $('#menu-toggle');
 if (menuToggle) {
@@ -1956,6 +2120,18 @@ $$('.toggle').forEach(tog => {
             toast('Erro ao atualizar: ' + e.message, 'error');
             tog.classList.toggle('active', !novoEstado);
         }
+    });
+});
+
+// Alvo de toque maior no celular (pedido do usuário, "melhore a usabilidade pra celular") — o
+// switch visível (.toggle) tem só 42x24px, pequeno demais pra mirar com o dedo com confiança;
+// a linha inteira (.toggle-row, usada em Flags de Funcionamento e Notificações) passa a
+// disparar o mesmo clique do toggle, sem duplicar o listener (ignora cliques que já caíram
+// dentro do próprio .toggle, que tem o listener de verdade acima).
+$$('.toggle-row').forEach(row => {
+    row.addEventListener('click', (e) => {
+        if (e.target.closest('.toggle')) return;
+        row.querySelector('.toggle')?.click();
     });
 });
 
