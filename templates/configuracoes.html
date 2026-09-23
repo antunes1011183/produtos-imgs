@@ -276,6 +276,77 @@
            regras de #consulta-list etc. mais abaixo), não .content. */
         .content { flex: 1; min-height: 0; overflow-y: auto; padding: 1.5rem 2rem calc(3rem + env(safe-area-inset-bottom)); width: 100%; }
 
+        /* ===== Tela de login: duas colunas (painel ilustrado + formulário) — pedido do usuário
+           com referência visual (estilo "Phylum"/onboarding SaaS moderno). .login-showcase é
+           puramente decorativo (escondido em telas estreitas, ver media query lá embaixo) — o
+           formulário em .login-form-col funciona sozinho, com ou sem a vitrine ao lado. ===== */
+        .login-screen { min-height: 100vh; display: flex; background: var(--bg); }
+        .login-showcase {
+            flex: 1.1;
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 2.5rem;
+            background: linear-gradient(160deg, var(--sidebar-bg) 0%, #1e1b4b 55%, #312e81 100%);
+            color: #e2e8f0;
+        }
+        /* Manchas de luz desfocadas, decoração comum em painéis de onboarding escuros (mesma
+           família visual do "glassmorphism" que apareceu nas referências anteriores do usuário)
+           — puro CSS, sem nenhuma imagem pra carregar. */
+        .login-showcase-glow { position: absolute; border-radius: 50%; filter: blur(70px); opacity: 0.55; pointer-events: none; }
+        .login-showcase-glow-1 { width: 340px; height: 340px; background: #6366f1; top: -80px; right: -60px; }
+        .login-showcase-glow-2 { width: 300px; height: 300px; background: #8b5cf6; bottom: -100px; left: -60px; }
+        .login-showcase-brand { position: relative; display: flex; align-items: center; gap: 0.65rem; font-weight: 700; font-size: 1.05rem; z-index: 1; }
+        .login-showcase-copy { position: relative; max-width: 420px; z-index: 1; }
+        .login-showcase-copy h2 { font-size: 1.7rem; line-height: 1.25; margin: 0 0 0.9rem; font-weight: 700; }
+        .login-showcase-copy p { font-size: 0.92rem; line-height: 1.6; color: #c7d2fe; margin: 0; }
+        /* position:absolute;inset:0 (preenche o painel inteiro) é o que faz os `top`/`left` em
+           % dos .login-float-card (definidos como custom property no HTML) resolverem contra o
+           tamanho real do painel — a primeira versão usava height:0 aqui, um erro clássico de
+           CSS: % de `top` num container de altura 0 sempre resolve pra 0, então os 4 cards
+           ficavam todos empilhados no mesmo lugar (embaixo, onde o container ficava por causa
+           do justify-content:space-between do pai) em vez de espalhados pelo painel. */
+        .login-showcase-cards { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+        /* Cartões flutuantes com ícone, posicionados via custom properties (--x/--y/--r) direto
+           no HTML — mesmo espírito da colagem de ícones (cadeado/chave/escudo/documento) da
+           referência, usando os ícones que o próprio painel já usa em vez de ilustração nova. */
+        .login-float-card {
+            position: absolute; left: var(--x); top: var(--y);
+            width: 52px; height: 52px; border-radius: 14px;
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.14);
+            backdrop-filter: blur(6px);
+            display: flex; align-items: center; justify-content: center;
+            color: #c7d2fe;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+            transform: rotate(var(--r));
+        }
+        .login-float-card svg { width: 22px; height: 22px; }
+        .login-form-col { flex: 1; display: flex; align-items: center; justify-content: center; padding: 2rem 1.5rem; }
+        .login-form-inner { width: 100%; max-width: 380px; }
+        .login-form-brand { display: none; align-items: center; gap: 0.65rem; margin-bottom: 1.75rem; }
+        .login-form-title { font-size: 1.5rem; font-weight: 700; margin: 0 0 0.35rem; }
+        .login-form-subtitle { color: var(--muted); font-size: 0.88rem; margin: 0 0 1.5rem; }
+        /* Campo com ícone à esquerda (e-mail/senha) — mesmo padrão de input já usado no resto do
+           painel, só com padding extra pra abrir espaço pro ícone posicionado em absolute. */
+        .input-icon-wrap { position: relative; display: flex; align-items: center; }
+        .input-icon-wrap input { width: 100%; padding-left: 2.6rem; }
+        .input-icon { position: absolute; left: 0.85rem; width: 17px; height: 17px; color: var(--muted); pointer-events: none; }
+        .password-toggle {
+            position: absolute; right: 0.6rem;
+            background: none; border: none; padding: 0.35rem; cursor: pointer;
+            color: var(--muted); display: flex; align-items: center; border-radius: 6px;
+            transition: color 0.15s var(--ease);
+        }
+        .password-toggle:hover { color: var(--text); }
+        .password-toggle svg { width: 18px; height: 18px; }
+        @media (max-width: 860px) {
+            .login-showcase { display: none; }
+            .login-form-brand { display: flex; }
+        }
+
         /* ===== Cards & form ===== */
         .card {
             background: var(--card);
@@ -736,27 +807,71 @@
     </style>
 </head>
 <body>
-<div id="login-screen" style="min-height:100vh; display:flex; align-items:center; justify-content:center; background:var(--bg); padding:1.5rem;">
-    <div class="card" style="width:100%; max-width:360px; margin-bottom:0;">
-        <div style="display:flex; flex-direction:column; align-items:center; gap:0.6rem; margin-bottom:1.4rem;">
-            <div class="brand-mark" style="width:44px; height:44px; font-size:1.05rem;">MB</div>
-            <div style="text-align:center;">
-                <div style="font-weight:700; font-size:1.05rem;">Mupa Brain</div>
-                <div style="color:var(--muted); font-size:0.82rem;">Painel de Gestão</div>
+<!-- Tela de login em duas colunas (pedido do usuário, com referência visual: painel escuro
+     ilustrado + formulário claro do lado, estilo "Phylum"/produtos SaaS modernos) — dividida em
+     .login-showcase (decorativo, só desktop) e .login-form-col (o formulário de verdade). IDs
+     funcionais (#alert-login/#login-form/#login-email/#login-senha/#btn-login) inalterados —
+     só a casca visual mudou, o JS de autenticação continua igual. -->
+<div id="login-screen" class="login-screen">
+    <div class="login-showcase">
+        <div class="login-showcase-glow login-showcase-glow-1"></div>
+        <div class="login-showcase-glow login-showcase-glow-2"></div>
+        <div class="login-showcase-brand">
+            <div class="brand-mark" style="width:40px; height:40px; font-size:1rem;">MB</div>
+            <span>Mupa Brain</span>
+        </div>
+        <div class="login-showcase-copy">
+            <h2>Gestão de produtos, imagens e artes num só lugar</h2>
+            <p>Catálogo, geração de arte publicitária com IA, fontes de imagem e segurança de conteúdo — tudo o que os terminais de preço da Mupa precisam, num painel só.</p>
+        </div>
+        <div class="login-showcase-cards" aria-hidden="true">
+            <div class="login-float-card" style="--x:6%; --y:20%; --r:-8deg;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>
+            </div>
+            <div class="login-float-card" style="--x:78%; --y:4%; --r:6deg;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41 13.42 20.6a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+            </div>
+            <div class="login-float-card" style="--x:82%; --y:62%; --r:-5deg;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
+            </div>
+            <div class="login-float-card" style="--x:10%; --y:68%; --r:7deg;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-3 3m-6.34 6.34a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5M19 4l-3.5 3.5"/></svg>
             </div>
         </div>
-        <div id="alert-login"></div>
-        <form id="login-form">
-            <div class="form-row">
-                <label for="login-email">E-mail</label>
-                <input type="email" id="login-email" autocomplete="username" required placeholder="voce@mupa.app">
+    </div>
+    <div class="login-form-col">
+        <div class="login-form-inner">
+            <div class="login-form-brand">
+                <div class="brand-mark" style="width:44px; height:44px; font-size:1.05rem;">MB</div>
+                <div>
+                    <div style="font-weight:700; font-size:1.1rem;">Mupa Brain</div>
+                    <div style="color:var(--muted); font-size:0.82rem;">Painel de Gestão</div>
+                </div>
             </div>
-            <div class="form-row">
-                <label for="login-senha">Senha</label>
-                <input type="password" id="login-senha" autocomplete="current-password" required placeholder="••••••••">
-            </div>
-            <button type="submit" class="btn btn-primary" id="btn-login" style="width:100%; justify-content:center;">Entrar</button>
-        </form>
+            <h1 class="login-form-title">Bem-vindo de volta</h1>
+            <p class="login-form-subtitle">Entre com sua conta pra acessar o painel.</p>
+            <div id="alert-login"></div>
+            <form id="login-form">
+                <div class="form-row">
+                    <label for="login-email">E-mail</label>
+                    <div class="input-icon-wrap">
+                        <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M22 6l-10 7L2 6"/></svg>
+                        <input type="email" id="login-email" autocomplete="username" required placeholder="voce@mupa.app">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <label for="login-senha">Senha</label>
+                    <div class="input-icon-wrap">
+                        <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                        <input type="password" id="login-senha" autocomplete="current-password" required placeholder="••••••••" style="padding-right:3.1rem;">
+                        <button type="button" class="password-toggle" id="btn-toggle-senha" aria-label="Mostrar senha" title="Mostrar senha">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                        </button>
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary" id="btn-login" style="width:100%; justify-content:center; padding:0.7rem 1rem; margin-top:0.4rem;">Entrar</button>
+            </form>
+        </div>
     </div>
 </div>
 
@@ -1840,6 +1955,20 @@ async function iniciarPainelAutenticado() {
     loadEstats();
     loadConsulta(1);
 }
+
+// Mostrar/ocultar senha na tela de login (novo, parte do redesign com ícones) — troca o
+// `type` do input e o próprio ícone do botão (olho aberto/fechado), nada além disso.
+$('#btn-toggle-senha')?.addEventListener('click', () => {
+    const campo = $('#login-senha');
+    const oculto = campo.type === 'password';
+    campo.type = oculto ? 'text' : 'password';
+    const btn = $('#btn-toggle-senha');
+    btn.setAttribute('aria-label', oculto ? 'Ocultar senha' : 'Mostrar senha');
+    btn.title = oculto ? 'Ocultar senha' : 'Mostrar senha';
+    btn.innerHTML = oculto
+        ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.6 18.6 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>'
+        : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+});
 
 $('#login-form').addEventListener('submit', async (e) => {
     e.preventDefault();
