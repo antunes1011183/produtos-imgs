@@ -690,8 +690,9 @@
         .lightbox-close:hover { background: rgba(255,255,255,0.22); }
         .lightbox-close svg { width: 18px; height: 18px; }
 
-        /* ===== Consulta Rápida / Histórico: lista em largura total + painel de detalhes
-           como popup deslizante pela lateral direita (ver .detail-panel abaixo) ===== */
+        /* ===== Consulta Rápida / Histórico: lista em largura total; o painel de detalhes de cada
+           uma é um popup centralizado à parte (`.quarentena-detail-*`, fora de qualquer
+           `.tab-content` — ver comentário no HTML perto de `#detail-panel-backdrop`) ===== */
         /* Cadeia de flex "altura máxima, scroll só na lista" (pedido do usuário) — cada nível
            passa flex:1;min-height:0 pro próximo até chegar na lista de verdade (#consulta-list/
            #historico-list, ver regra dedicada mais abaixo), que é quem realmente ganha
@@ -700,7 +701,6 @@
         .consulta-layout { flex: 1; min-height: 0; display: flex; flex-direction: column; }
         .consulta-list-col { flex: 1; min-height: 0; display: flex; flex-direction: column; }
         .consulta-list-col > .card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-        .consulta-detail-col { width: 0; height: 0; overflow: visible; }
 
         /* As 4 abas com uma lista/tabela dominante ficam de altura travada no viewport (só tem
            efeito quando ativas — JS troca `display` pra 'flex' só nelas, ver o handler de clique
@@ -712,13 +712,6 @@
         /* A lista/tabela em si é quem realmente rola — mantém o overflow-x:auto que já existia
            inline (tabela larga em tela estreita) e ganha overflow-y:auto + flex:1 aqui. */
         #consulta-list, #historico-list, #pendentes-list, #quarentena-list { flex: 1; min-height: 0; overflow-y: auto; }
-
-        /* ===== Popup de detalhes: desliza a partir da borda direita, sobre o conteúdo ===== */
-        .detail-panel-backdrop {
-            display: none; position: fixed; inset: 0; background: rgba(15,23,42,0.55);
-            z-index: 1499; opacity: 0; transition: opacity 0.22s ease;
-        }
-        .detail-panel-backdrop.show { display: block; opacity: 1; }
 
         /* ===== Popup de detalhes da Quarentena: centralizado na tela (não mais deslizando pela
            lateral), com botões de navegação anterior/próximo fixos nas bordas esquerda/direita da
@@ -867,17 +860,6 @@
         .quarentena-card-badge.confirmada { background: #fee2e2; color: #991b1b; }
         .quarentena-card-badge.liberada { background: #dcfce7; color: #166534; }
 
-        .detail-panel {
-            position: fixed; top: 0; right: 0; bottom: 0;
-            width: 440px; max-width: 92vw;
-            padding: 0; margin: 0; border-radius: 0;
-            overflow-y: auto; overflow-x: hidden;
-            z-index: 1500;
-            transform: translateX(100%);
-            transition: transform 0.25s ease;
-            box-shadow: -12px 0 40px rgba(0,0,0,0.28);
-        }
-        .detail-panel.open { transform: translateX(0); }
         .detail-modal-close {
             position: absolute; top: 1rem; right: 1rem;
             width: 34px; height: 34px; border-radius: 50%;
@@ -1514,50 +1496,6 @@
                         </div>
                     </div>
 
-                    <div class="detail-panel-backdrop" id="detail-panel-backdrop"></div>
-                    <div class="consulta-detail-col">
-                        <div class="card detail-panel" id="detail-panel">
-                            <div id="detail-empty" class="empty-state" style="padding:2.5rem 1.25rem;">
-                                Selecione um produto na lista para ver os detalhes.
-                            </div>
-                            <div id="detail-content" style="display:none;">
-                                <button class="detail-modal-close" id="detail-panel-close" aria-label="Fechar detalhes">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                                </button>
-                                <div class="detail-modal-image" id="detail-modal-image"></div>
-                                <div class="detail-modal-body">
-                                    <h2 id="detail-nome" style="margin:0 0 0.25rem;">—</h2>
-                                    <p id="detail-marca-cat" style="margin:0 0 1rem; color:var(--muted); font-size:0.85rem;">—</p>
-
-                                    <div class="detail-field"><span class="label">EAN</span><span class="value" id="detail-ean">—</span></div>
-                                    <div class="detail-field"><span class="label">Preço médio</span><span class="value" id="detail-preco">—</span></div>
-                                    <div class="detail-field"><span class="label">NCM</span><span class="value" id="detail-ncm">—</span></div>
-
-                                    <div style="display:flex; flex-wrap:wrap; gap:0.6rem; margin:1.25rem 0;">
-                                        <button class="btn btn-secondary btn-sm" id="detail-btn-buscar-imagem">Buscar imagem</button>
-                                        <button class="btn btn-secondary btn-sm" id="detail-btn-buscar-ia">Buscar com IA</button>
-                                        <button class="btn btn-primary btn-sm" id="detail-btn-gerar-arte">Gerar arte</button>
-                                        <button class="btn btn-secondary btn-sm" id="detail-btn-ver-arte" style="display:none;">Ver arte em tela cheia</button>
-                                        <button class="btn btn-secondary btn-sm" id="detail-btn-trocar-imagem">Enviar/Trocar imagem</button>
-                                        <input type="file" id="detail-input-imagem" accept="image/png,image/jpeg,image/webp" style="display:none;">
-                                        <button class="btn btn-danger btn-sm" id="detail-btn-excluir-imagem">Excluir imagem</button>
-                                    </div>
-
-                                    <div id="detail-ia-picker" style="display:none;"></div>
-
-                                    <div class="card" style="margin:0; background:var(--bg);">
-                                        <h2 style="font-size:0.9rem;">
-                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 0-4 12.75V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.25A7 7 0 0 0 12 2z"/><line x1="9" y1="21" x2="15" y2="21"/><line x1="10" y1="18" x2="14" y2="18"/></svg>
-                                            Sugestão inteligente (IA)
-                                        </h2>
-                                        <div id="detail-sugestao">
-                                            <div class="empty-state" style="padding:1rem;"><span class="spinner" style="border-top-color:var(--accent); border-color:rgba(79,70,229,0.25);"></span> Carregando sugestão...</div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
                 </div>
             </div>
 
@@ -1942,6 +1880,71 @@
             </div>
         </div>
     </div>
+</div>
+
+<!-- Popup de detalhes da Consulta Rápida: centralizado (não lateral), com navegação
+     anterior/próximo (percorre o catálogo inteiro, não só a página de 15 carregada) e lupa —
+     mesmo padrão/classes de Quarentena/Histórico (`.quarentena-detail-*`, ver CLAUDE.md). Fica
+     FORA de qualquer `.tab-content` pelo mesmo motivo do popup de Histórico/Pendentes (ver
+     comentário logo abaixo) — mesmo `openDetailModal` só sendo chamado de dentro da própria aba
+     Consulta Rápida hoje, manter o mesmo padrão pros 3 popups evita reintroduzir esse bug se um
+     dia outra aba passar a abrir este popup também. -->
+<div class="quarentena-detail-backdrop" id="detail-panel-backdrop">
+    <button class="quarentena-nav-btn quarentena-nav-prev" id="detail-prev" aria-label="Item anterior" title="Anterior (←)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <div class="card modal-panel quarentena-detail-modal" id="detail-panel">
+        <div id="detail-empty" class="empty-state" style="padding:2.5rem 1.25rem;">
+            Selecione um produto na lista para ver os detalhes.
+        </div>
+        <div id="detail-content" style="display:none;">
+            <button class="detail-modal-close" id="detail-panel-close" aria-label="Fechar detalhes">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+            <div class="quarentena-detail-image-wrap">
+                <div class="detail-modal-image" id="detail-modal-image"></div>
+                <button type="button" class="quarentena-zoom-btn" id="detail-zoom" aria-label="Ampliar imagem" title="Ampliar imagem" style="display:none;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+                </button>
+            </div>
+            <div class="detail-modal-body">
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem; margin:0 0 0.25rem;">
+                    <h2 id="detail-nome" style="margin:0;">—</h2>
+                    <span id="detail-posicao" style="flex-shrink:0; font-size:0.72rem; color:var(--muted); white-space:nowrap;">—</span>
+                </div>
+                <p id="detail-marca-cat" style="margin:0 0 1rem; color:var(--muted); font-size:0.85rem;">—</p>
+
+                <div class="detail-field"><span class="label">EAN</span><span class="value" id="detail-ean">—</span></div>
+                <div class="detail-field"><span class="label">Preço médio</span><span class="value" id="detail-preco">—</span></div>
+                <div class="detail-field"><span class="label">NCM</span><span class="value" id="detail-ncm">—</span></div>
+
+                <div style="display:flex; flex-wrap:wrap; gap:0.6rem; margin:1.25rem 0;">
+                    <button class="btn btn-secondary btn-sm" id="detail-btn-buscar-imagem">Buscar imagem</button>
+                    <button class="btn btn-secondary btn-sm" id="detail-btn-buscar-ia">Buscar com IA</button>
+                    <button class="btn btn-primary btn-sm" id="detail-btn-gerar-arte">Gerar arte</button>
+                    <button class="btn btn-secondary btn-sm" id="detail-btn-ver-arte" style="display:none;">Ver arte em tela cheia</button>
+                    <button class="btn btn-secondary btn-sm" id="detail-btn-trocar-imagem">Enviar/Trocar imagem</button>
+                    <input type="file" id="detail-input-imagem" accept="image/png,image/jpeg,image/webp" style="display:none;">
+                    <button class="btn btn-danger btn-sm" id="detail-btn-excluir-imagem">Excluir imagem</button>
+                </div>
+
+                <div id="detail-ia-picker" style="display:none;"></div>
+
+                <div class="card" style="margin:0; background:var(--bg);">
+                    <h2 style="font-size:0.9rem;">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 0-4 12.75V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.25A7 7 0 0 0 12 2z"/><line x1="9" y1="21" x2="15" y2="21"/><line x1="10" y1="18" x2="14" y2="18"/></svg>
+                        Sugestão inteligente (IA)
+                    </h2>
+                    <div id="detail-sugestao">
+                        <div class="empty-state" style="padding:1rem;"><span class="spinner" style="border-top-color:var(--accent); border-color:rgba(79,70,229,0.25);"></span> Carregando sugestão...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <button class="quarentena-nav-btn quarentena-nav-next" id="detail-next" aria-label="Próximo item" title="Próximo (→)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+    </button>
 </div>
 
 <!-- Popup de detalhes do Histórico/Imagens Pendentes: centralizado (não lateral), com navegação
@@ -3984,7 +3987,10 @@ $('#btn-rf-url').addEventListener('click', async () => {
 });
 
 // ===== TAB: CONSULTA RÁPIDA (catálogo unificado: busca + navegação + arte + detalhes) =====
+const CONSULTA_PER_PAGE = 15;
 let consultaPage = 1;
+let consultaTotalPages = 1; // usado pelo popup de detalhes (ver detailNavigate)
+let consultaTotal = 0;
 let consultaQ = '';
 let ultimoConsultaData = null;
 const CONSULTA_VIEW_STORAGE_KEY = 'mupa_painel_consulta_view';
@@ -4009,10 +4015,9 @@ $$('#consulta-view-toggle .view-toggle-btn').forEach((btn) => {
 aplicarConsultaViewToggle();
 
 async function loadConsulta(page = 1) {
-    consultaPage = page;
     consultaQ = ($('#consulta-q').value || '').trim();
     try {
-        const params = new URLSearchParams({ page, per_page: 15 });
+        const params = new URLSearchParams({ page, per_page: CONSULTA_PER_PAGE });
         if (consultaQ) params.append('q', consultaQ);
         const res = await fetch('/admin/consulta-produtos?' + params.toString(), { headers: authHeaders() });
         if (!res.ok) {
@@ -4020,6 +4025,12 @@ async function loadConsulta(page = 1) {
             throw new Error(errBody.msg || errBody.error || `HTTP ${res.status}`);
         }
         const data = await res.json();
+        // Só compromete o estado de paginação DEPOIS de confirmar sucesso — mesmo motivo já
+        // documentado em `loadQuarentena`/`loadHistorico`: o popup de detalhes usa `consultaPage`
+        // pra saber se a busca da página vizinha deu certo antes de continuar navegando.
+        consultaPage = data.page || page;
+        consultaTotalPages = data.pages || 1;
+        consultaTotal = data.total || 0;
         ultimoConsultaData = data;
         renderConsultaTable(data);
     } catch (e) {
@@ -4424,25 +4435,79 @@ $('#lightbox').addEventListener('click', (e) => {
     if (e.target.id === 'lightbox') closeLightbox();
 });
 
-// ===== Painel lateral: Detalhes do Produto =====
+// ===== Popup de detalhes da Consulta Rápida (centralizado, com navegação anterior/próximo
+// cruzando páginas e lupa — mesmo padrão de Quarentena/Histórico, ver CLAUDE.md) =====
 let detailEan = null;
 
 function closeDetailModal() {
-    $('#detail-panel').classList.remove('open');
     $('#detail-panel-backdrop').classList.remove('show');
     $('#detail-content').style.display = 'none';
     $('#detail-empty').style.display = 'block';
     detailEan = null;
 }
 $('#detail-panel-close').addEventListener('click', closeDetailModal);
-$('#detail-panel-backdrop').addEventListener('click', closeDetailModal);
-document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && $('#detail-panel').classList.contains('open')) closeDetailModal();
+$('#detail-panel-backdrop').addEventListener('click', (e) => {
+    if (e.target.id === 'detail-panel-backdrop') closeDetailModal();
 });
+$('#detail-prev').addEventListener('click', () => detailNavigate(-1));
+$('#detail-next').addEventListener('click', () => detailNavigate(1));
+$('#detail-zoom').addEventListener('click', () => {
+    const img = document.querySelector('#detail-modal-image img');
+    if (img) openLightbox(img.src);
+});
+document.addEventListener('keydown', (e) => {
+    if (!$('#detail-panel-backdrop').classList.contains('show')) return;
+    if (e.key === 'Escape') closeDetailModal();
+    else if (e.key === 'ArrowLeft') detailNavigate(-1);
+    else if (e.key === 'ArrowRight') detailNavigate(1);
+});
+
+// Navega pro produto anterior/próximo — mesmo mecanismo de `quarentenaDetailNavigate`/
+// `histDetailNavigate`: primeiro tenta dentro de `ultimoConsultaData.produtos` (a página já
+// carregada, instantâneo); na borda, busca a página vizinha via `loadConsulta` (que já atualiza
+// a tabela/grade de fundo também) e continua a partir dela. Pedido do usuário: "faz a mesma
+// coisa na consulta rápida". Como aqui a lista é o catálogo inteiro (não uma fila com fim
+// visível como Quarentena/Pendentes), percorrer sem filtro pode ter milhares de páginas — a
+// navegação funciona igual, só busca uma página de cada vez, sem custo extra por isso.
+let detailNavBusy = false;
+
+async function detailNavigate(delta) {
+    if (detailNavBusy) return;
+    const produtos = ultimoConsultaData?.produtos || [];
+    const indiceAtual = produtos.findIndex(p => p.ean === detailEan);
+    if (indiceAtual === -1) return;
+    const novoIndice = indiceAtual + delta;
+
+    if (novoIndice >= 0 && novoIndice < produtos.length) {
+        openDetailModal(produtos[novoIndice].ean);
+        return;
+    }
+
+    const proximaPagina = consultaPage + (delta > 0 ? 1 : -1);
+    if (proximaPagina < 1 || proximaPagina > consultaTotalPages) return; // já é o 1º/último de TUDO
+
+    detailNavBusy = true;
+    $('#detail-prev').disabled = true;
+    $('#detail-next').disabled = true;
+    try {
+        const paginaAntes = consultaPage;
+        await loadConsulta(proximaPagina);
+        const novosProdutos = ultimoConsultaData?.produtos || [];
+        if (consultaPage !== proximaPagina || !novosProdutos.length) {
+            toast('Não foi possível carregar mais produtos do catálogo.', 'error');
+            await loadConsulta(paginaAntes);
+            openDetailModal(detailEan); // reabilita prev/next
+            return;
+        }
+        const alvo = delta > 0 ? novosProdutos[0] : novosProdutos[novosProdutos.length - 1];
+        openDetailModal(alvo.ean);
+    } finally {
+        detailNavBusy = false;
+    }
+}
 
 async function openDetailModal(ean) {
     detailEan = ean;
-    $('#detail-panel').classList.add('open');
     $('#detail-panel-backdrop').classList.add('show');
     $('#detail-empty').style.display = 'none';
     $('#detail-content').style.display = 'block';
@@ -4453,14 +4518,23 @@ async function openDetailModal(ean) {
     $('#detail-ncm').textContent = '—';
     $('#detail-modal-image').innerHTML = `<span style="width:40px;height:40px;color:#94a3b8;display:inline-flex;">${CAMERA_ICON}</span>`;
     $('#detail-btn-ver-arte').style.display = 'none';
+    $('#detail-zoom').style.display = 'none';
     $('#detail-sugestao').innerHTML = `<div class="empty-state" style="padding:1rem;"><span class="spinner" style="border-top-color:var(--accent); border-color:rgba(79,70,229,0.25);"></span> Carregando sugestão...</div>`;
+
+    const produtos = ultimoConsultaData?.produtos || [];
+    const indice = produtos.findIndex(p => p.ean === ean);
+    const posicaoGlobal = indice >= 0 ? (consultaPage - 1) * CONSULTA_PER_PAGE + indice + 1 : null;
+    $('#detail-posicao').textContent = posicaoGlobal ? `${posicaoGlobal} de ${consultaTotal.toLocaleString('pt-BR')}` : '';
+    $('#detail-prev').disabled = (indice <= 0) && consultaPage <= 1;
+    $('#detail-next').disabled = (indice === -1 || indice >= produtos.length - 1) && consultaPage >= consultaTotalPages;
 
     const gerarBtn = $('#detail-btn-gerar-arte');
     gerarBtn.disabled = false;
     gerarBtn.textContent = 'Gerar arte';
     gerarBtn.onclick = () => gerarArteParaBotao(gerarBtn, ean, (data) => {
         if (data.arte_url) {
-            $('#detail-modal-image').innerHTML = `<img src="${escHtml(data.arte_url)}?t=${Date.now()}" alt="Arte gerada">`;
+            $('#detail-modal-image').innerHTML = `<img src="${escHtml(data.arte_url)}?t=${Date.now()}" alt="Arte gerada" onclick="openLightbox(this.src)">`;
+            $('#detail-zoom').style.display = 'flex';
             const verBtn = $('#detail-btn-ver-arte');
             verBtn.style.display = 'inline-flex';
             verBtn.onclick = () => openLightbox(data.arte_url);
@@ -4487,7 +4561,8 @@ async function openDetailModal(ean) {
             toast(fonteVisivel ? `Imagem encontrada via ${fonteVisivel}` : 'Imagem encontrada', 'success');
             if (data.imagem_url && detailEan === ean) {
                 const img = $('#detail-modal-image').querySelector('img');
-                if (!img) $('#detail-modal-image').innerHTML = `<img src="${escHtml(data.imagem_url)}?t=${Date.now()}" alt="Foto do produto">`;
+                if (!img) $('#detail-modal-image').innerHTML = `<img src="${escHtml(data.imagem_url)}?t=${Date.now()}" alt="Foto do produto" onclick="openLightbox(this.src)">`;
+                $('#detail-zoom').style.display = 'flex';
             }
             loadConsulta(consultaPage);
         } catch (e2) {
@@ -4502,7 +4577,7 @@ async function openDetailModal(ean) {
     buscarIaBtn.disabled = false;
     buscarIaBtn.textContent = 'Buscar com IA';
     fecharPickerIA($('#detail-ia-picker'));
-    buscarIaBtn.onclick = () => buscarImagensIA(ean, buscarIaBtn, '#detail-ia-picker', '#detail-modal-image', () => loadConsulta(consultaPage));
+    buscarIaBtn.onclick = () => buscarImagensIA(ean, buscarIaBtn, '#detail-ia-picker', '#detail-modal-image', () => loadConsulta(consultaPage), '#detail-zoom');
 
     const trocarImgBtn = $('#detail-btn-trocar-imagem');
     const inputImagem = $('#detail-input-imagem');
@@ -4526,7 +4601,8 @@ async function openDetailModal(ean) {
             if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
             toast('Imagem enviada com sucesso', 'success');
             if (detailEan === ean) {
-                $('#detail-modal-image').innerHTML = `<img src="${escHtml(data.path ? '/' + data.path.replace(/\\/g, '/') : '')}?t=${Date.now()}" alt="Foto do produto">`;
+                $('#detail-modal-image').innerHTML = `<img src="${escHtml(data.path ? '/' + data.path.replace(/\\/g, '/') : '')}?t=${Date.now()}" alt="Foto do produto" onclick="openLightbox(this.src)">`;
+                $('#detail-zoom').style.display = 'flex';
             }
             loadConsulta(consultaPage);
         } catch (e2) {
@@ -4554,6 +4630,7 @@ async function openDetailModal(ean) {
             toast('Imagem excluída com sucesso', 'success');
             if (detailEan === ean) {
                 $('#detail-modal-image').innerHTML = `<span style="width:40px;height:40px;color:#94a3b8;display:inline-flex;">${CAMERA_ICON}</span>`;
+                $('#detail-zoom').style.display = 'none';
             }
             loadConsulta(consultaPage);
         } catch (e2) {
@@ -4569,13 +4646,15 @@ async function openDetailModal(ean) {
     const linhaConhecida = ultimoConsultaData?.produtos?.find(p => p.ean === ean);
     if (linhaConhecida) {
         if (linhaConhecida.arte_url) {
-            $('#detail-modal-image').innerHTML = `<img src="${escHtml(linhaConhecida.arte_url)}" alt="Arte gerada">`;
+            $('#detail-modal-image').innerHTML = `<img src="${escHtml(linhaConhecida.arte_url)}" alt="Arte gerada" onclick="openLightbox(this.src)">`;
+            $('#detail-zoom').style.display = 'flex';
             const verBtn = $('#detail-btn-ver-arte');
             verBtn.style.display = 'inline-flex';
             verBtn.onclick = () => openLightbox(linhaConhecida.arte_url);
             gerarBtn.textContent = 'Regenerar arte';
         } else if (linhaConhecida.foto_png) {
-            $('#detail-modal-image').innerHTML = `<img src="${escHtml(linhaConhecida.foto_png)}" alt="Foto do produto">`;
+            $('#detail-modal-image').innerHTML = `<img src="${escHtml(linhaConhecida.foto_png)}" alt="Foto do produto" onclick="openLightbox(this.src)">`;
+            $('#detail-zoom').style.display = 'flex';
         }
     }
 
