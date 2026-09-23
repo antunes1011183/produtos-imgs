@@ -520,6 +520,7 @@ def upload_imagem_produto(codbar):
         save_image_with_background_removal(input_image, processed_file_path)
         try:
             _marcar_tem_foto(codbar, True)
+            _eliminar_duplicatas_pendentes(codbar)  # ver comentário equivalente em save_image_from_response
             db.session.commit()
         except Exception as e:
             db.session.rollback()
@@ -1060,7 +1061,34 @@ def _quarentenar_imagem(image_data, codbar, origem=None, motivo=None, url_origem
     lógica de `DELETE /deletar-imagem-produto/<codbar>?bloquear=true`, inclusive criando um
     `Produto` mínimo se o EAN ainda não existir cadastrado) — erra pro lado de proteger o
     cliente por padrão; a revisão humana decide DEPOIS se era falso positivo (aí libera, ver
-    rota `/admin/quarentena/<id>/liberar`), não antes."""
+    rota `/admin/quarentena/<id>/liberar`), não antes.
+
+    Achado real do usuário em produção (aba Quarentena mostrando 3 entradas idênticas do mesmo
+    EAN, criadas a menos de 2 segundos de diferença, todas `origem='serper'` +
+    `motivo='revisao_obrigatoria_fonte'`): com uma fonte marcada "revisão obrigatória" (ver
+    `_fonte_exige_revisao`), TODA imagem que ela encontra vai pra quarentena, mesmo sendo sempre
+    a mesma foto — cada chamada independente da cadeia de busca pro mesmo EAN (vários terminais
+    de lojas diferentes consultando o mesmo produto sem foto, quase ao mesmo tempo) virava uma
+    linha nova. Corrigido com deduplicação por CONTEÚDO (não só por EAN, pra nunca esconder uma
+    imagem genuinamente diferente/nova do revisor): se já existe uma entrada PENDENTE deste EAN
+    com o arquivo byte-a-byte idêntico ao que está chegando agora, a nova é descartada sem criar
+    linha nem gravar arquivo de novo — só loga que era duplicata. Uma imagem DIFERENTE (mesmo que
+    pareça parecida) ainda cria uma linha própria, exatamente como antes."""
+    pendentes = ImagemQuarentena.query.filter(
+        ImagemQuarentena.codbar == codbar,
+        ImagemQuarentena.decisao.is_(None),
+        ImagemQuarentena.arquivo.isnot(None),
+    ).all()
+    for p in pendentes:
+        caminho_existente = os.path.join(QUARENTENA_FOLDER, p.arquivo)
+        try:
+            with open(caminho_existente, 'rb') as f:
+                if f.read() == image_data:
+                    logging.warning(f"Imagem de {codbar} (origem={origem}) é idêntica à entrada pendente #{p.id} já em quarentena — descartada sem duplicar.")
+                    return
+        except OSError:
+            continue  # arquivo sumiu por algum motivo — não impede o fluxo normal abaixo
+
     nome_arquivo = f'{codbar}_{int(datetime.utcnow().timestamp())}.jpg'
     caminho = os.path.join(QUARENTENA_FOLDER, nome_arquivo)
     try:
@@ -1081,22 +1109,28 @@ def _quarentenar_imagem(image_data, codbar, origem=None, motivo=None, url_origem
         logging.error(f"Erro ao colocar imagem de {codbar} em quarentena: {e}")
 
 
-def _eliminar_duplicatas_pendentes(codbar, excluir_id):
+def _eliminar_duplicatas_pendentes(codbar, excluir_id=None):
     """Apaga (arquivo + linha do banco) toda entrada AINDA PENDENTE de `ImagemQuarentena` pro
-    mesmo `codbar`, exceto `excluir_id` (a entrada que acabou de ser liberada por um humano — ver
-    `admin_quarentena_liberar`). Não mexe em `motivo` nenhum de propósito (pedido do usuário:
-    "tanto faz o motivo") — uma vez que o EAN já tem foto aprovada, qualquer outra rejeição dele
-    ainda esperando revisão é redundante, seja por conteúdo impróprio, política de fonte ou
-    descrição incompatível. Só afeta entradas com `decisao IS NULL` (pendentes de verdade) —
-    entradas já `'confirmada'`/`'liberada'` são histórico de uma decisão já tomada por um humano
-    e ficam intocadas, não é o alvo desta limpeza. Não faz commit — quem chama decide quando
-    (chamado de dentro da mesma transação de `admin_quarentena_liberar`, comitada junto).
-    Retorna quantas entradas foram removidas, só pra informar na mensagem de resposta."""
-    duplicadas = ImagemQuarentena.query.filter(
+    mesmo `codbar`, exceto `excluir_id` quando informado (a entrada que acabou de ser liberada
+    por um humano — ver `admin_quarentena_liberar`). Sem `excluir_id`, remove TODAS as pendentes
+    do EAN — usada quando uma foto boa acabou de ser salva por qualquer outro caminho (busca
+    automática, "Buscar com IA" ou upload manual, ver `save_image_from_response`/
+    `upload_imagem_produto`) e não há uma entrada de quarentena específica sendo fechada, só o
+    fato de que o EAN já está resolvido. Não mexe em `motivo` nenhum de propósito (pedido do
+    usuário: "tanto faz o motivo") — uma vez que o EAN já tem foto aprovada/salva, qualquer outra
+    rejeição dele ainda esperando revisão é redundante, seja por conteúdo impróprio, política de
+    fonte ou descrição incompatível. Só afeta entradas com `decisao IS NULL` (pendentes de
+    verdade) — entradas já `'confirmada'`/`'liberada'` são histórico de uma decisão já tomada por
+    um humano e ficam intocadas, não é o alvo desta limpeza. Não faz commit — quem chama decide
+    quando (chamado de dentro da mesma transação do save/liberação, comitada junto). Retorna
+    quantas entradas foram removidas, só pra informar na mensagem de resposta."""
+    query = ImagemQuarentena.query.filter(
         ImagemQuarentena.codbar == codbar,
-        ImagemQuarentena.id != excluir_id,
         ImagemQuarentena.decisao.is_(None),
-    ).all()
+    )
+    if excluir_id is not None:
+        query = query.filter(ImagemQuarentena.id != excluir_id)
+    duplicadas = query.all()
     for dup in duplicadas:
         if dup.arquivo:
             caminho_dup = os.path.join(QUARENTENA_FOLDER, dup.arquivo)
@@ -1157,6 +1191,11 @@ def save_image_from_response(image_data, codbar, origem=None, url_origem=None):
 
         try:
             _marcar_tem_foto(codbar, True)
+            # Uma foto boa acabou de ser salva pra esse EAN — qualquer outra entrada AINDA
+            # pendente de quarentena dele (ex.: rejeições antigas de outras fontes/tentativas)
+            # virou ruído; pedido do usuário, mesmo raciocínio já aplicado em
+            # `admin_quarentena_liberar` (ver `_eliminar_duplicatas_pendentes`).
+            _eliminar_duplicatas_pendentes(codbar)
             db.session.commit()
         except Exception as e:
             db.session.rollback()
@@ -4748,14 +4787,23 @@ def admin_quarentena_tentar_novamente(quarentena_id):
 
     resultado = admin_buscar_imagem(entrada.codbar)
     if resultado[1] == 200:
-        if entrada.arquivo:
-            caminho = os.path.join(QUARENTENA_FOLDER, entrada.arquivo)
-            if os.path.exists(caminho):
-                os.remove(caminho)
-            entrada.arquivo = None
-        entrada.decisao = 'confirmada'
-        entrada.revisado_em = datetime.utcnow()
-        db.session.commit()
+        # Sucesso passa por `save_image_from_response`, que já chama
+        # `_eliminar_duplicatas_pendentes` sozinho (toda entrada pendente do EAN, sem exceção,
+        # ver comentário lá) — inclusive ESTA entrada, já que ainda estava pendente até agora.
+        # Reconsulta em vez de reaproveitar o objeto `entrada` em memória: se ela já foi apagada
+        # por essa limpeza (caso comum), não há mais nada a fazer aqui; só faz o fechamento
+        # manual de baixo se por algum motivo ela sobreviveu (ex.: o arquivo já não existia mais
+        # no disco quando a limpeza rodou, ver `_eliminar_duplicatas_pendentes`).
+        entrada_ainda_existe = ImagemQuarentena.query.get(quarentena_id)
+        if entrada_ainda_existe and entrada_ainda_existe.decisao is None:
+            if entrada_ainda_existe.arquivo:
+                caminho = os.path.join(QUARENTENA_FOLDER, entrada_ainda_existe.arquivo)
+                if os.path.exists(caminho):
+                    os.remove(caminho)
+                entrada_ainda_existe.arquivo = None
+            entrada_ainda_existe.decisao = 'confirmada'
+            entrada_ainda_existe.revisado_em = datetime.utcnow()
+            db.session.commit()
         corpo = resultado[0].get_json()
         return jsonify({
             'message': f'Nova imagem encontrada via {corpo.get("fonte")} — caso fechado.',
