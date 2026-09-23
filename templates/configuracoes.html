@@ -763,6 +763,23 @@
             .quarentena-nav-btn svg { width: 18px; height: 18px; }
         }
 
+        /* Lupa pra ampliar a imagem do popup em tela cheia — pedido do usuário. Reaproveita o
+           `.lightbox` genérico que já existe (usado pra "ver arte em tela cheia"), só chamando
+           `openLightbox(quarentenaDetailBlobUrl)` — a imagem do popup já é um blob URL carregado
+           via fetch autenticado, então não precisa baixar de novo pro lightbox. */
+        .quarentena-detail-image-wrap { position: relative; }
+        .quarentena-zoom-btn {
+            position: absolute; bottom: 0.75rem; right: 0.75rem;
+            width: 38px; height: 38px; border-radius: 50%;
+            background: rgba(15,23,42,0.6); backdrop-filter: blur(4px);
+            border: 1px solid rgba(255,255,255,0.25); color: #fff;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; transition: background 0.15s ease;
+        }
+        .quarentena-zoom-btn:hover { background: rgba(15,23,42,0.8); }
+        .quarentena-zoom-btn svg { width: 18px; height: 18px; }
+        #quarentena-detail-image img { cursor: zoom-in; }
+
         /* ===== Popup central de cadastro de produto ===== */
         .modal-overlay {
             display: none; position: fixed; inset: 0; z-index: 1600;
@@ -1747,7 +1764,12 @@
                         <button class="detail-modal-close" id="quarentena-detail-close" aria-label="Fechar detalhes">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                         </button>
-                        <div class="detail-modal-image" id="quarentena-detail-image"></div>
+                        <div class="quarentena-detail-image-wrap">
+                            <div class="detail-modal-image" id="quarentena-detail-image"></div>
+                            <button type="button" class="quarentena-zoom-btn" id="quarentena-detail-zoom" aria-label="Ampliar imagem" title="Ampliar imagem">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+                            </button>
+                        </div>
                         <div class="detail-modal-body">
                             <div style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem; margin:0 0 0.25rem;">
                                 <h2 id="quarentena-detail-nome" style="margin:0;">—</h2>
@@ -3169,15 +3191,19 @@ $('#btn-atualizar-status-sistema').addEventListener('click', loadStatusSistema);
 // revelada com um clique. As URLs de imagem são autenticadas (fora de static/, exige JWT), por
 // isso não dá pra usar <img src="..."> direto — busca via fetch() com authHeaders() e vira um
 // blob URL local.
+const QUARENTENA_PER_PAGE = 20;
 let quarentenaPage = 1;
+let quarentenaTotalPages = 1; // usado pelo popup de detalhes pra saber se dá pra buscar mais
+                                // páginas ao "percorrer" além da página atualmente carregada
+let quarentenaTotal = 0; // total de registros com o filtro atual — alimenta o "N de M" global
+                          // do popup de detalhes (não só a posição dentro da página atual)
 let ultimaQuarentenaData = []; // cache da última página carregada — o popup de detalhes busca
                                 // o registro aqui em vez de precisar de uma rota GET-por-id nova
 
 async function loadQuarentena(page = 1) {
-    quarentenaPage = page;
     try {
         const params = new URLSearchParams({
-            page, per_page: 20,
+            page, per_page: QUARENTENA_PER_PAGE,
             status: $('#quarentena-status').value || 'pendente',
         });
         const res = await fetch('/admin/quarentena?' + params.toString(), { headers: authHeaders() });
@@ -3186,6 +3212,13 @@ async function loadQuarentena(page = 1) {
             throw new Error(errBody.message || `HTTP ${res.status}`);
         }
         const data = await res.json();
+        // Só compromete o estado de paginação DEPOIS de confirmar sucesso — o popup de detalhes
+        // (`quarentenaDetailNavigate`) usa `quarentenaPage` pra saber se a busca da página
+        // vizinha deu certo antes de continuar navegando; setar isso antes do fetch (como era
+        // antes) deixaria `quarentenaPage` "avançado" mesmo numa falha de rede.
+        quarentenaPage = data.page;
+        quarentenaTotalPages = data.pages || 1;
+        quarentenaTotal = data.total || 0;
 
         $('#quarentena-count-badge').textContent = `${data.total} registro${data.total === 1 ? '' : 's'}`;
         $('#quarentena-info').textContent = data.total > 0
@@ -3326,18 +3359,47 @@ function fecharQuarentenaDetail() {
     $('#quarentena-detail-ia-picker').style.display = 'none';
 }
 
-// Navega pro item anterior/próximo dentro da mesma página já carregada (`ultimaQuarentenaData`)
-// sem fechar o popup — pedido do usuário: revisar uma fila de dezenas de itens sem precisar
-// fechar e reabrir a cada um. Não cruza pra outra PÁGINA de paginação sozinho (o conjunto de
-// dados só existe em memória pra página atual); nos extremos, o botão correspondente só fica
-// desabilitado (ver atualização de estado no fim de openQuarentenaDetail).
-function quarentenaDetailNavigate(delta) {
+// Navega pro item anterior/próximo — primeiro tenta dentro da página já carregada em memória
+// (`ultimaQuarentenaData`, instantâneo); ao chegar na borda da página, busca a página vizinha
+// do servidor (`loadQuarentena`, que já atualiza a grade por baixo do popup também) e continua
+// a partir dela — pedido do usuário: "percorrer em todas as imagens sem sair do popup", não só
+// as ~20 da página atual. Só para de verdade quando não há mais página nenhuma (`bloqueado`).
+let quarentenaNavBusy = false; // evita disparar duas buscas de página ao clicar/segurar rápido
+
+async function quarentenaDetailNavigate(delta) {
+    if (quarentenaNavBusy) return;
     const idAtual = $('#quarentena-detail-panel').dataset.id;
     const indiceAtual = ultimaQuarentenaData.findIndex(x => String(x.id) === String(idAtual));
     if (indiceAtual === -1) return;
     const novoIndice = indiceAtual + delta;
-    if (novoIndice < 0 || novoIndice >= ultimaQuarentenaData.length) return;
-    openQuarentenaDetail(ultimaQuarentenaData[novoIndice].id);
+
+    if (novoIndice >= 0 && novoIndice < ultimaQuarentenaData.length) {
+        openQuarentenaDetail(ultimaQuarentenaData[novoIndice].id);
+        return;
+    }
+
+    const proximaPagina = quarentenaPage + (delta > 0 ? 1 : -1);
+    if (proximaPagina < 1 || proximaPagina > quarentenaTotalPages) return; // já é o 1º/último item de TUDO
+
+    quarentenaNavBusy = true;
+    $('#quarentena-detail-prev').disabled = true;
+    $('#quarentena-detail-next').disabled = true;
+    try {
+        const paginaAntes = quarentenaPage;
+        await loadQuarentena(proximaPagina);
+        if (quarentenaPage !== proximaPagina || !ultimaQuarentenaData.length) {
+            // A busca falhou (loadQuarentena é best-effort e não relança erro — ver seu próprio
+            // comentário — então o sinal de falha aqui é `quarentenaPage` não ter avançado).
+            toast('Não foi possível carregar mais imagens da fila.', 'error');
+            await loadQuarentena(paginaAntes); // devolve a grade de fundo pro estado anterior
+            openQuarentenaDetail(idAtual); // reabilita prev/next pro item que já estava aberto
+            return;
+        }
+        const alvo = delta > 0 ? ultimaQuarentenaData[0] : ultimaQuarentenaData[ultimaQuarentenaData.length - 1];
+        openQuarentenaDetail(alvo.id);
+    } finally {
+        quarentenaNavBusy = false;
+    }
 }
 
 async function openQuarentenaDetail(id) {
@@ -3350,10 +3412,13 @@ async function openQuarentenaDetail(id) {
     $('#quarentena-detail-ia-picker').style.display = 'none';
     $('#quarentena-detail-ia-picker').innerHTML = '';
 
+    // Posição GLOBAL (não só dentro da página de 20 atual) — combina a página com o índice
+    // local, já que o popup agora percorre a fila inteira, não só a página carregada.
     const indice = ultimaQuarentenaData.findIndex(x => String(x.id) === String(id));
-    $('#quarentena-detail-posicao').textContent = indice >= 0 ? `${indice + 1} de ${ultimaQuarentenaData.length}` : '';
-    $('#quarentena-detail-prev').disabled = indice <= 0;
-    $('#quarentena-detail-next').disabled = indice === -1 || indice >= ultimaQuarentenaData.length - 1;
+    const posicaoGlobal = indice >= 0 ? (quarentenaPage - 1) * QUARENTENA_PER_PAGE + indice + 1 : null;
+    $('#quarentena-detail-posicao').textContent = posicaoGlobal ? `${posicaoGlobal} de ${quarentenaTotal}` : '';
+    $('#quarentena-detail-prev').disabled = (indice <= 0) && quarentenaPage <= 1;
+    $('#quarentena-detail-next').disabled = (indice === -1 || indice >= ultimaQuarentenaData.length - 1) && quarentenaPage >= quarentenaTotalPages;
 
     const motivoTxt = { impropria: 'Conteúdo impróprio', revisao_obrigatoria_fonte: 'Fonte exige revisão', descricao_incompativel: 'Não corresponde à descrição' }[r.motivo] || r.motivo || 'Conteúdo impróprio';
     const decisao = r.decisao || 'pendente';
@@ -3382,6 +3447,8 @@ async function openQuarentenaDetail(id) {
     $('#quarentena-detail-acoes-consertar').style.display = podeAgir ? 'flex' : 'none';
 
     const imgWrap = $('#quarentena-detail-image');
+    const zoomBtn = $('#quarentena-detail-zoom');
+    zoomBtn.style.display = 'none'; // só reaparece se uma imagem de verdade carregar (abaixo)
     if (quarentenaDetailBlobUrl) { URL.revokeObjectURL(quarentenaDetailBlobUrl); quarentenaDetailBlobUrl = null; }
     if (!r.tem_arquivo) {
         imgWrap.innerHTML = `<span style="width:40px;height:40px;color:#94a3b8;display:inline-flex;">${CAMERA_ICON}</span>`;
@@ -3394,8 +3461,10 @@ async function openQuarentenaDetail(id) {
             quarentenaDetailBlobUrl = URL.createObjectURL(blob);
             // Abrir o popup de detalhes já é a ação deliberada de revisar — mostra a imagem
             // direto, sem exigir um segundo clique de "Revelar" só pra ver o que a lista já
-            // esconde por segurança (essa camada de borrão continua existindo no grid).
-            imgWrap.innerHTML = `<img src="${quarentenaDetailBlobUrl}" alt="Imagem em quarentena">`;
+            // esconde por segurança (essa camada de borrão continua existindo no grid). Imagem
+            // também clicável (cursor:zoom-in, CSS) além da lupa — os dois abrem o mesmo lightbox.
+            imgWrap.innerHTML = `<img src="${quarentenaDetailBlobUrl}" alt="Imagem em quarentena" onclick="openLightbox(quarentenaDetailBlobUrl)">`;
+            zoomBtn.style.display = 'flex';
         } catch (err) {
             imgWrap.innerHTML = `<span style="color:var(--danger); font-size:0.8rem; padding:1rem; text-align:center; display:block;">Erro ao carregar imagem: ${escHtml(err.message)}</span>`;
         }
@@ -3407,6 +3476,9 @@ $('#quarentena-detail-backdrop').addEventListener('click', (e) => {
     // Só fecha clicando no fundo em si (fora do card e dos botões de navegação), mesmo padrão
     // já usado no popup de cadastro (.modal-overlay) — clique dentro do popup não deve fechar.
     if (e.target.id === 'quarentena-detail-backdrop') fecharQuarentenaDetail();
+});
+$('#quarentena-detail-zoom').addEventListener('click', () => {
+    if (quarentenaDetailBlobUrl) openLightbox(quarentenaDetailBlobUrl);
 });
 $('#quarentena-detail-prev').addEventListener('click', () => quarentenaDetailNavigate(-1));
 $('#quarentena-detail-next').addEventListener('click', () => quarentenaDetailNavigate(1));
