@@ -738,10 +738,30 @@
         .view-toggle-btn.active { background: var(--accent); color: #fff; }
 
         /* ===== Catálogo em grade (alternativa à tabela) ===== */
-        .consulta-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0.75rem; margin-top: 0.4rem; }
+        /* align-items:start (grid stica em "stretch" por padrão) — bug real achado ao vivo junto
+           com o de .produto-card-img/.quarentena-card-img acima: com stretch, o grid tenta
+           esticar cada card pra uma altura de linha "auto" compartilhada, e essa conta de altura
+           "auto" não casava direito com um card que é flex-column + filho de aspect-ratio,
+           colapsando o card inteiro pra poucos pixels com overflow:hidden cortando tudo. Com
+           `start`, cada card simplesmente usa sua própria altura de conteúdo — o comportamento
+           certo pra um grid de cards de tamanho variável de qualquer jeito, bug à parte. */
+        .consulta-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0.75rem; margin-top: 0.4rem; align-items: start; }
         .produto-card { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; background: var(--card); display: flex; flex-direction: column; transition: box-shadow 0.18s var(--ease), transform 0.18s var(--ease), border-color 0.18s var(--ease); }
         .produto-card:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); border-color: color-mix(in srgb, var(--border) 40%, var(--accent)); }
-        .produto-card-img { width: 100%; aspect-ratio: 1/1; background: var(--bg); display: flex; align-items: center; justify-content: center; overflow: hidden; }
+        /* flex-shrink:0 é essencial aqui — bug real achado ao vivo (usuário reportou com print:
+           miniatura e botões de "Quarentena" simplesmente não apareciam). Causa: .produto-card
+           virou display:flex (pro hover-lift do card, ver regra acima) numa leva anterior desta
+           sessão, e um filho com `aspect-ratio` dentro de um container flex column ENCOLHE pra
+           altura 0 por padrão (flex-shrink:1 implícito, sem conteúdo pra "ancorar" um tamanho
+           mínimo) — o `aspect-ratio:1/1` nunca chega a ser respeitado. Mesmo problema afetava
+           .quarentena-card-img (aba Quarentena), corrigido junto logo abaixo. */
+        /* Altura FIXA (não mais aspect-ratio:1/1) — pedido do usuário ("melhorar a forma que
+           aparece") depois do bug acima: com aspect-ratio, a miniatura ficava tão alta quanto a
+           coluna era larga, o que numa grade de muitas colunas estreitas (típico numa fila de
+           revisão com dezenas de itens, ex. Quarentena) deixava cada card gigante e a lista
+           precisando de MUITO scroll pra ver poucos itens por vez. Altura fixa mantém a miniatura
+           num tamanho previsível e compacto não importa a largura da coluna. */
+        .produto-card-img { width: 100%; height: 140px; flex-shrink: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; overflow: hidden; }
         .produto-card-img img { width: 100%; height: 100%; object-fit: contain; }
         .produto-card-img .foto-thumb-placeholder { width: 32px; height: 32px; color: var(--muted); }
         .produto-card-body { padding: 0.6rem; display: flex; flex-direction: column; gap: 0.25rem; flex: 1; }
@@ -753,7 +773,7 @@
         .produto-card-actions .btn-sm { flex: 1; min-width: 0; padding-left: 0.4rem; padding-right: 0.4rem; }
 
         /* ===== Quarentena de imagens: miniatura borrada por padrão, revela com um clique ===== */
-        .quarentena-card-img { position: relative; width: 100%; aspect-ratio: 1/1; background: var(--bg); overflow: hidden; }
+        .quarentena-card-img { position: relative; width: 100%; height: 140px; flex-shrink: 0; background: var(--bg); overflow: hidden; }
         .quarentena-card-img img { width: 100%; height: 100%; object-fit: contain; filter: blur(22px); transition: filter 0.15s ease; }
         .quarentena-card-img.revelada img { filter: none; }
         .quarentena-reveal-btn {
