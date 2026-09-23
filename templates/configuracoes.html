@@ -1695,6 +1695,48 @@
                         </span>
                     </div>
                 </div>
+
+                <div class="detail-panel-backdrop" id="quarentena-detail-backdrop"></div>
+                <div class="card detail-panel" id="quarentena-detail-panel">
+                    <button class="detail-modal-close" id="quarentena-detail-close" aria-label="Fechar detalhes">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                    <div class="detail-modal-image" id="quarentena-detail-image"></div>
+                    <div class="detail-modal-body">
+                        <h2 id="quarentena-detail-nome" style="margin:0 0 0.25rem;">—</h2>
+                        <p id="quarentena-detail-marca" style="margin:0 0 1rem; color:var(--muted); font-size:0.85rem;">—</p>
+
+                        <div class="detail-field"><span class="label">EAN</span><span class="value" id="quarentena-detail-ean">—</span></div>
+                        <div class="detail-field"><span class="label">Status</span><span class="value" id="quarentena-detail-status">—</span></div>
+                        <div class="detail-field"><span class="label">Motivo</span><span class="value" id="quarentena-detail-motivo">—</span></div>
+                        <div class="detail-field"><span class="label">Origem</span><span class="value" id="quarentena-detail-origem">—</span></div>
+                        <div class="detail-field"><span class="label">Data</span><span class="value" id="quarentena-detail-data">—</span></div>
+
+                        <div id="quarentena-detail-link-wrap" style="margin:0.85rem 0; display:none;">
+                            <a href="#" id="quarentena-detail-link" target="_blank" rel="noopener" class="btn btn-secondary btn-sm" style="width:100%; justify-content:center;">
+                                🔗 Abrir imagem original (fonte)
+                            </a>
+                        </div>
+
+                        <div id="quarentena-detail-acoes-triagem" style="display:flex; flex-wrap:wrap; gap:0.6rem; margin:1rem 0;">
+                            <button class="btn btn-danger btn-sm" id="quarentena-detail-confirmar">Confirmar (é mesmo imprópria)</button>
+                            <button class="btn btn-secondary btn-sm" id="quarentena-detail-liberar">Liberar (falso positivo)</button>
+                        </div>
+
+                        <div id="quarentena-detail-acoes-consertar" style="margin-top:1.25rem;">
+                            <p style="margin:0 0 0.6rem; font-size:0.78rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.03em;">Consertar com outra imagem</p>
+                            <div style="display:flex; flex-wrap:wrap; gap:0.6rem;">
+                                <button class="btn btn-secondary btn-sm" id="quarentena-detail-tentar-novamente">Tentar buscar de novo</button>
+                                <button class="btn btn-secondary btn-sm" id="quarentena-detail-buscar-ia">Buscar com IA</button>
+                                <button class="btn btn-secondary btn-sm" id="quarentena-detail-upload">Enviar imagem manualmente</button>
+                                <input type="file" id="quarentena-detail-input-upload" accept="image/png,image/jpeg,image/webp" style="display:none;">
+                                <button class="btn btn-secondary btn-sm" id="quarentena-detail-google">Ver no Google Imagens</button>
+                                <button class="btn btn-secondary btn-sm" id="quarentena-detail-copy-ean">Copiar EAN</button>
+                            </div>
+                            <div id="quarentena-detail-ia-picker" style="display:none; margin-top:0.85rem;"></div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- ===== TAB: WHATSAPP (Evolution API) ===== -->
@@ -3075,6 +3117,8 @@ $('#btn-atualizar-status-sistema').addEventListener('click', loadStatusSistema);
 // isso não dá pra usar <img src="..."> direto — busca via fetch() com authHeaders() e vira um
 // blob URL local.
 let quarentenaPage = 1;
+let ultimaQuarentenaData = []; // cache da última página carregada — o popup de detalhes busca
+                                // o registro aqui em vez de precisar de uma rota GET-por-id nova
 
 async function loadQuarentena(page = 1) {
     quarentenaPage = page;
@@ -3108,6 +3152,8 @@ async function loadQuarentena(page = 1) {
             }
         }
 
+        ultimaQuarentenaData = data.registros;
+
         const list = $('#quarentena-list');
         if (!data.registros.length) {
             list.innerHTML = `<div class="empty-state">Nenhuma imagem em quarentena com esse filtro.</div>`;
@@ -3119,12 +3165,14 @@ async function loadQuarentena(page = 1) {
             const decisao = r.decisao || 'pendente';
             const badgeTxt = decisao === 'pendente' ? 'Pendente' : decisao === 'confirmada' ? 'Confirmada' : 'Liberada';
             const motivoTxt = { impropria: 'Conteúdo impróprio', revisao_obrigatoria_fonte: 'Fonte exige revisão', descricao_incompativel: 'Não corresponde à descrição' }[r.motivo] || r.motivo || 'Conteúdo impróprio';
-            const acoes = decisao === 'pendente' && r.tem_arquivo
+            // "Detalhes" sempre aparece (mesmo em entradas já revisadas — dá pra reabrir o
+            // contexto/link de origem depois). Confirmar/Liberar só quando ainda dá pra agir.
+            const acoes = (decisao === 'pendente' && r.tem_arquivo
                 ? `<button class="btn btn-danger btn-sm" data-action="quarentena-confirmar" data-id="${r.id}">Confirmar</button>
                    <button class="btn btn-secondary btn-sm" data-action="quarentena-liberar" data-id="${r.id}">Liberar (falso positivo)</button>`
-                : '';
+                : '') + `<button class="btn btn-secondary btn-sm" data-action="quarentena-detalhes" data-id="${r.id}">Detalhes</button>`;
             return `<div class="produto-card" data-quarentena-id="${r.id}">
-                <div class="quarentena-card-img" id="quarentena-img-${r.id}">
+                <div class="quarentena-card-img" id="quarentena-img-${r.id}" data-action="quarentena-detalhes" data-id="${r.id}" style="cursor:pointer;" title="Ver detalhes">
                     ${r.tem_arquivo ? `<button type="button" class="quarentena-reveal-btn" data-action="quarentena-revelar" data-id="${r.id}">👁 Revelar</button>` : ''}
                 </div>
                 <div class="produto-card-body">
@@ -3201,7 +3249,203 @@ $('#quarentena-list').addEventListener('click', async (e) => {
         } catch (err) {
             toast('Erro: ' + err.message, 'error');
         }
+        return;
     }
+
+    const detalhesBtn = e.target.closest('[data-action="quarentena-detalhes"]');
+    if (detalhesBtn) {
+        openQuarentenaDetail(detalhesBtn.dataset.id);
+    }
+});
+
+// ===== Popup de detalhes da Quarentena (pedido do usuário: ver a imagem em tamanho real, o
+// link de onde ela foi baixada, e todas as formas de consertar quando está errada — sem sair
+// desta aba. "Quanto mais rápido melhor" pra quem está revisando: um clique no card já abre
+// tudo, cada ação de conserto fecha o caso sozinha ao dar certo. ===== */
+let quarentenaDetailBlobUrl = null; // revogado ao trocar/fechar, pra não vazar memória
+
+function fecharQuarentenaDetail() {
+    $('#quarentena-detail-panel').classList.remove('open');
+    $('#quarentena-detail-backdrop').classList.remove('show');
+    if (quarentenaDetailBlobUrl) {
+        URL.revokeObjectURL(quarentenaDetailBlobUrl);
+        quarentenaDetailBlobUrl = null;
+    }
+    $('#quarentena-detail-ia-picker').style.display = 'none';
+}
+
+async function openQuarentenaDetail(id) {
+    const r = ultimaQuarentenaData.find(x => String(x.id) === String(id));
+    if (!r) { toast('Registro não encontrado na página atual — atualize a lista.', 'error'); return; }
+
+    $('#quarentena-detail-panel').dataset.id = id;
+    $('#quarentena-detail-panel').dataset.codbar = r.codbar;
+    $('#quarentena-detail-panel').classList.add('open');
+    $('#quarentena-detail-backdrop').classList.add('show');
+    $('#quarentena-detail-ia-picker').style.display = 'none';
+    $('#quarentena-detail-ia-picker').innerHTML = '';
+
+    const motivoTxt = { impropria: 'Conteúdo impróprio', revisao_obrigatoria_fonte: 'Fonte exige revisão', descricao_incompativel: 'Não corresponde à descrição' }[r.motivo] || r.motivo || 'Conteúdo impróprio';
+    const decisao = r.decisao || 'pendente';
+    const decisaoTxt = decisao === 'pendente' ? 'Pendente de revisão' : decisao === 'confirmada' ? 'Confirmada (imprópria)' : 'Liberada (falso positivo)';
+
+    $('#quarentena-detail-nome').textContent = r.descricao || 'Descrição não disponível';
+    $('#quarentena-detail-marca').textContent = r.marca || 'Marca não informada';
+    $('#quarentena-detail-ean').textContent = r.codbar;
+    $('#quarentena-detail-status').textContent = decisaoTxt;
+    $('#quarentena-detail-motivo').textContent = motivoTxt;
+    $('#quarentena-detail-origem').textContent = r.origem || '—';
+    $('#quarentena-detail-data').textContent = new Date(r.criado_em).toLocaleString('pt-BR');
+
+    const linkWrap = $('#quarentena-detail-link-wrap');
+    if (r.url_origem) {
+        linkWrap.style.display = 'block';
+        $('#quarentena-detail-link').href = r.url_origem;
+    } else {
+        linkWrap.style.display = 'none';
+    }
+
+    // Ações que só fazem sentido pra caso ainda pendente com arquivo (confirmar/liberar/tentar
+    // de novo/consertar) — uma entrada já revisada é só consulta de histórico/contexto.
+    const podeAgir = decisao === 'pendente' && r.tem_arquivo;
+    $('#quarentena-detail-acoes-triagem').style.display = podeAgir ? 'flex' : 'none';
+    $('#quarentena-detail-acoes-consertar').style.display = podeAgir ? 'flex' : 'none';
+
+    const imgWrap = $('#quarentena-detail-image');
+    if (quarentenaDetailBlobUrl) { URL.revokeObjectURL(quarentenaDetailBlobUrl); quarentenaDetailBlobUrl = null; }
+    if (!r.tem_arquivo) {
+        imgWrap.innerHTML = `<span style="width:40px;height:40px;color:#94a3b8;display:inline-flex;">${CAMERA_ICON}</span>`;
+    } else {
+        imgWrap.innerHTML = `<span class="spinner" style="border-top-color:var(--accent); border-color:rgba(79,70,229,0.25); width:22px; height:22px;"></span>`;
+        try {
+            const res = await fetch(`/admin/quarentena-imagem/${id}`, { headers: authHeaders() });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const blob = await res.blob();
+            quarentenaDetailBlobUrl = URL.createObjectURL(blob);
+            // Abrir o popup de detalhes já é a ação deliberada de revisar — mostra a imagem
+            // direto, sem exigir um segundo clique de "Revelar" só pra ver o que a lista já
+            // esconde por segurança (essa camada de borrão continua existindo no grid).
+            imgWrap.innerHTML = `<img src="${quarentenaDetailBlobUrl}" alt="Imagem em quarentena">`;
+        } catch (err) {
+            imgWrap.innerHTML = `<span style="color:var(--danger); font-size:0.8rem; padding:1rem; text-align:center; display:block;">Erro ao carregar imagem: ${escHtml(err.message)}</span>`;
+        }
+    }
+}
+
+$('#quarentena-detail-close').addEventListener('click', fecharQuarentenaDetail);
+$('#quarentena-detail-backdrop').addEventListener('click', fecharQuarentenaDetail);
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && $('#quarentena-detail-panel').classList.contains('open')) fecharQuarentenaDetail();
+});
+
+$('#quarentena-detail-confirmar').addEventListener('click', async () => {
+    const id = $('#quarentena-detail-panel').dataset.id;
+    if (!confirm('Confirmar que essa imagem é mesmo imprópria/errada? O arquivo será apagado permanentemente (o EAN já continua bloqueado).')) return;
+    try {
+        const res = await fetch(`/admin/quarentena/${id}/confirmar`, { method: 'POST', headers: authHeaders() });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+        toast(data.message || 'Confirmado', 'success');
+        fecharQuarentenaDetail();
+        loadQuarentena(quarentenaPage);
+    } catch (err) {
+        toast('Erro: ' + err.message, 'error');
+    }
+});
+
+$('#quarentena-detail-liberar').addEventListener('click', async () => {
+    const id = $('#quarentena-detail-panel').dataset.id;
+    if (!confirm('Liberar essa imagem como foto oficial do produto? Isso desbloqueia o EAN e restaura a imagem — use só se tiver certeza que é um falso positivo do classificador.')) return;
+    try {
+        const res = await fetch(`/admin/quarentena/${id}/liberar`, { method: 'POST', headers: authHeaders() });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+        toast(data.message || 'Liberado', 'success');
+        fecharQuarentenaDetail();
+        loadQuarentena(quarentenaPage);
+    } catch (err) {
+        toast('Erro: ' + err.message, 'error');
+    }
+});
+
+$('#quarentena-detail-tentar-novamente').addEventListener('click', async (e) => {
+    const id = $('#quarentena-detail-panel').dataset.id;
+    const btn = e.currentTarget;
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner"></span> Buscando em outras fontes...`;
+    try {
+        const res = await fetch(`/admin/quarentena/${id}/tentar-novamente`, { method: 'POST', headers: authHeaders() });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) {
+            toast(data.message || 'Nova imagem encontrada', 'success');
+            fecharQuarentenaDetail();
+            loadQuarentena(quarentenaPage);
+        } else {
+            toast(data.message || 'Nenhuma imagem nova encontrada', 'error');
+        }
+    } catch (err) {
+        toast('Erro: ' + err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+    }
+});
+
+$('#quarentena-detail-buscar-ia').addEventListener('click', (e) => {
+    const codbar = $('#quarentena-detail-panel').dataset.codbar;
+    const id = $('#quarentena-detail-panel').dataset.id;
+    buscarImagensIA(codbar, e.currentTarget, '#quarentena-detail-ia-picker', '#quarentena-detail-image', async () => {
+        // A imagem nova já foi salva (buscarImagensIA cuida disso); fecha esta entrada de
+        // quarentena em paralelo, senão ela ficaria "pendente" pra sempre mesmo já resolvida.
+        try {
+            await fetch(`/admin/quarentena/${id}/confirmar`, { method: 'POST', headers: authHeaders() });
+        } catch (err) { /* melhor esforço — a imagem já foi salva de qualquer jeito */ }
+        loadQuarentena(quarentenaPage);
+    });
+});
+
+$('#quarentena-detail-upload').addEventListener('click', () => $('#quarentena-detail-input-upload').click());
+$('#quarentena-detail-input-upload').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const codbar = $('#quarentena-detail-panel').dataset.codbar;
+    const id = $('#quarentena-detail-panel').dataset.id;
+    const btn = $('#quarentena-detail-upload');
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Enviando...';
+    try {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await fetch(`/upload-imagem-produto/${encodeURIComponent(codbar)}`, {
+            method: 'POST', headers: authHeaders(), body: formData,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+        toast('Imagem enviada com sucesso', 'success');
+        await fetch(`/admin/quarentena/${id}/confirmar`, { method: 'POST', headers: authHeaders() }).catch(() => {});
+        fecharQuarentenaDetail();
+        loadQuarentena(quarentenaPage);
+    } catch (err) {
+        toast('Erro ao enviar: ' + err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+        e.target.value = '';
+    }
+});
+
+$('#quarentena-detail-google').addEventListener('click', () => {
+    const codbar = $('#quarentena-detail-panel').dataset.codbar;
+    const descricao = $('#quarentena-detail-nome').textContent;
+    const q = encodeURIComponent(`${descricao !== 'Descrição não disponível' ? descricao : ''} ${codbar}`.trim());
+    window.open(`https://www.google.com/search?tbm=isch&q=${q}`, '_blank');
+});
+
+$('#quarentena-detail-copy-ean').addEventListener('click', () => {
+    const codbar = $('#quarentena-detail-panel').dataset.codbar;
+    copiarTexto(codbar);
 });
 
 // ===== TAB: WHATSAPP (Evolution API) =====

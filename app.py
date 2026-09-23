@@ -287,6 +287,13 @@ class ImagemQuarentena(db.Model):
     # coluna existir (só existia o motivo 'impropria' na prática) não têm esse dado — tratadas
     # como 'impropria' pelo frontend quando None, já que era o único motivo possível na época.
     motivo = db.Column(db.String(30), nullable=True)
+    # URL de onde a imagem foi baixada (quando a fonte é uma busca automática/URL — nunca
+    # existe pra upload manual nem pra reprocessamento da auditoria retroativa, que não tem
+    # URL nenhuma envolvida). Pedido do usuário: poder abrir a página de origem de dentro do
+    # popup de detalhes da Quarentena, pra conferir o contexto de onde a imagem errada veio
+    # (às vezes a própria página de origem já deixa claro que o mapeamento EAN→imagem da fonte
+    # está errado, sem precisar adivinhar só pela miniatura).
+    url_origem = db.Column(db.String(1000), nullable=True)
 
 
 def _registrar_busca_imagem(codbar, encontrado, origem=None, via='terminal'):
@@ -1038,14 +1045,16 @@ def _imagem_corresponde_descricao(image_data, descricao, marca=None):
         return True
 
 
-def _quarentenar_imagem(image_data, codbar, origem=None, motivo=None):
+def _quarentenar_imagem(image_data, codbar, origem=None, motivo=None, url_origem=None):
     """Salva uma imagem rejeitada (por `_imagem_e_segura`, política de fonte ou
     `_imagem_corresponde_descricao`) na pasta de quarentena + registra uma linha em
     `ImagemQuarentena` pra revisão humana depois (aba "Quarentena" do painel), em vez de só
     descartar silenciosamente como acontecia antes. Nome do arquivo leva timestamp pra não
     colidir se o mesmo EAN for rejeitado mais de uma vez (ex.: tentativas em fontes diferentes).
     `motivo` (ver ImagemQuarentena.motivo) distingue POR QUE foi rejeitada — ajuda quem revisa a
-    entender o que checar sem depender só do texto do log do servidor.
+    entender o que checar sem depender só do texto do log do servidor. `url_origem` (ver
+    ImagemQuarentena.url_origem) guarda de onde a imagem foi baixada, quando aplicável — deixa
+    quem revisa abrir a página de origem direto do popup de detalhes.
 
     Bloqueia a busca automática de imagem desse EAN na hora, independente do motivo (mesma
     lógica de `DELETE /deletar-imagem-produto/<codbar>?bloquear=true`, inclusive criando um
@@ -1057,7 +1066,7 @@ def _quarentenar_imagem(image_data, codbar, origem=None, motivo=None):
     try:
         with open(caminho, 'wb') as f:
             f.write(image_data)
-        db.session.add(ImagemQuarentena(codbar=codbar, arquivo=nome_arquivo, origem=origem, motivo=motivo))
+        db.session.add(ImagemQuarentena(codbar=codbar, arquivo=nome_arquivo, origem=origem, motivo=motivo, url_origem=url_origem))
 
         produto = Produto.query.filter_by(codbar=codbar).first()
         if not produto:
@@ -1072,7 +1081,7 @@ def _quarentenar_imagem(image_data, codbar, origem=None, motivo=None):
         logging.error(f"Erro ao colocar imagem de {codbar} em quarentena: {e}")
 
 
-def save_image_from_response(image_data, codbar, origem=None):
+def save_image_from_response(image_data, codbar, origem=None, url_origem=None):
     """Salva a imagem a partir da resposta de uma requisição.
 
     Pedido do usuário: nunca duplicar a mesma imagem em disco (crua + processada) — só
@@ -1081,7 +1090,12 @@ def save_image_from_response(image_data, codbar, origem=None):
     processada (remoção de fundo) e só o resultado final vai pro disco. `save_image_with_background_removal`
     sempre salva algo em `file_path`, mesmo com `REMBG_ENABLED=false` (salva sem remover fundo
     nesse caso) — sem essa garantia, desativar o rembg faria a imagem não ser salva em lugar
-    nenhum, já que não sobra mais uma cópia crua como rede de segurança."""
+    nenhum, já que não sobra mais uma cópia crua como rede de segurança.
+
+    `url_origem` (opcional): a URL de onde a imagem foi baixada, quando o chamador tiver uma
+    (a maioria das fontes automáticas tem; upload manual e reprocessamento da auditoria não).
+    Só é usada se a imagem acabar rejeitada e indo pra quarentena — pedido do usuário pra poder
+    abrir a página de origem direto do popup de revisão."""
     processed_file_path = os.path.join(PROCESSED_IMAGES_FOLDER, f'{codbar}.png')
 
     reprovada = not _imagem_e_segura(image_data)
@@ -1095,7 +1109,7 @@ def save_image_from_response(image_data, codbar, origem=None):
             logging.warning(f"Imagem de {codbar} (origem={origem}) indo pra quarentena: fonte configurada pra exigir revisão humana.")
             mensagem = f'Imagem enviada pra revisão humana (fonte "{origem}" configurada pra exigir revisão em Configurações → Fontes de Imagem)'
             motivo = 'revisao_obrigatoria_fonte'
-        _quarentenar_imagem(image_data, codbar, origem, motivo=motivo)
+        _quarentenar_imagem(image_data, codbar, origem, motivo=motivo, url_origem=url_origem)
         return jsonify({'message': mensagem}), 422
 
     # Verificação de correspondência imagem/descrição (pedido do usuário) — só roda quando o
@@ -1106,7 +1120,7 @@ def save_image_from_response(image_data, codbar, origem=None):
     descricao_cadastrada = (produto.description or '').strip() if produto else ''
     if descricao_cadastrada and not _imagem_corresponde_descricao(image_data, descricao_cadastrada, produto.marca):
         logging.warning(f"Imagem de {codbar} (origem={origem}) NÃO corresponde à descrição cadastrada ('{descricao_cadastrada}') — indo pra quarentena.")
-        _quarentenar_imagem(image_data, codbar, origem, motivo='descricao_incompativel')
+        _quarentenar_imagem(image_data, codbar, origem, motivo='descricao_incompativel', url_origem=url_origem)
         return jsonify({'message': 'Imagem enviada pra revisão humana: parece não corresponder à descrição cadastrada do produto'}), 422
 
     try:
@@ -1144,7 +1158,7 @@ def buscar_e_salvar_imagem_google(codbar):
                 try:
                     img_response = requests.get(image_url)
                     img_response.raise_for_status()
-                    return save_image_from_response(img_response.content, codbar, origem='google')
+                    return save_image_from_response(img_response.content, codbar, origem='google', url_origem=image_url)
                 except requests.RequestException as e:
                     logging.warning(f"Erro ao baixar a imagem do URL {image_url}: {e}")
             return jsonify({'message': 'No valid image found from Google'}), 404
@@ -1197,7 +1211,7 @@ def buscar_e_salvar_imagem_precomelhor(codbar):
     try:
         img_response = requests.get(image_url, timeout=15)
         img_response.raise_for_status()
-        return save_image_from_response(img_response.content, codbar, origem='precomelhor')
+        return save_image_from_response(img_response.content, codbar, origem='precomelhor', url_origem=image_url)
     except requests.RequestException as e:
         logging.error(f"Erro ao buscar ou salvar imagem do PreçoMelhor para o produto {codbar}: {e}")
         return jsonify({'message': f'Error fetching or saving image from PrecoMelhor: {str(e)}'}), 500
@@ -1224,7 +1238,7 @@ def buscar_e_salvar_imagem_zaffari(codbar):
                         try:
                             img_response = requests.get(image_url, timeout=15)
                             img_response.raise_for_status()
-                            return save_image_from_response(img_response.content, codbar, origem='zaffari')
+                            return save_image_from_response(img_response.content, codbar, origem='zaffari', url_origem=image_url)
                         except requests.RequestException as e:
                             logging.warning(f"Erro ao baixar a imagem do URL {image_url}: {e}")
             return jsonify({'message': 'No valid image found from Zaffari'}), 404
@@ -1261,7 +1275,7 @@ def buscar_e_salvar_imagem_rissul(codbar):
                         try:
                             img_response = requests.get(image_url, timeout=15)
                             img_response.raise_for_status()
-                            return save_image_from_response(img_response.content, codbar, origem='rissul')
+                            return save_image_from_response(img_response.content, codbar, origem='rissul', url_origem=image_url)
                         except requests.RequestException as e:
                             logging.warning(f"Erro ao baixar a imagem do URL {image_url}: {e}")
             return jsonify({'message': 'No valid image found from Rissul'}), 404
@@ -1321,7 +1335,7 @@ def buscar_e_salvar_imagem_sonda(codbar):
     try:
         img_response = requests.get(image_url, timeout=15)
         img_response.raise_for_status()
-        return save_image_from_response(img_response.content, codbar, origem='sonda')
+        return save_image_from_response(img_response.content, codbar, origem='sonda', url_origem=image_url)
     except requests.RequestException as e:
         logging.error(f"Erro ao buscar ou salvar imagem do Sonda Delivery para o produto {codbar}: {e}")
         return jsonify({'message': f'Error fetching or saving image from Sonda: {str(e)}'}), 500
@@ -1368,7 +1382,7 @@ def buscar_e_salvar_imagem_unidasul(codbar):
     try:
         img_response = requests.get(image_url, timeout=15)
         img_response.raise_for_status()
-        return save_image_from_response(img_response.content, codbar, origem='unidasul')
+        return save_image_from_response(img_response.content, codbar, origem='unidasul', url_origem=image_url)
     except requests.RequestException as e:
         logging.error(f"Erro ao buscar ou salvar imagem da Unidasul para o produto {codbar}: {e}")
         return jsonify({'message': f'Error fetching or saving image from Unidasul: {str(e)}'}), 500
@@ -1409,7 +1423,7 @@ def buscar_e_salvar_imagem_serper(codbar):
             try:
                 img_response = requests.get(image_url, timeout=15)
                 img_response.raise_for_status()
-                return save_image_from_response(img_response.content, codbar, origem='serper')
+                return save_image_from_response(img_response.content, codbar, origem='serper', url_origem=image_url)
             except requests.RequestException as e:
                 logging.warning(f"Erro ao baixar a imagem do URL {image_url}: {e}")
         logging.info(f"Nenhuma imagem encontrada na Serper para o produto {codbar}")
@@ -2427,7 +2441,7 @@ def consultar_ou_cadastrar_produto(codbar):
             try:
                 img_response = requests.get(thumbnail, timeout=15)
                 img_response.raise_for_status()
-                save_image_from_response(img_response.content, codbar, origem=fonte)
+                save_image_from_response(img_response.content, codbar, origem=fonte, url_origem=thumbnail)
             except requests.RequestException as e:
                 logging.warning(f"Não foi possível salvar a imagem de {fonte} para {codbar}: {e}")
 
@@ -3773,7 +3787,7 @@ def admin_cadastrar_produto_cosmos(codbar):
         try:
             img_response = requests.get(thumbnail, timeout=15)
             img_response.raise_for_status()
-            save_image_from_response(img_response.content, codbar, origem='cosmos')
+            save_image_from_response(img_response.content, codbar, origem='cosmos', url_origem=thumbnail)
         except requests.RequestException as e:
             logging.warning(f"Não foi possível salvar a imagem do Cosmos para {codbar}: {e}")
 
@@ -3958,7 +3972,7 @@ def admin_definir_imagem_url(codbar):
         logging.warning(f"Erro ao baixar imagem escolhida na busca com IA para {codbar}: {e}")
         return jsonify({'message': 'Não foi possível baixar essa imagem'}), 400
 
-    resultado = save_image_from_response(img_response.content, codbar, origem='ia')
+    resultado = save_image_from_response(img_response.content, codbar, origem='ia', url_origem=image_url)
     if resultado[1] == 200:
         _registrar_busca_imagem(codbar, True, origem='ia', via='admin')
     return resultado
@@ -4550,18 +4564,20 @@ def admin_quarentena():
     registros = query.offset((page - 1) * per_page).limit(per_page).all()
 
     codbars = {r.codbar for r in registros}
-    descricoes = {}
+    produtos_info = {}
     if codbars:
         for p in Produto.query.filter(Produto.codbar.in_(codbars)).all():
-            descricoes[p.codbar] = p.description
+            produtos_info[p.codbar] = p
 
     return jsonify({
         'registros': [{
             'id': r.id,
             'codbar': r.codbar,
-            'descricao': descricoes.get(r.codbar),
+            'descricao': produtos_info[r.codbar].description if r.codbar in produtos_info else None,
+            'marca': produtos_info[r.codbar].marca if r.codbar in produtos_info else None,
             'origem': r.origem,
             'motivo': r.motivo or 'impropria',  # linhas de antes desta coluna existir só tinham esse motivo possível
+            'url_origem': r.url_origem,
             'criado_em': r.criado_em.isoformat() + 'Z',
             'decisao': r.decisao,
             'revisado_em': r.revisado_em.isoformat() + 'Z' if r.revisado_em else None,
@@ -4660,6 +4676,53 @@ def admin_quarentena_liberar(quarentena_id):
         db.session.rollback()
         logging.error(f"Erro ao liberar imagem em quarentena {quarentena_id}: {e}")
         return jsonify({'message': f'Erro ao liberar: {e}'}), 500
+
+
+@app.route('/admin/quarentena/<int:quarentena_id>/tentar-novamente', methods=['POST'])
+@jwt_required()
+def admin_quarentena_tentar_novamente(quarentena_id):
+    """Pedido do usuário: uma forma rápida de tentar "consertar sozinho" uma imagem errada direto
+    do popup de detalhes da Quarentena, sem precisar navegar pra outra aba. Desbloqueia o EAN
+    (`Produto.busca_imagem_bloqueada` — sem isso a busca nem chegaria a tentar, ver
+    `_quarentenar_imagem`, que bloqueia todo EAN que cai aqui) e reaproveita o MESMO fluxo
+    multi-fonte de sempre chamando `admin_buscar_imagem` direto como função Python normal (não
+    HTTP) — evita duplicar a cadeia local→Google→Zaffari→...→Serper numa segunda cópia. Se uma
+    fonte diferente achar uma imagem válida, ela passa pelas MESMAS checagens de sempre
+    (`save_image_from_response`) — pode inclusive cair em quarentena de novo (outra entrada), se
+    a fonte nova também trouxer algo suspeito.
+
+    Em caso de sucesso, fecha esta entrada de quarentena (`decisao='confirmada'`) — o produto já
+    foi resolvido por um caminho diferente, não faz sentido deixar esta entrada "pendente" pra
+    sempre. Em caso de falha, deixa o EAN desbloqueado mesmo assim (pedido explícito foi "tentar
+    de novo"; bloquear de novo só atrapalharia uma tentativa futura) e a entrada continua
+    pendente, sem mudança nenhuma nela."""
+    entrada = ImagemQuarentena.query.get_or_404(quarentena_id)
+    if entrada.decisao is not None:
+        return jsonify({'message': 'Esta entrada já foi revisada — não há o que tentar de novo.'}), 400
+
+    produto = Produto.query.filter_by(codbar=entrada.codbar).first()
+    if produto:
+        produto.busca_imagem_bloqueada = False
+        db.session.commit()
+
+    resultado = admin_buscar_imagem(entrada.codbar)
+    if resultado[1] == 200:
+        if entrada.arquivo:
+            caminho = os.path.join(QUARENTENA_FOLDER, entrada.arquivo)
+            if os.path.exists(caminho):
+                os.remove(caminho)
+            entrada.arquivo = None
+        entrada.decisao = 'confirmada'
+        entrada.revisado_em = datetime.utcnow()
+        db.session.commit()
+        corpo = resultado[0].get_json()
+        return jsonify({
+            'message': f'Nova imagem encontrada via {corpo.get("fonte")} — caso fechado.',
+            'imagem_url': corpo.get('imagem_url'),
+            'fonte': corpo.get('fonte'),
+        }), 200
+
+    return jsonify({'message': 'Nenhuma imagem nova encontrada em outras fontes. EAN desbloqueado — pode tentar de novo mais tarde ou resolver manualmente.'}), 404
 
 
 @app.route('/admin/status-sistema', methods=['GET'])
