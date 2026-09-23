@@ -85,6 +85,22 @@ A tela de login original (card único centralizado, e-mail + senha empilhados) v
 
 Testado de ponta a ponta num navegador real: os 4 cards flutuantes conferidos via `getBoundingClientRect()` depois da correção (posições variadas, dentro dos limites do painel); toggle de mostrar/ocultar senha clicado de verdade (senha digitada aparece em texto plano, ícone troca); login completo (e-mail + senha reais, submit) funcionando de ponta a ponta sem nenhuma mudança no fluxo — token salvo, redirecionado pro painel; layout mobile (< 860px) conferido via DOM (`getComputedStyle` confirmando `.login-showcase{display:none}` e `.login-form-brand{display:flex}`, sem overflow horizontal na página).
 
+#### Segunda rodada, com o usuário testando ao vivo e mandando print com setas: ícone sobrepondo o texto digitado, vitrine "melhore", pediu animações
+
+**Bug real de CSS achado pelo usuário, não por mim**: nos campos de e-mail/senha, o ícone (posicionado em `absolute`) ficava por cima do começo do texto digitado/placeholder (`✉ce@mupa.app` em vez de `voce@mupa.app` com espaço pro ícone) — confirmado no print que o usuário mandou com uma seta apontando exatamente pro problema. Causa raiz: `.input-icon-wrap input { padding-left: 2.6rem }` e a regra genérica de input mais abaixo no arquivo (`input[type="email"], ... { padding: 0.55rem 0.75rem; ... }`) têm a **mesma especificidade CSS** (uma classe + um tipo, dos dois lados) — em empate de especificidade, quem vem DEPOIS no arquivo vence, e a regra genérica (que reseta o padding-left pro valor padrão, sem espaço pro ícone) vinha depois. Corrigido aumentando a especificidade do seletor (`.login-screen .input-icon-wrap input`, um ancestral a mais) em vez de `!important` — evita o mesmo problema se outra regra genérica for adicionada depois no arquivo. Confirmado via `getComputedStyle` (`padding-left` resolvendo pra `43.2px` = `2.7rem`, não mais o valor resetado).
+
+**Vitrine lateral enriquecida** (pedido: "melhore a imagem da lateral"):
+- **3º glow** (`.login-showcase-glow-3`, ciano) além dos 2 originais (índigo/violeta) — mais variação de cor, evita a composição ficar monocromática.
+- **Textura de pontos** (`.login-showcase::before`, `radial-gradient` repetido em grade 26px, com uma máscara elíptica pra desvanecer nas bordas) — o tipo de detalhe "constelação"/blueprint comum em painel escuro de produto dev-tool, dá profundidade sem precisar de nenhuma imagem.
+- **5º cartão flutuante** (ícone de gráfico de barras) — a composição original com 4 cards deixava uma área vazia grande no meio/topo do painel; um 5º preenche esse espaço.
+
+**Animações adicionadas** (pedido explícito: "adicionar animações"), todas sutis/lentas de propósito — o objetivo é dar vida ao painel sem competir com o formulário, que é o que realmente importa na tela:
+- **Entrada com fade+slide-up** (`loginFadeUp`, 0.6s) na marca, no texto de destaque e no formulário — com pequenos atrasos escalonados entre eles (marca → texto → formulário) em vez de tudo aparecer de uma vez.
+- **Pulso lento nos glows** (`glowPulse`, 18s, `scale`+`translate`+opacidade) — bem devagar de propósito, mal dá pra perceber olhando direto, só cria uma sensação de "vivo" com o rabo do olho.
+- **Balanço nos cartões flutuantes** (`loginFloat`, translateY sutil) — cada cartão com sua própria duração (6.5s–8.5s) e atraso (`--dur`/`--delay`, custom property no HTML de cada um) pra ficarem fora de sincronia uns dos outros, em vez de baloiçar tudo junto de forma robótica; mais uma entrada em escala (`loginCardIn`) quando a página carrega.
+
+Reconferido depois das mudanças: `.login-float-card` conta 5 (era 4), `.login-showcase-glow` conta 3 (era 2), sem erro novo no console, layout mobile e login completo retestados de novo — nada quebrou com as adições.
+
 ## Aba "Remover Fundo" (migrada de `templates/index.html`, agora autenticada)
 
 Existia uma ferramenta solta de remover fundo de imagem (upload ou URL, via `rembg`) servida direto na raiz (`templates/index.html`, Bootstrap/jQuery antigo, sem login nenhum). Virou uma aba normal do painel (`#tab-removerfundo`, ícone de imagem na barra lateral) — mesmas duas rotas de backend de sempre (`POST /remove_background_upload`, `POST /remove_background_url`), só que agora atrás de `@jwt_required()` (antes eram públicas, sem proteção nenhuma, qualquer um na internet podia processar imagens à vontade nelas). `templates/index.html` ficou órfão (sem rota apontando pra ele) — não foi apagado, mas pode ser removido com segurança se um dia isso incomodar.
