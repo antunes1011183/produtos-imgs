@@ -1081,6 +1081,31 @@ def _quarentenar_imagem(image_data, codbar, origem=None, motivo=None, url_origem
         logging.error(f"Erro ao colocar imagem de {codbar} em quarentena: {e}")
 
 
+def _eliminar_duplicatas_pendentes(codbar, excluir_id):
+    """Apaga (arquivo + linha do banco) toda entrada AINDA PENDENTE de `ImagemQuarentena` pro
+    mesmo `codbar`, exceto `excluir_id` (a entrada que acabou de ser liberada por um humano — ver
+    `admin_quarentena_liberar`). Não mexe em `motivo` nenhum de propósito (pedido do usuário:
+    "tanto faz o motivo") — uma vez que o EAN já tem foto aprovada, qualquer outra rejeição dele
+    ainda esperando revisão é redundante, seja por conteúdo impróprio, política de fonte ou
+    descrição incompatível. Só afeta entradas com `decisao IS NULL` (pendentes de verdade) —
+    entradas já `'confirmada'`/`'liberada'` são histórico de uma decisão já tomada por um humano
+    e ficam intocadas, não é o alvo desta limpeza. Não faz commit — quem chama decide quando
+    (chamado de dentro da mesma transação de `admin_quarentena_liberar`, comitada junto).
+    Retorna quantas entradas foram removidas, só pra informar na mensagem de resposta."""
+    duplicadas = ImagemQuarentena.query.filter(
+        ImagemQuarentena.codbar == codbar,
+        ImagemQuarentena.id != excluir_id,
+        ImagemQuarentena.decisao.is_(None),
+    ).all()
+    for dup in duplicadas:
+        if dup.arquivo:
+            caminho_dup = os.path.join(QUARENTENA_FOLDER, dup.arquivo)
+            if os.path.exists(caminho_dup):
+                os.remove(caminho_dup)
+        db.session.delete(dup)
+    return len(duplicadas)
+
+
 def save_image_from_response(image_data, codbar, origem=None, url_origem=None):
     """Salva a imagem a partir da resposta de uma requisição.
 
@@ -4644,7 +4669,13 @@ def admin_quarentena_liberar(quarentena_id):
     (nunca uma cópia crua — mesma regra do resto do sistema), desbloqueia o EAN e marca
     `tem_foto=True`. Não passa pelo classificador de novo — a decisão humana aqui é definitiva,
     não faz sentido rejeitar de novo automaticamente algo que um humano acabou de revisar e
-    aprovar."""
+    aprovar.
+
+    Pedido do usuário: liberar uma imagem pra um EAN também limpa sozinho qualquer OUTRA entrada
+    ainda pendente pro MESMO EAN, não importa o motivo de cada uma (`_eliminar_duplicatas_pendentes`)
+    — uma vez que o produto já tem uma foto boa aprovada por humano, as demais rejeições daquele
+    EAN que ainda estavam esperando revisão viraram ruído (o barcode já está resolvido), então não
+    faz sentido continuar pedindo pra alguém revisar item por item."""
     entrada = ImagemQuarentena.query.get_or_404(quarentena_id)
     if not entrada.arquivo:
         return jsonify({'message': 'Arquivo não existe mais — não é possível liberar (já revisado antes ou arquivo perdido).'}), 400
@@ -4670,8 +4701,13 @@ def admin_quarentena_liberar(quarentena_id):
             produto.busca_imagem_bloqueada = False
         _marcar_tem_foto(entrada.codbar, True)
 
+        removidas = _eliminar_duplicatas_pendentes(entrada.codbar, excluir_id=entrada.id)
+
         db.session.commit()
-        return jsonify({'message': 'Liberado como falso positivo — imagem restaurada como foto do produto, EAN desbloqueado.'}), 200
+        mensagem = 'Liberado como falso positivo — imagem restaurada como foto do produto, EAN desbloqueado.'
+        if removidas:
+            mensagem += f' {removidas} outro(s) registro(s) pendente(s) do mesmo EAN também removido(s).'
+        return jsonify({'message': mensagem, 'duplicatas_removidas': removidas}), 200
     except Exception as e:
         db.session.rollback()
         logging.error(f"Erro ao liberar imagem em quarentena {quarentena_id}: {e}")
