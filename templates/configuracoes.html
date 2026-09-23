@@ -26,6 +26,14 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         :root {
+            /* Diz pro navegador qual paleta usar nos widgets que ELE desenha (não o CSS da
+               página): popup de <select>, spinner de number/time/date, scrollbar nativa (quando
+               ::-webkit-scrollbar não cobre, ex. Firefox), destaque de autofill. Sem isso, o
+               navegador adivinha pela preferência do SISTEMA OPERACIONAL — que é independente
+               do tema escolhido AQUI (usuário pode estar com Windows no claro e o painel no
+               escuro, ou vice-versa) — causa raiz real do bug relatado (campo com fundo E texto
+               ambos escuros, sem contraste). Redeclarado no bloco `dark` abaixo. */
+            color-scheme: light;
             --sidebar-bg: #0f172a;
             --sidebar-bg-2: #111c34;
             --sidebar-text: #94a3b8;
@@ -63,6 +71,7 @@
            herda a troca automaticamente. --sidebar-* não muda (a barra lateral já era escura nos
            dois temas). Alternado via [data-theme] no <html>, ver #btn-theme-toggle no JS. */
         html[data-theme="dark"] {
+            color-scheme: dark;
             --bg: #0b1120;
             --card: #131b2e;
             --border: #263349;
@@ -89,8 +98,17 @@
         html[data-theme="dark"] .card {
             background: linear-gradient(165deg, #16213a 0%, var(--card) 55%);
         }
+        /* Cabeçalho de tabela "grudento" (ver regra de `th` mais abaixo) fica no TOPO do card,
+           onde o gradiente acima resolve pra #16213a (a ponta do gradiente), não pro var(--card)
+           flat — sem isso, o th sticky ficaria com uma cor visivelmente diferente do fundo atrás
+           dele assim que a rolagem passasse por baixo. */
+        html[data-theme="dark"] th { background: #16213a; }
         * { box-sizing: border-box; }
-        html, body { height: 100%; }
+        /* Casca do app com altura travada no viewport (pedido do usuário: abas usarem sempre a
+           altura máxima da tela, com o scroll ficando DENTRO das tabelas/listas, não na página
+           inteira) — a página em si nunca rola; só .content (fallback geral) e as listas/tabelas
+           específicas (#consulta-list etc., ver mais abaixo) têm overflow-y próprio. */
+        html, body { height: 100%; overflow: hidden; }
         body {
             font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             font-feature-settings: "cv11", "ss01";
@@ -111,7 +129,7 @@
         ::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: padding-box; }
 
         /* ===== Layout ===== */
-        .app { display: flex; min-height: 100vh; }
+        .app { display: flex; height: 100vh; }
 
         .sidebar {
             width: 260px;
@@ -200,7 +218,7 @@
             box-shadow: 0 0 0 3px rgba(16,185,129,0.18);
         }
 
-        .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+        .main { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
 
         .topbar {
             display: flex;
@@ -250,8 +268,13 @@
         }
         .sidebar-backdrop.show { display: block; }
 
-        .content { padding: 1.5rem 2rem calc(3rem + env(safe-area-inset-bottom)); max-width: 1080px; width: 100%; margin: 0 auto; }
-        .content.wide { max-width: none; }
+        /* Sempre largura total (pedido do usuário — antes só as abas de tabela ganhavam
+           .wide, o resto ficava travado em 1080px centralizado) + área de rolagem geral: é
+           aqui que o scroll da página cai por padrão (abas sem uma lista/tabela dominante,
+           ex. Configurações). Abas com tabela própria (Consulta Rápida/Histórico/Imagens
+           Pendentes/Quarentena) sobrescrevem isso — a lista interna delas é que rola (ver
+           regras de #consulta-list etc. mais abaixo), não .content. */
+        .content { flex: 1; min-height: 0; overflow-y: auto; padding: 1.5rem 2rem calc(3rem + env(safe-area-inset-bottom)); width: 100%; }
 
         /* ===== Cards & form ===== */
         .card {
@@ -302,7 +325,18 @@
             font-weight: 500;
             color: var(--muted);
         }
-        input[type="text"], input[type="password"], input[type="number"], select {
+        /* Pedido do usuário: "revisar contraste em tudo" — a lista de seletores aqui era
+           incompleta (só text/password/number/select), então qualquer outro tipo de campo
+           (email, time, textarea — o painel usa os três: login por e-mail, horário do resumo
+           diário, tokens do Cosmos) ficava sem NENHUM estilo, caindo no controle nativo do
+           navegador/SO. Em tema escuro isso é exatamente a origem do bug relatado (campo com
+           fundo e texto ambos escuros, ilegível) — o controle nativo assume o esquema de cores
+           do sistema operacional, que pode não bater com o tema escolhido AQUI dentro do painel
+           (são independentes). `color-scheme` também declarado (ver mais abaixo) — é o que diz
+           pro navegador qual paleta usar pros pedaços que ele mesmo desenha (populares scrollbar,
+           popup de <select>, spinners de number/time), em vez de adivinhar pelo SO. */
+        input[type="text"], input[type="password"], input[type="number"], input[type="email"],
+        input[type="time"], input[type="date"], textarea, select {
             padding: 0.55rem 0.75rem;
             border: 1px solid var(--border);
             border-radius: var(--radius-sm);
@@ -312,11 +346,19 @@
             color: var(--text);
             transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease);
         }
-        input:focus, select:focus {
+        input:focus, select:focus, textarea:focus {
             outline: none;
             border-color: var(--accent);
             box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
         }
+        /* A lista suspensa de um <select> (os <option>) costuma ser desenhada pelo SO, não pelo
+           CSS da página — sem isso, o popup pode sair claro (ou com texto claro sobre claro)
+           mesmo com o <select> fechado corretamente escuro. */
+        option { background: var(--card); color: var(--text); }
+        /* Placeholder tem opacidade/cor própria, separada de `color:` — sem isso o texto de
+           dica (ex. "sk-...", "Ex: 7896...") ficava com baixo contraste em tema escuro (herdava
+           uma cor cinza clara pensada pro tema claro). */
+        ::placeholder { color: var(--muted); opacity: 1; }
 
         /* ===== Sub-navegação da aba Configurações ===== */
         /* Antes eram 11 cards empilhados numa rolagem só, sem nenhum agrupamento (chaves de
@@ -440,7 +482,12 @@
 
         table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
         th, td { text-align: left; padding: 0.65rem 0.7rem; border-bottom: 1px solid var(--border); }
-        th { font-weight: 600; color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; }
+        /* position:sticky sem efeito nenhum fora de um container com overflow-y (a maioria das
+           tabelas do painel) — só "gruda" de verdade dentro de #consulta-list/#historico-list/
+           #pendentes-list (ver regras de scroll interno acima), mantendo o cabeçalho da coluna
+           visível enquanto as linhas passam por baixo rolando. background sólido pra não deixar
+           o texto das linhas "vazar" por trás do cabeçalho fixo. */
+        th { font-weight: 600; color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; position: sticky; top: 0; background: var(--card); z-index: 1; }
         tbody tr { transition: background 0.12s var(--ease); }
         tbody tr:hover { background: var(--hover); }
         td .ean { font-family: "SF Mono", "Cascadia Code", Consolas, monospace; font-size: 0.8rem; color: var(--muted); }
@@ -535,9 +582,26 @@
 
         /* ===== Consulta Rápida / Histórico: lista em largura total + painel de detalhes
            como popup deslizante pela lateral direita (ver .detail-panel abaixo) ===== */
-        .consulta-layout { display: block; }
-        .consulta-list-col { width: 100%; }
+        /* Cadeia de flex "altura máxima, scroll só na lista" (pedido do usuário) — cada nível
+           passa flex:1;min-height:0 pro próximo até chegar na lista de verdade (#consulta-list/
+           #historico-list, ver regra dedicada mais abaixo), que é quem realmente ganha
+           overflow-y:auto. min-height:0 é o que evita cada nível "crescer pro conteúdo" (o
+           comportamento padrão do flexbox que quebraria esse encadeamento). */
+        .consulta-layout { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+        .consulta-list-col { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+        .consulta-list-col > .card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
         .consulta-detail-col { width: 0; height: 0; overflow: visible; }
+
+        /* As 4 abas com uma lista/tabela dominante ficam de altura travada no viewport (só tem
+           efeito quando ativas — JS troca `display` pra 'flex' só nelas, ver o handler de clique
+           dos .nav-tab; nas outras abas o display continua 'block', essa regra fica inerte).
+           #tab-pendentes/#tab-quarentena não usam .consulta-layout (só têm um .card direto),
+           por isso o `>.card` dedicado pra elas logo abaixo. */
+        #tab-consulta, #tab-historico, #tab-pendentes, #tab-quarentena { flex-direction: column; height: 100%; min-height: 0; }
+        #tab-pendentes > .card, #tab-quarentena > .card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+        /* A lista/tabela em si é quem realmente rola — mantém o overflow-x:auto que já existia
+           inline (tabela larga em tela estreita) e ganha overflow-y:auto + flex:1 aqui. */
+        #consulta-list, #historico-list, #pendentes-list, #quarentena-list { flex: 1; min-height: 0; overflow-y: auto; }
 
         /* ===== Popup de detalhes: desliza a partir da borda direita, sobre o conteúdo ===== */
         .detail-panel-backdrop {
@@ -1826,8 +1890,11 @@ $$('.nav-tab').forEach(btn => {
         btn.classList.add('active');
         const tab = btn.dataset.tab;
         $$('.tab-content').forEach(tc => tc.style.display = 'none');
-        $(`#tab-${tab}`).style.display = 'block';
-        $('#content')?.classList.toggle('wide', tab === 'consulta' || tab === 'historico' || tab === 'quarentena');
+        // Abas com lista/tabela dominante viram flex column (altura travada no viewport, scroll
+        // fica dentro da lista — ver regras de #tab-consulta etc. no CSS); as demais continuam
+        // um bloco normal que cresce com o conteúdo e rola inteiro dentro de .content.
+        const ABAS_COM_TABELA = ['consulta', 'historico', 'pendentes', 'quarentena'];
+        $(`#tab-${tab}`).style.display = ABAS_COM_TABELA.includes(tab) ? 'flex' : 'block';
 
         const titleEl = $('#page-title');
         const subtitleEl = $('#page-subtitle');
