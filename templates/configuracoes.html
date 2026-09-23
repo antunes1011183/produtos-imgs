@@ -1642,6 +1642,10 @@
                     <div id="alert-quarentena"></div>
                     <div class="form-row" style="flex-direction:row; gap:0.5rem; flex-wrap:wrap; align-items:flex-end; margin-bottom:0.85rem;">
                         <div style="flex:1; min-width:180px;">
+                            <label for="quarentena-codbar" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">Filtrar por EAN</label>
+                            <input type="text" id="quarentena-codbar" placeholder="Ex: 7896116900050" autocomplete="off">
+                        </div>
+                        <div style="flex:1; min-width:180px;">
                             <label for="quarentena-status" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">Status</label>
                             <select id="quarentena-status" style="width:100%;">
                                 <option value="pendente" selected>Pendentes de revisão</option>
@@ -3331,6 +3335,8 @@ async function loadQuarentena(page = 1) {
             page, per_page: QUARENTENA_PER_PAGE,
             status: $('#quarentena-status').value || 'pendente',
         });
+        const codbar = ($('#quarentena-codbar').value || '').trim();
+        if (codbar) params.append('codbar', codbar);
         const res = await fetch('/admin/quarentena?' + params.toString(), { headers: authHeaders() });
         if (!res.ok) {
             const errBody = await res.json().catch(() => ({}));
@@ -3405,6 +3411,7 @@ async function loadQuarentena(page = 1) {
 }
 
 $('#btn-quarentena-filtrar').addEventListener('click', () => loadQuarentena(1));
+$('#quarentena-codbar').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadQuarentena(1); });
 $('#quarentena-status').addEventListener('change', () => loadQuarentena(1));
 $('#btn-quarentena-prev').addEventListener('click', () => { if (quarentenaPage > 1) loadQuarentena(quarentenaPage - 1); });
 $('#btn-quarentena-next').addEventListener('click', () => loadQuarentena(quarentenaPage + 1));

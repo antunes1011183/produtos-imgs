@@ -4573,16 +4573,21 @@ def admin_quarentena():
     """Lista as imagens em quarentena (rejeitadas por `_imagem_e_segura`, política de fonte ou
     `_imagem_corresponde_descricao` — ver `motivo` e docstring de `ImagemQuarentena`) pra revisão
     humana. `status` filtra por 'pendente' (padrão — ainda sem decisão), 'confirmada', 'liberada'
-    ou 'todos'."""
+    ou 'todos'. `codbar` (opcional, pedido do usuário) filtra pelo EAN — útil pra achar direto
+    todas as entradas de um produto específico (ex.: conferir se sobrou alguma depois de liberar
+    uma delas, ver `_eliminar_duplicatas_pendentes`), sem precisar folhear a lista inteira."""
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 20, type=int)
     status = request.args.get('status', 'pendente')
+    codbar_filtro = request.args.get('codbar', '').strip()
 
     query = ImagemQuarentena.query
     if status == 'pendente':
         query = query.filter(ImagemQuarentena.decisao.is_(None))
     elif status in ('confirmada', 'liberada'):
         query = query.filter_by(decisao=status)
+    if codbar_filtro:
+        query = query.filter(ImagemQuarentena.codbar.like(f'%{codbar_filtro}%'))
 
     query = query.order_by(ImagemQuarentena.criado_em.desc())
     total = query.count()
