@@ -720,6 +720,49 @@
         }
         .detail-panel-backdrop.show { display: block; opacity: 1; }
 
+        /* ===== Popup de detalhes da Quarentena: centralizado na tela (não mais deslizando pela
+           lateral), com botões de navegação anterior/próximo fixos nas bordas esquerda/direita da
+           TELA (não do popup) — pedido do usuário: "podendo percorrer próximo, botões na
+           lateral". Quem revisa uma fila de dezenas de itens quer poder avançar sem fechar e abrir
+           de novo a cada um — os botões ficam fixos no viewport, então a posição deles não pula
+           conforme o conteúdo do popup muda de tamanho entre um item e outro. */
+        .quarentena-detail-backdrop {
+            display: none; position: fixed; inset: 0; z-index: 1499;
+            background: rgba(15,23,42,0.6);
+            align-items: center; justify-content: center; padding: 1.25rem;
+            opacity: 0; transition: opacity 0.2s ease;
+        }
+        .quarentena-detail-backdrop.show { display: flex; opacity: 1; }
+        /* Seletor por ID (não só a classe) de propósito: `.modal-panel` (definida mais abaixo,
+           reaproveitada aqui junto com `.quarentena-detail-modal` no HTML) já fixa
+           `max-width:480px`/`overflow-y:auto`/`margin:0` com a MESMA especificidade de uma
+           classe só — como ela vem depois no arquivo, venceria o empate e sobrescreveria os
+           valores daqui. Um seletor por ID tem especificidade maior que qualquer classe,
+           então essas propriedades ficam garantidas sem depender da ordem das regras no arquivo. */
+        #quarentena-detail-panel.quarentena-detail-modal {
+            position: relative; width: 100%; max-width: 560px; max-height: 92vh;
+            margin: 0; overflow-y: auto; overflow-x: hidden;
+            transform: scale(0.96); transition: transform 0.2s ease;
+        }
+        .quarentena-detail-backdrop.show .quarentena-detail-modal { transform: scale(1); }
+        .quarentena-nav-btn {
+            position: fixed; top: 50%; transform: translateY(-50%);
+            width: 48px; height: 48px; border-radius: 50%; flex-shrink: 0;
+            background: rgba(255,255,255,0.14); backdrop-filter: blur(8px);
+            border: 1px solid rgba(255,255,255,0.28); color: #fff;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; z-index: 1501; transition: background 0.15s ease, transform 0.15s ease;
+        }
+        .quarentena-nav-btn:hover { background: rgba(255,255,255,0.26); }
+        .quarentena-nav-btn:disabled { opacity: 0.25; cursor: default; pointer-events: none; }
+        .quarentena-nav-btn svg { width: 22px; height: 22px; }
+        .quarentena-nav-prev { left: clamp(0.6rem, 3vw, 2.5rem); }
+        .quarentena-nav-next { right: clamp(0.6rem, 3vw, 2.5rem); }
+        @media (max-width: 640px) {
+            .quarentena-nav-btn { width: 38px; height: 38px; }
+            .quarentena-nav-btn svg { width: 18px; height: 18px; }
+        }
+
         /* ===== Popup central de cadastro de produto ===== */
         .modal-overlay {
             display: none; position: fixed; inset: 0; z-index: 1600;
@@ -1696,46 +1739,56 @@
                     </div>
                 </div>
 
-                <div class="detail-panel-backdrop" id="quarentena-detail-backdrop"></div>
-                <div class="card detail-panel" id="quarentena-detail-panel">
-                    <button class="detail-modal-close" id="quarentena-detail-close" aria-label="Fechar detalhes">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                <div class="quarentena-detail-backdrop" id="quarentena-detail-backdrop">
+                    <button class="quarentena-nav-btn quarentena-nav-prev" id="quarentena-detail-prev" aria-label="Item anterior" title="Anterior (←)">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
                     </button>
-                    <div class="detail-modal-image" id="quarentena-detail-image"></div>
-                    <div class="detail-modal-body">
-                        <h2 id="quarentena-detail-nome" style="margin:0 0 0.25rem;">—</h2>
-                        <p id="quarentena-detail-marca" style="margin:0 0 1rem; color:var(--muted); font-size:0.85rem;">—</p>
-
-                        <div class="detail-field"><span class="label">EAN</span><span class="value" id="quarentena-detail-ean">—</span></div>
-                        <div class="detail-field"><span class="label">Status</span><span class="value" id="quarentena-detail-status">—</span></div>
-                        <div class="detail-field"><span class="label">Motivo</span><span class="value" id="quarentena-detail-motivo">—</span></div>
-                        <div class="detail-field"><span class="label">Origem</span><span class="value" id="quarentena-detail-origem">—</span></div>
-                        <div class="detail-field"><span class="label">Data</span><span class="value" id="quarentena-detail-data">—</span></div>
-
-                        <div id="quarentena-detail-link-wrap" style="margin:0.85rem 0; display:none;">
-                            <a href="#" id="quarentena-detail-link" target="_blank" rel="noopener" class="btn btn-secondary btn-sm" style="width:100%; justify-content:center;">
-                                🔗 Abrir imagem original (fonte)
-                            </a>
-                        </div>
-
-                        <div id="quarentena-detail-acoes-triagem" style="display:flex; flex-wrap:wrap; gap:0.6rem; margin:1rem 0;">
-                            <button class="btn btn-danger btn-sm" id="quarentena-detail-confirmar">Confirmar (é mesmo imprópria)</button>
-                            <button class="btn btn-secondary btn-sm" id="quarentena-detail-liberar">Liberar (falso positivo)</button>
-                        </div>
-
-                        <div id="quarentena-detail-acoes-consertar" style="margin-top:1.25rem;">
-                            <p style="margin:0 0 0.6rem; font-size:0.78rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.03em;">Consertar com outra imagem</p>
-                            <div style="display:flex; flex-wrap:wrap; gap:0.6rem;">
-                                <button class="btn btn-secondary btn-sm" id="quarentena-detail-tentar-novamente">Tentar buscar de novo</button>
-                                <button class="btn btn-secondary btn-sm" id="quarentena-detail-buscar-ia">Buscar com IA</button>
-                                <button class="btn btn-secondary btn-sm" id="quarentena-detail-upload">Enviar imagem manualmente</button>
-                                <input type="file" id="quarentena-detail-input-upload" accept="image/png,image/jpeg,image/webp" style="display:none;">
-                                <button class="btn btn-secondary btn-sm" id="quarentena-detail-google">Ver no Google Imagens</button>
-                                <button class="btn btn-secondary btn-sm" id="quarentena-detail-copy-ean">Copiar EAN</button>
+                    <div class="card modal-panel quarentena-detail-modal" id="quarentena-detail-panel">
+                        <button class="detail-modal-close" id="quarentena-detail-close" aria-label="Fechar detalhes">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        </button>
+                        <div class="detail-modal-image" id="quarentena-detail-image"></div>
+                        <div class="detail-modal-body">
+                            <div style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem; margin:0 0 0.25rem;">
+                                <h2 id="quarentena-detail-nome" style="margin:0;">—</h2>
+                                <span id="quarentena-detail-posicao" style="flex-shrink:0; font-size:0.72rem; color:var(--muted); white-space:nowrap;">—</span>
                             </div>
-                            <div id="quarentena-detail-ia-picker" style="display:none; margin-top:0.85rem;"></div>
+                            <p id="quarentena-detail-marca" style="margin:0 0 1rem; color:var(--muted); font-size:0.85rem;">—</p>
+
+                            <div class="detail-field"><span class="label">EAN</span><span class="value" id="quarentena-detail-ean">—</span></div>
+                            <div class="detail-field"><span class="label">Status</span><span class="value" id="quarentena-detail-status">—</span></div>
+                            <div class="detail-field"><span class="label">Motivo</span><span class="value" id="quarentena-detail-motivo">—</span></div>
+                            <div class="detail-field"><span class="label">Origem</span><span class="value" id="quarentena-detail-origem">—</span></div>
+                            <div class="detail-field"><span class="label">Data</span><span class="value" id="quarentena-detail-data">—</span></div>
+
+                            <div id="quarentena-detail-link-wrap" style="margin:0.85rem 0; display:none;">
+                                <a href="#" id="quarentena-detail-link" target="_blank" rel="noopener" class="btn btn-secondary btn-sm" style="width:100%; justify-content:center;">
+                                    🔗 Abrir imagem original (fonte)
+                                </a>
+                            </div>
+
+                            <div id="quarentena-detail-acoes-triagem" style="display:flex; flex-wrap:wrap; gap:0.6rem; margin:1rem 0;">
+                                <button class="btn btn-danger btn-sm" id="quarentena-detail-confirmar">Confirmar (é mesmo imprópria)</button>
+                                <button class="btn btn-secondary btn-sm" id="quarentena-detail-liberar">Liberar (falso positivo)</button>
+                            </div>
+
+                            <div id="quarentena-detail-acoes-consertar" style="margin-top:1.25rem;">
+                                <p style="margin:0 0 0.6rem; font-size:0.78rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.03em;">Consertar com outra imagem</p>
+                                <div style="display:flex; flex-wrap:wrap; gap:0.6rem;">
+                                    <button class="btn btn-secondary btn-sm" id="quarentena-detail-tentar-novamente">Tentar buscar de novo</button>
+                                    <button class="btn btn-secondary btn-sm" id="quarentena-detail-buscar-ia">Buscar com IA</button>
+                                    <button class="btn btn-secondary btn-sm" id="quarentena-detail-upload">Enviar imagem manualmente</button>
+                                    <input type="file" id="quarentena-detail-input-upload" accept="image/png,image/jpeg,image/webp" style="display:none;">
+                                    <button class="btn btn-secondary btn-sm" id="quarentena-detail-google">Ver no Google Imagens</button>
+                                    <button class="btn btn-secondary btn-sm" id="quarentena-detail-copy-ean">Copiar EAN</button>
+                                </div>
+                                <div id="quarentena-detail-ia-picker" style="display:none; margin-top:0.85rem;"></div>
+                            </div>
                         </div>
                     </div>
+                    <button class="quarentena-nav-btn quarentena-nav-next" id="quarentena-detail-next" aria-label="Próximo item" title="Próximo (→)">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                    </button>
                 </div>
             </div>
 
@@ -3265,7 +3318,6 @@ $('#quarentena-list').addEventListener('click', async (e) => {
 let quarentenaDetailBlobUrl = null; // revogado ao trocar/fechar, pra não vazar memória
 
 function fecharQuarentenaDetail() {
-    $('#quarentena-detail-panel').classList.remove('open');
     $('#quarentena-detail-backdrop').classList.remove('show');
     if (quarentenaDetailBlobUrl) {
         URL.revokeObjectURL(quarentenaDetailBlobUrl);
@@ -3274,16 +3326,34 @@ function fecharQuarentenaDetail() {
     $('#quarentena-detail-ia-picker').style.display = 'none';
 }
 
+// Navega pro item anterior/próximo dentro da mesma página já carregada (`ultimaQuarentenaData`)
+// sem fechar o popup — pedido do usuário: revisar uma fila de dezenas de itens sem precisar
+// fechar e reabrir a cada um. Não cruza pra outra PÁGINA de paginação sozinho (o conjunto de
+// dados só existe em memória pra página atual); nos extremos, o botão correspondente só fica
+// desabilitado (ver atualização de estado no fim de openQuarentenaDetail).
+function quarentenaDetailNavigate(delta) {
+    const idAtual = $('#quarentena-detail-panel').dataset.id;
+    const indiceAtual = ultimaQuarentenaData.findIndex(x => String(x.id) === String(idAtual));
+    if (indiceAtual === -1) return;
+    const novoIndice = indiceAtual + delta;
+    if (novoIndice < 0 || novoIndice >= ultimaQuarentenaData.length) return;
+    openQuarentenaDetail(ultimaQuarentenaData[novoIndice].id);
+}
+
 async function openQuarentenaDetail(id) {
     const r = ultimaQuarentenaData.find(x => String(x.id) === String(id));
     if (!r) { toast('Registro não encontrado na página atual — atualize a lista.', 'error'); return; }
 
     $('#quarentena-detail-panel').dataset.id = id;
     $('#quarentena-detail-panel').dataset.codbar = r.codbar;
-    $('#quarentena-detail-panel').classList.add('open');
     $('#quarentena-detail-backdrop').classList.add('show');
     $('#quarentena-detail-ia-picker').style.display = 'none';
     $('#quarentena-detail-ia-picker').innerHTML = '';
+
+    const indice = ultimaQuarentenaData.findIndex(x => String(x.id) === String(id));
+    $('#quarentena-detail-posicao').textContent = indice >= 0 ? `${indice + 1} de ${ultimaQuarentenaData.length}` : '';
+    $('#quarentena-detail-prev').disabled = indice <= 0;
+    $('#quarentena-detail-next').disabled = indice === -1 || indice >= ultimaQuarentenaData.length - 1;
 
     const motivoTxt = { impropria: 'Conteúdo impróprio', revisao_obrigatoria_fonte: 'Fonte exige revisão', descricao_incompativel: 'Não corresponde à descrição' }[r.motivo] || r.motivo || 'Conteúdo impróprio';
     const decisao = r.decisao || 'pendente';
@@ -3333,9 +3403,20 @@ async function openQuarentenaDetail(id) {
 }
 
 $('#quarentena-detail-close').addEventListener('click', fecharQuarentenaDetail);
-$('#quarentena-detail-backdrop').addEventListener('click', fecharQuarentenaDetail);
+$('#quarentena-detail-backdrop').addEventListener('click', (e) => {
+    // Só fecha clicando no fundo em si (fora do card e dos botões de navegação), mesmo padrão
+    // já usado no popup de cadastro (.modal-overlay) — clique dentro do popup não deve fechar.
+    if (e.target.id === 'quarentena-detail-backdrop') fecharQuarentenaDetail();
+});
+$('#quarentena-detail-prev').addEventListener('click', () => quarentenaDetailNavigate(-1));
+$('#quarentena-detail-next').addEventListener('click', () => quarentenaDetailNavigate(1));
 document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && $('#quarentena-detail-panel').classList.contains('open')) fecharQuarentenaDetail();
+    if (!$('#quarentena-detail-backdrop').classList.contains('show')) return;
+    if (e.key === 'Escape') fecharQuarentenaDetail();
+    // Setas do teclado pra avançar/voltar sem tirar a mão do teclado — velocidade de revisão
+    // é o objetivo principal deste popup (ver comentário no topo da seção).
+    else if (e.key === 'ArrowLeft') quarentenaDetailNavigate(-1);
+    else if (e.key === 'ArrowRight') quarentenaDetailNavigate(1);
 });
 
 $('#quarentena-detail-confirmar').addEventListener('click', async () => {
