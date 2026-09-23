@@ -4386,7 +4386,8 @@ def admin_consulta_simples():
 @jwt_required()
 def admin_historico_buscas():
     """Histórico de buscas de imagem. `status` filtra por 'encontrado', 'nao_encontrado' ou
-    'todos' (padrão).
+    'todos' (padrão). `periodo` ('24h'/'7d'/'30d'/'todos', padrão '24h' — pedido do usuário pra
+    aba Histórico não abrir sempre mostrando o histórico inteiro) filtra por `criado_em`.
 
     'nao_encontrado' e 'sem_imagem' têm um formato DIFERENTE do log bruto: em vez de uma linha
     por tentativa, retornam **agrupado por EAN** — um produto consultado sem sucesso em 12
@@ -4414,6 +4415,17 @@ def admin_historico_buscas():
     status = request.args.get('status', 'todos')
     codbar_filtro = request.args.get('codbar', '').strip()
 
+    # Filtro de período (pedido do usuário: aba Histórico "iniciar nas últimas 24h" por padrão
+    # — evita carregar/rolar um histórico que só cresce com o tempo toda vez que a aba abre).
+    # '24h'/'7d'/'30d' viram um corte de data; 'todos' (ou qualquer valor não reconhecido) não
+    # filtra nada, igual o comportamento de sempre. Aplicado em cima de `criado_em` — na visão
+    # agrupada isso filtra as TENTATIVAS individuais antes de agrupar (só concorre pro contador
+    # `tentativas`/`ultima_tentativa` quem tentou dentro do período), não um filtro por cima do
+    # resultado já agrupado.
+    periodo = request.args.get('periodo', '24h')
+    periodo_horas = {'24h': 24, '7d': 24 * 7, '30d': 24 * 30}.get(periodo)
+    desde = datetime.utcnow() - timedelta(hours=periodo_horas) if periodo_horas else None
+
     if status in ('nao_encontrado', 'sem_imagem'):
         grupo = db.session.query(
             HistoricoBuscaImagem.codbar,
@@ -4424,6 +4436,8 @@ def admin_historico_buscas():
             grupo = grupo.filter(HistoricoBuscaImagem.codbar.in_(db.session.query(Produto.codbar)))
         if codbar_filtro:
             grupo = grupo.filter(HistoricoBuscaImagem.codbar.like(f'%{codbar_filtro}%'))
+        if desde:
+            grupo = grupo.filter(HistoricoBuscaImagem.criado_em >= desde)
         grupo = grupo.group_by(HistoricoBuscaImagem.codbar).order_by(db.desc('tentativas'))
 
         # Tira quem já tem foto agora (resolvido por upload manual, sem passar pela busca).
@@ -4462,6 +4476,8 @@ def admin_historico_buscas():
         query = query.filter_by(encontrado=True)
     if codbar_filtro:
         query = query.filter(HistoricoBuscaImagem.codbar.like(f'%{codbar_filtro}%'))
+    if desde:
+        query = query.filter(HistoricoBuscaImagem.criado_em >= desde)
 
     query = query.order_by(HistoricoBuscaImagem.criado_em.desc())
     total = query.count()

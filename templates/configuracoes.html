@@ -1567,6 +1567,15 @@
                                         <option value="encontrado">Encontrados</option>
                                     </select>
                                 </div>
+                                <div style="flex:1; min-width:140px;">
+                                    <label for="historico-periodo" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">Período</label>
+                                    <select id="historico-periodo" style="width:100%;">
+                                        <option value="24h" selected>Últimas 24h</option>
+                                        <option value="7d">Últimos 7 dias</option>
+                                        <option value="30d">Últimos 30 dias</option>
+                                        <option value="todos">Tudo</option>
+                                    </select>
+                                </div>
                                 <button class="btn btn-primary" id="btn-historico-filtrar">Filtrar</button>
                             </div>
                             <div id="historico-list" style="overflow-x:auto;">
@@ -2579,6 +2588,7 @@ async function loadHistorico(page = 1) {
         const params = new URLSearchParams({
             page, per_page: 20,
             status: $('#historico-status').value || 'todos',
+            periodo: $('#historico-periodo')?.value || '24h',
         });
         const codbar = ($('#historico-codbar').value || '').trim();
         if (codbar) params.append('codbar', codbar);
@@ -2787,6 +2797,7 @@ $('#pendentes-list').addEventListener('change', (e) => handleUploadRapidoImagem(
 $('#btn-historico-filtrar').addEventListener('click', () => loadHistorico(1));
 $('#historico-codbar').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadHistorico(1); });
 $('#historico-status').addEventListener('change', () => loadHistorico(1));
+$('#historico-periodo').addEventListener('change', () => loadHistorico(1));
 $('#btn-historico-prev').addEventListener('click', () => { if (historicoPage > 1) loadHistorico(historicoPage - 1); });
 $('#btn-historico-next').addEventListener('click', () => loadHistorico(historicoPage + 1));
 
