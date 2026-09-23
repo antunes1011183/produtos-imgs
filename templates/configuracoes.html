@@ -15,6 +15,15 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Mupa Brain">
     <meta name="mobile-web-app-capable" content="yes">
+
+    <!-- Tipografia moderna (pedido do usuário: "mais moderno... métodos do Google e grandes
+         bigtechs") — Inter é a fonte de fato-padrão de praticamente todo painel SaaS
+         contemporâneo (Linear, Vercel, Stripe, Notion, GitHub). Carregada via Google Fonts com
+         font-display:swap — nunca bloqueia a renderização, e cai pro stack de fontes de sistema
+         (ver body{font-family}) se a rede cair, sem quebrar o painel numa loja sem internet. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         :root {
             --sidebar-bg: #0f172a;
@@ -38,7 +47,16 @@
             --warn: #f59e0b;
             --hover: #f8fafc;
             --radius: 12px;
+            --radius-sm: 9px;
             --shadow: 0 1px 2px rgba(15,23,42,.04), 0 4px 10px rgba(15,23,42,.04);
+            /* Escala de elevação (pedido do usuário: visual mais moderno/big-tech) — sm pra
+               elementos pequenos em hover (botão, input), md pro repouso dos cards (mais
+               profundidade que --shadow original), lg pra overlays flutuantes (modal, popup de
+               detalhes, lightbox) que precisam se destacar claramente do conteúdo atrás. */
+            --shadow-sm: 0 1px 2px rgba(15,23,42,.06), 0 1px 1px rgba(15,23,42,.04);
+            --shadow-md: 0 2px 6px rgba(15,23,42,.06), 0 8px 20px rgba(15,23,42,.06);
+            --shadow-lg: 0 12px 28px rgba(15,23,42,.14), 0 4px 10px rgba(15,23,42,.08);
+            --ease: cubic-bezier(0.4, 0, 0.2, 1);
         }
         /* Tema escuro (padrão do sistema, pedido do usuário) — só redefine os tokens; o resto
            do CSS já usa var(--bg)/var(--card)/var(--border)/var(--text)/var(--muted) etc., então
@@ -60,17 +78,30 @@
             --warn: #fbbf24;
             --hover: #1b2438;
             --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 14px rgba(0,0,0,.35);
+            --shadow-sm: 0 1px 2px rgba(0,0,0,.35), 0 1px 1px rgba(0,0,0,.25);
+            --shadow-md: 0 2px 6px rgba(0,0,0,.3), 0 10px 24px rgba(0,0,0,.32);
+            --shadow-lg: 0 16px 36px rgba(0,0,0,.45), 0 4px 12px rgba(0,0,0,.35);
         }
         * { box-sizing: border-box; }
         html, body { height: 100%; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-feature-settings: "cv11", "ss01";
             background: var(--bg);
             color: var(--text);
             margin: 0;
             line-height: 1.55;
             -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
         }
+        ::selection { background: var(--accent); color: #fff; }
+        :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+        /* Scrollbar fina e discreta (Webkit/Blink) — detalhe comum em painéis SaaS modernos;
+           navegadores sem suporte (Firefox antigo etc.) ficam com a barra padrão, inofensivo. */
+        ::-webkit-scrollbar { width: 10px; height: 10px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: padding-box; }
 
         /* ===== Layout ===== */
         .app { display: flex; min-height: 100vh; }
@@ -142,7 +173,7 @@
         }
         .nav-tab svg { width: 18px; height: 18px; flex-shrink: 0; opacity: 0.8; }
         .nav-tab:hover { background: var(--sidebar-hover); color: #e2e8f0; }
-        .nav-tab.active { background: var(--sidebar-active); color: #fff; }
+        .nav-tab.active { background: var(--sidebar-active); color: #fff; box-shadow: 0 2px 10px rgba(99,102,241,0.35); }
         .nav-tab.active svg { opacity: 1; }
 
         .sidebar-footer {
@@ -175,7 +206,13 @@
             padding-top: calc(1.1rem + env(safe-area-inset-top));
             padding-left: calc(2rem + env(safe-area-inset-left));
             padding-right: calc(2rem + env(safe-area-inset-right));
-            background: var(--card);
+            /* "Frosted glass" — o topbar fixo ganha um leve desfoque do conteúdo passando por
+               baixo ao rolar, em vez de um bloco opaco chapado; mesmo efeito usado no macOS/
+               iOS, Material You e praticamente todo app moderno com header fixo. rgba direto
+               (não color-mix) por compatibilidade mais ampla. */
+            background: color-mix(in srgb, var(--card) 86%, transparent);
+            backdrop-filter: blur(14px) saturate(180%);
+            -webkit-backdrop-filter: blur(14px) saturate(180%);
             border-bottom: 1px solid var(--border);
             position: sticky;
             top: 0;
@@ -214,7 +251,7 @@
             background: var(--card);
             border: 1px solid var(--border);
             border-radius: var(--radius);
-            box-shadow: var(--shadow);
+            box-shadow: var(--shadow-md);
             padding: 1.35rem;
             margin-bottom: 1.1rem;
         }
@@ -261,16 +298,17 @@
         input[type="text"], input[type="password"], input[type="number"], select {
             padding: 0.55rem 0.75rem;
             border: 1px solid var(--border);
-            border-radius: 8px;
+            border-radius: var(--radius-sm);
             font-size: 0.88rem;
             font-family: inherit;
             background: var(--card);
-            transition: border-color 0.15s, box-shadow 0.15s;
+            color: var(--text);
+            transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease);
         }
         input:focus, select:focus {
             outline: none;
             border-color: var(--accent);
-            box-shadow: 0 0 0 3px rgba(79,70,229,0.13);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
         }
 
         /* ===== Sub-navegação da aba Configurações ===== */
@@ -303,10 +341,11 @@
             cursor: pointer;
             border-bottom: 2px solid transparent;
             margin-bottom: -1px;
-            transition: color 0.15s, border-color 0.15s;
+            border-radius: 6px 6px 0 0;
+            transition: color 0.15s var(--ease), border-color 0.15s var(--ease), background 0.15s var(--ease);
         }
         .config-subnav-btn svg { width: 15px; height: 15px; flex-shrink: 0; opacity: 0.75; }
-        .config-subnav-btn:hover { color: var(--text); }
+        .config-subnav-btn:hover { color: var(--text); background: var(--hover); }
         .config-subnav-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
         .config-subnav-btn.active svg { opacity: 1; }
         .config-section { display: none; }
@@ -320,24 +359,28 @@
             gap: 0.4rem;
             padding: 0.55rem 1rem;
             border: 1px solid transparent;
-            border-radius: 8px;
+            border-radius: var(--radius-sm);
             font-size: 0.85rem;
             font-weight: 600;
             cursor: pointer;
-            transition: background 0.15s, transform 0.1s, border-color .15s;
+            transition: background 0.15s var(--ease), transform 0.1s var(--ease), border-color .15s var(--ease), box-shadow 0.15s var(--ease);
             font-family: inherit;
         }
-        .btn:active { transform: scale(0.98); }
-        .btn-primary { background: var(--accent); color: white; }
-        .btn-primary:hover { background: var(--accent-hover); }
+        .btn:active { transform: scale(0.97); }
+        /* Sombra colorida sutil no botão primário (glow no tom do próprio accent, não cinza
+           genérico) + leve "elevação" no hover — mesmo tipo de detalhe usado em botões de CTA
+           de painéis modernos (Linear/Vercel/Stripe), em vez de um botão totalmente plano. */
+        .btn-primary { background: var(--accent); color: white; box-shadow: 0 1px 2px rgba(0,0,0,.05), 0 2px 8px color-mix(in srgb, var(--accent) 35%, transparent); }
+        .btn-primary:hover { background: var(--accent-hover); transform: translateY(-1px); box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 45%, transparent); }
+        .btn-primary:active { transform: translateY(0) scale(0.97); }
         .btn-secondary { background: var(--card); color: var(--text); border-color: var(--border); }
-        .btn-secondary:hover { background: var(--hover); }
+        .btn-secondary:hover { background: var(--hover); border-color: color-mix(in srgb, var(--border) 60%, var(--muted)); }
         .btn-danger { background: var(--danger); color: white; }
-        .btn-danger:hover { background: #dc2626; }
+        .btn-danger:hover { background: #dc2626; transform: translateY(-1px); box-shadow: 0 4px 14px rgba(239,68,68,.35); }
         .btn-success { background: var(--success); color: white; }
-        .btn-success:hover { background: #059669; }
+        .btn-success:hover { background: #059669; transform: translateY(-1px); box-shadow: 0 4px 14px rgba(16,185,129,.35); }
         .btn-sm { padding: 0.38rem 0.75rem; font-size: 0.78rem; }
-        .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+        .btn:disabled { opacity: 0.55; cursor: not-allowed; transform: none !important; box-shadow: none !important; }
 
         .toggle-row {
             display: flex;
@@ -359,10 +402,10 @@
             background: #cbd5e1;
             border-radius: 12px;
             cursor: pointer;
-            transition: background 0.2s;
+            transition: background 0.25s var(--ease), box-shadow 0.25s var(--ease);
             flex-shrink: 0;
         }
-        .toggle.active { background: var(--success); }
+        .toggle.active { background: var(--success); box-shadow: 0 0 0 4px color-mix(in srgb, var(--success) 18%, transparent); }
         .toggle::after {
             content: '';
             position: absolute;
@@ -372,8 +415,8 @@
             height: 20px;
             background: white;
             border-radius: 50%;
-            transition: transform 0.2s;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+            transition: transform 0.25s var(--ease);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.25), 0 1px 1px rgba(0,0,0,0.15);
         }
         .toggle.active::after { transform: translateX(18px); }
 
@@ -389,9 +432,10 @@
         .status-dot.unknown { background: var(--warn); }
 
         table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-        th, td { text-align: left; padding: 0.55rem 0.65rem; border-bottom: 1px solid var(--border); }
-        th { font-weight: 600; color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; }
-        tbody tr:hover { background: var(--bg); }
+        th, td { text-align: left; padding: 0.65rem 0.7rem; border-bottom: 1px solid var(--border); }
+        th { font-weight: 600; color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; }
+        tbody tr { transition: background 0.12s var(--ease); }
+        tbody tr:hover { background: var(--hover); }
         td .ean { font-family: "SF Mono", "Cascadia Code", Consolas, monospace; font-size: 0.8rem; color: var(--muted); }
 
         .empty-state { text-align: center; padding: 2rem; color: var(--muted); font-size: 0.86rem; }
@@ -501,7 +545,8 @@
 
         /* ===== Catálogo em grade (alternativa à tabela) ===== */
         .consulta-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0.75rem; margin-top: 0.4rem; }
-        .produto-card { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--card); display: flex; flex-direction: column; }
+        .produto-card { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; background: var(--card); display: flex; flex-direction: column; transition: box-shadow 0.18s var(--ease), transform 0.18s var(--ease), border-color 0.18s var(--ease); }
+        .produto-card:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); border-color: color-mix(in srgb, var(--border) 40%, var(--accent)); }
         .produto-card-img { width: 100%; aspect-ratio: 1/1; background: var(--bg); display: flex; align-items: center; justify-content: center; overflow: hidden; }
         .produto-card-img img { width: 100%; height: 100%; object-fit: contain; }
         .produto-card-img .foto-thumb-placeholder { width: 32px; height: 32px; color: var(--muted); }
