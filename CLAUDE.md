@@ -464,6 +464,15 @@ Pedido logo em seguida à reorganização da aba Configurações — dessa vez p
 
 Testado visualmente nos temas claro E escuro (alternando `#btn-theme-toggle` ao vivo), conferido via `getComputedStyle` que `font-family`/`box-shadow`/`backdrop-filter` resolvem pros valores esperados, sem nenhum erro novo de CSS/JS no console (só o erro já documentado e esperado de registro do service worker, sem relação com esta mudança).
 
+**Segunda rodada, com referência visual do usuário** (link do Pinterest — um dashboard estilo "Good morning" com cards de métrica coloridos, mais outros pins próximos de glassmorphism/floating cards, todos em tema escuro): a página exigiu login pra ver os detalhes (não acessada — não crio conta em nada só pra ver uma referência), mas o suficiente já apareceu nas miniaturas pra confirmar a direção. Aplicado especificamente nos **cards de estatística** (`.stat-tile`, aba Estatísticas — 4 cards: total/com foto/sem foto/marcas):
+- Barra de destaque colorida de 3px no topo de cada card (`::before`), cor vindo de uma única custom property `--tone` definida inline por instância (`style="--tone: var(--accent)"` etc.) em vez de repetir a cor em dois lugares (antes: só o número tinha `color:` inline, o card em si era neutro).
+- Número maior, mais peso (800) e `letter-spacing` negativo — tipografia de "número grande de destaque" característica de dashboard de métrica, não um texto de parágrafo comum.
+- Alinhado à esquerda em vez de centralizado (layout mais próximo da referência, também mais natural pra escanear vários cards em sequência).
+- Hover com leve elevação (`translateY(-2px)` + `--shadow-lg`), mesmo padrão de microinteração já usado no `.produto-card`.
+- **Gradiente bem sutil nos cards, só no tema escuro** (`html[data-theme="dark"] .card { background: linear-gradient(165deg, #16213a, var(--card) 55%) }`): textura de profundidade leve em vez de um preenchimento 100% chapado — no tema claro um card branco liso continua sendo o padrão certo (a textura ficaria estranha, não é isso que a referência tinha nesse tema).
+
+Testado visualmente na aba Estatísticas com dado real do catálogo (945.412 produtos, 87 com foto) — resultado visualmente muito próximo da referência (cards com barra colorida, número grande em destaque, leve profundidade no fundo escuro).
+
 ### Aba Configurações reorganizada em sub-seções (pedido do usuário: "muito mal distribuído, pode mudar tudo")
 
 Antes desta leva, a aba Configurações era **11 cards empilhados numa rolagem só**, sem nenhum agrupamento — chaves de API (OpenAI/Gemini/Unidasul/Serper/Cosmos) intercaladas com Notificações, Flags de Funcionamento, Fontes de Imagem, Proxy VPS e a ferramenta de emergência de excluir imagem, tudo na mesma sequência vertical. Pedido explícito do usuário pra melhorar isso, tentando usar uma skill "ui-ux" que não existe neste ambiente (`ListSkills`/`SuggestSkills` não acharam nada com esse nome) — segui com bom senso de design direto, sem a skill.

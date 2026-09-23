@@ -82,6 +82,13 @@
             --shadow-md: 0 2px 6px rgba(0,0,0,.3), 0 10px 24px rgba(0,0,0,.32);
             --shadow-lg: 0 16px 36px rgba(0,0,0,.45), 0 4px 12px rgba(0,0,0,.35);
         }
+        /* Gradiente bem sutil nos cards em tema escuro (referência pedida pelo usuário: cards
+           de dashboard com uma leve profundidade em vez de um preenchimento totalmente chapado)
+           — só no escuro, onde esse tipo de textura fica visível sem ficar espalhafatoso; no
+           claro um card branco liso já é o padrão certo. */
+        html[data-theme="dark"] .card {
+            background: linear-gradient(165deg, #16213a 0%, var(--card) 55%);
+        }
         * { box-sizing: border-box; }
         html, body { height: 100%; }
         body {
@@ -445,11 +452,24 @@
         .alert-error { background: var(--danger-soft); color: #991b1b; border: 1px solid #fecaca; }
         .alert-info { background: var(--accent-soft); color: #3730a3; border: 1px solid #c7d2fe; }
 
+        /* Card de estatística com barra de destaque colorida no topo + número grande/compacto —
+           referência visual pedida pelo usuário (dashboard estilo "Good morning" com cards
+           coloridos por métrica). A cor vem de --tone (custom property definida inline por
+           instância, ver #tab-estats) em vez de repetir `color:` duas vezes (bar + número). */
         .stat-tile {
-            margin: 0; padding: 1.1rem; text-align: center; border-radius: var(--radius);
+            position: relative;
+            overflow: hidden;
+            margin: 0; padding: 1.25rem 1.15rem 1.1rem; text-align: left; border-radius: var(--radius);
+            transition: transform 0.18s var(--ease), box-shadow 0.18s var(--ease);
         }
-        .stat-tile .value { font-size: 1.9rem; font-weight: 700; }
-        .stat-tile .label { font-size: 0.76rem; color: var(--muted); margin-top: 0.15rem; }
+        .stat-tile:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+        .stat-tile::before {
+            content: '';
+            position: absolute; top: 0; left: 0; right: 0; height: 3px;
+            background: var(--tone, var(--accent));
+        }
+        .stat-tile .value { font-size: 2.1rem; font-weight: 800; letter-spacing: -0.02em; color: var(--tone, var(--accent)); line-height: 1.15; }
+        .stat-tile .label { font-size: 0.78rem; color: var(--muted); margin-top: 0.3rem; font-weight: 500; }
 
         .toast {
             position: fixed;
@@ -1226,20 +1246,20 @@
                     </h2>
                     <div id="alert-estats"></div>
                     <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(170px, 1fr)); gap:0.75rem; margin-bottom:0.5rem;">
-                        <div class="card stat-tile">
-                            <div class="value" style="color:var(--accent);" id="estat-total">—</div>
+                        <div class="card stat-tile" style="--tone: var(--accent);">
+                            <div class="value" id="estat-total">—</div>
                             <div class="label">Total de produtos</div>
                         </div>
-                        <div class="card stat-tile">
-                            <div class="value" style="color:var(--success);" id="estat-foto">—</div>
+                        <div class="card stat-tile" style="--tone: var(--success);">
+                            <div class="value" id="estat-foto">—</div>
                             <div class="label">Com foto cadastrada</div>
                         </div>
-                        <div class="card stat-tile">
-                            <div class="value" style="color:var(--danger);" id="estat-sem-foto">—</div>
+                        <div class="card stat-tile" style="--tone: var(--danger);">
+                            <div class="value" id="estat-sem-foto">—</div>
                             <div class="label">Sem foto</div>
                         </div>
-                        <div class="card stat-tile">
-                            <div class="value" style="color:var(--warn);" id="estat-marcas">—</div>
+                        <div class="card stat-tile" style="--tone: var(--warn);">
+                            <div class="value" id="estat-marcas">—</div>
                             <div class="label">Marcas distintas</div>
                         </div>
                     </div>
