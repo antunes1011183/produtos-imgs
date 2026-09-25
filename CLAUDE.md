@@ -912,6 +912,32 @@ Testado enviando de verdade pro número configurado (`_enviar_status_horario_wha
 
 **Limite conhecido, deliberadamente fora de escopo por ora**: isso detecta parada por AUSÊNCIA de mensagem (o usuário percebe, mas só na próxima hora cheia esperada) — não é um alerta ativo e imediato de queda. Um alerta imediato de verdade exigiria um processo INDEPENDENTE (fora deste Flask) fazendo ping periódico e alertando via Evolution API diretamente se o servidor não responder — não implementado ainda porque não foi pedido explicitamente; se o heartbeat horário se mostrar insuficiente na prática, esse é o próximo passo natural.
 
+## Kill switch mestre de Gemini/Vertex AI (`GEMINI_ATIVO`) — desligado a pedido do usuário por causa de custo
+
+Pedido direto do usuário: "quero desativar os custos que vamos ter com o GOOGLE, quero usar sem custo, encontre uma forma" seguido de "Pode desativar tudo que está usando google com custos, valores muito alto". Perguntei explicitamente (`AskUserQuestion`) qual fonte era a do custo alto — resposta confirmada: **Gemini / Vertex AI (Google Cloud)**, não Google Custom Search — e como proceder sabendo que isso também desliga o classificador de conteúdo impróprio/verificação de correspondência (ver seção do incidente do EAN `7898909864181` mais acima) — resposta confirmada: **"Desligar tudo do Gemini mesmo assim"**, aceitando o trade-off conscientemente.
+
+`_gemini_ativo()` (helper novo, ao lado de `_imagem_e_segura`): lê `Config['GEMINI_ATIVO']` (default `'true'`). Toggle em Configurações → Comportamento → "⚠️ Gemini / Vertex AI (Google Cloud) — desliga tudo", mesmo padrão de toggle já usado no resto do painel (`toggle_gemini_ativo`/`data-key="GEMINI_ATIVO"`/`setToggle`).
+
+**Design deliberado: reaproveitar o fallback de "sem chave" que cada função já tinha, não criar um caminho novo.** Toda função que chama o Gemini neste projeto já tinha um `if not api_key: <comportamento seguro>` (fail-open ou erro tratado, dependendo da função — comportamento testado e confiável há várias levas desta sessão). Em vez de inventar um comportamento novo pro caso "desligado", a condição virou `if not api_key or not _gemini_ativo(): <mesmo comportamento de sempre>` nos **8 pontos** que chamam a API do Gemini de fato:
+- `_imagem_e_segura` → `True` (fail-open, mesmo default de sempre quando a classificação não pode rodar).
+- `_imagem_corresponde_descricao` → `True` (mesmo fail-open).
+- `_buscar_imagens_gemini_web` (botão "Buscar com IA") → `([], mensagem explicando que está desativado)`.
+- `gerar_termos_sugestao_ia` → `None` (cai pro fallback de busca fuzzy local, mesmo comportamento de "sem chave").
+- `gerar_textos_arte_ia` → retorna o nome cru (sem reescrever), sem headline/benefícios — mesmo fallback de sempre.
+- `gerar_arte_publicitaria` / `gerar_arte_publicitaria_vertical` → `ValueError` (mesma exceção tratada de sempre pelos call sites).
+- `_enfileirar_geracao_arte` (o único ponto de entrada da fila de arte, cobre os 4 gatilhos de geração) → `None` (nem enfileira o job).
+
+**Chave da API NUNCA é apagada** — só para de ser lida/usada. Deliberado: religar o recurso depois vira só marcar o toggle de volta, sem precisar voltar no Google Cloud Console pra recuperar a chave.
+
+**Deliberadamente fora do escopo deste switch** (não são Gemini/Vertex AI, o usuário confirmou que só essa fonte é o problema de custo):
+- **Serper** (`buscar_e_salvar_imagem_serper`, `SERPER_API_KEY`) — proxy pago de busca de imagem, provedor totalmente diferente, sem relação com o Google Cloud.
+- **Google Custom Search** (`fetch_product_from_google`/`buscar_e_salvar_imagem_google`) — cota gratuita diária, não é Vertex AI.
+- **`api_teste_gemini`** (botão manual "Testar Conexão" da chave Gemini em Configurações) — deixado funcional de propósito: é uma ação humana pontual (não uso automático em massa), útil pra confirmar que a chave em si continua válida mesmo com o recurso desligado, antes de religar.
+
+**Efeito prático de desligar**: arte publicitária (nova ou regeneração) para de ser gerada, sugestão de nome/headline cai pro fallback local, "Buscar com IA" fica inerte (mensagem explicando o motivo), e — a parte que exige atenção — o classificador de conteúdo impróprio e a verificação imagem×descrição também ficam inertes (fail-open), ou seja, a proteção criada depois do incidente do EAN `7898909864181` fica temporariamente sem efeito enquanto o switch estiver desligado. Trade-off aceito explicitamente pelo usuário, documentado aqui pra não ser esquecido — religar assim que o custo for resolvido.
+
+Testado de ponta a ponta: toggle via API (`POST /configuracoes` `toggle_gemini_ativo`) liga/desliga e persiste corretamente (`GET /api/config` reflete `gemini_ativo`); os 8 pontos de chamada testados diretamente com `GEMINI_ATIVO=false` e uma chave real configurada (pra isolar que o short-circuit é pelo toggle, não por falta de chave) — todos retornaram exatamente o fallback esperado sem fazer nenhuma chamada real à API; testado também via clique real no toggle do navegador (não só a API) — `toggle-gemini-ativo` muda de classe (`active` ↔ sem classe) e persiste no backend.
+
 ## Gestão de imagem por produto (painel)
 
 O painel de detalhes (Consulta Rápida) ganhou "Enviar/Trocar imagem" (upload via `POST /upload-imagem-produto/<codbar>`, sobrescreve) e "Excluir imagem" (via `DELETE /deletar-imagem-produto/<codbar>`, com confirmação). Ambas as rotas já existiam — só não estavam expostas na UI. **Excluir a foto crua não apaga a arte publicitária já gerada** (são arquivos independentes, ver seção de arte acima) — intencional, mencionado no próprio diálogo de confirmação.

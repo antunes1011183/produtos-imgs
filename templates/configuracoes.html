@@ -1319,6 +1319,13 @@
                         </div>
                         <div class="toggle" id="toggle-verificacao-descricao" data-key="VERIFICACAO_DESCRICAO_ATIVA"></div>
                     </div>
+                    <div class="toggle-row">
+                        <div class="toggle-label">
+                            <span class="name">⚠️ Gemini / Vertex AI (Google Cloud) — desliga tudo</span>
+                            <span class="desc">Chave mestra pra zerar o custo do Gemini. Desativado: arte publicitária, sugestão de nome/headline, o classificador de conteúdo impróprio E a verificação imagem×descrição acima (as duas rodam com Gemini) e o botão "Buscar com IA" ficam todos inertes, sem nenhuma chamada real à API — a chave configurada acima continua salva, só para de ser usada. Não afeta Google Custom Search nem Serper (fontes de busca de imagem separadas, sem custo de Gemini). Atenção: desligar isso também desliga a proteção contra imagem imprópria/errada (ver incidente documentado) — ligue de volta assim que o custo for resolvido.</span>
+                        </div>
+                        <div class="toggle" id="toggle-gemini-ativo" data-key="GEMINI_ATIVO"></div>
+                    </div>
                 </div>
                 </div><!-- /config-section: comportamento -->
 
@@ -2340,6 +2347,7 @@ async function loadConfig() {
         setToggle('toggle-rembg', cfg.rembg_enabled);
         setToggle('toggle-busca-imagem-online', cfg.busca_imagem_online_ativa);
         setToggle('toggle-verificacao-descricao', cfg.verificacao_descricao_ativa);
+        setToggle('toggle-gemini-ativo', cfg.gemini_ativo);
         const fontesAtivas = cfg.fontes_imagem_ativas || {};
         const fontesRevisao = cfg.fontes_imagem_revisao || {};
         ['google', 'zaffari', 'precomelhor', 'rissul', 'sonda', 'unidasul', 'serper'].forEach(fonte => {

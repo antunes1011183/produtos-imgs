@@ -870,7 +870,7 @@ def _enfileirar_geracao_arte(codbar, img_path, aguardar=False, forcar=False, ori
         return None
     if not forcar and _arte_url(codbar, orientacao):
         return None
-    if not _ler_todas_config().get('GEMINI_API_KEY', '').strip():
+    if not _ler_todas_config().get('GEMINI_API_KEY', '').strip() or not _gemini_ativo():
         return None
     if not Produto.query.filter_by(codbar=codbar).first():
         return None
@@ -949,6 +949,26 @@ def _marcar_tem_foto(produto_ou_codbar, valor):
         produto.tem_foto = bool(valor)
 
 
+def _gemini_ativo():
+    """Kill switch GERAL do Gemini/Vertex AI (Configurações → Flags de Funcionamento) — pedido
+    do usuário pra zerar o custo do Google Cloud rapidamente, sem precisar mexer em cada recurso
+    individualmente. Quando desligado, TODA chamada real ao Gemini para — arte publicitária,
+    classificador de conteúdo impróprio (`_imagem_e_segura`), verificação imagem×descrição
+    (`_imagem_corresponde_descricao`), sugestão de termos relacionados e "Buscar com IA" — sem
+    exceção. Implementado reaproveitando o mesmo `if not api_key:` que cada uma dessas funções
+    JÁ tinha (fail-open/fallback seguro quando não há chave configurada) — combinado com `or not
+    _gemini_ativo()`, então desligar aqui produz exatamente o mesmo comportamento (já testado em
+    produção) que remover a chave, sem precisar apagar/perder a chave de verdade pra desligar.
+
+    Efeito colateral CONSCIENTE e explícito ao usuário: como `_imagem_e_segura`/
+    `_imagem_corresponde_descricao` são as duas camadas de defesa contra imagem imprópria/errada
+    (ver incidente do EAN 7898909864181 no CLAUDE.md), desligar isso desliga TAMBÉM essas duas
+    checagens — nenhuma imagem passa por revisão de conteúdo automática enquanto estiver
+    desativado. `Produto.busca_imagem_bloqueada` (bloqueio manual por EAN) continua funcionando
+    normalmente, é a única linha de defesa que sobra nesse estado."""
+    return _ler_todas_config().get('GEMINI_ATIVO', 'true') == 'true'
+
+
 def _imagem_e_segura(image_data):
     """Classifica se uma imagem é apropriada pra exibição pública num terminal de preços de
     loja (sem nudez/pornografia/conteúdo sexual). Camada de segurança adicionada depois de um
@@ -968,7 +988,7 @@ def _imagem_e_segura(image_data):
     em primeiro lugar); o bloqueio permanente por EAN (`Produto.busca_imagem_bloqueada`) continua
     sendo a segunda linha, pra quando algo passa despercebido por aqui mesmo assim."""
     api_key = _ler_todas_config().get('GEMINI_API_KEY', '').strip()
-    if not api_key:
+    if not api_key or not _gemini_ativo():
         return True
     try:
         client = genai.Client(vertexai=True, api_key=api_key)
@@ -1023,7 +1043,7 @@ def _imagem_corresponde_descricao(image_data, descricao, marca=None):
     if not _verificacao_descricao_ativa():
         return True
     api_key = _ler_todas_config().get('GEMINI_API_KEY', '').strip()
-    if not api_key:
+    if not api_key or not _gemini_ativo():
         return True
     try:
         client = genai.Client(vertexai=True, api_key=api_key)
@@ -1536,8 +1556,8 @@ def _buscar_imagens_gemini_web(nome_produto, marca, codbar):
     própria chamada ao Gemini falhou (chave inválida, rede, etc.) — nesse caso o chamador deve
     mostrar esse erro pro usuário, em vez de tratar como "nenhuma imagem encontrada"."""
     api_key = _ler_todas_config().get('GEMINI_API_KEY', '').strip()
-    if not api_key:
-        return [], 'Nenhuma chave do Gemini configurada (Configurações → Token Gemini).'
+    if not api_key or not _gemini_ativo():
+        return [], 'Busca por IA desativada (Gemini desligado em Configurações → Flags de Funcionamento, ou nenhuma chave configurada).'
 
     termo_busca = ' '.join(filter(None, [marca, nome_produto])).strip() or codbar
     prompt = (
@@ -1933,7 +1953,7 @@ def gerar_termos_sugestao_ia(produto, tipo_sugestao):
     """Usa Gemini (texto, modelo leve e barato) para sugerir termos de produtos
     genuinamente relevantes/complementares. Retorna None se a IA não estiver disponível."""
     api_key = _ler_todas_config().get('GEMINI_API_KEY', '').strip()
-    if not api_key:
+    if not api_key or not _gemini_ativo():
         return None
 
     if tipo_sugestao == 'por_marca' and produto.marca:
@@ -2787,6 +2807,15 @@ def configuracoes():
             set_config('VERIFICACAO_DESCRICAO_ATIVA', str(ativa).lower())
             return jsonify({'message': f'VERIFICACAO_DESCRICAO_ATIVA = {ativa}', 'saved': True})
 
+        elif action == 'toggle_gemini_ativo':
+            # Kill switch mestre de Gemini/Vertex AI (ver _gemini_ativo) — desligado, desativa
+            # arte publicitária, sugestão de nome, classificador de segurança, verificação de
+            # correspondência e "Buscar com IA", sem apagar a chave configurada (fica só inerte).
+            val = data.get('GEMINI_ATIVO')
+            ativa = (val == 'true' or val is True)
+            set_config('GEMINI_ATIVO', str(ativa).lower())
+            return jsonify({'message': f'GEMINI_ATIVO = {ativa}', 'saved': True})
+
         elif action.startswith('toggle_fonte_'):
             # Dois toggles independentes por fonte, mesma action genérica pros dois (o nome da
             # fonte + qual dos dois vem do próprio nome da action, que já bate com o padrão que
@@ -2876,6 +2905,7 @@ def configuracoes():
         'rembg_enabled': cfg.get('REMBG_ENABLED', 'false') == 'true',
         'busca_imagem_online_ativa': cfg.get('BUSCA_IMAGEM_ONLINE_ATIVA', 'true') == 'true',
         'verificacao_descricao_ativa': cfg.get('VERIFICACAO_DESCRICAO_ATIVA', 'true') == 'true',
+        'gemini_ativo': cfg.get('GEMINI_ATIVO', 'true') == 'true',
         'fontes_imagem_ativas': {fonte: _fonte_imagem_ativa(fonte, cfg) for fonte in FONTES_IMAGEM_DISPONIVEIS},
         'fontes_imagem_revisao': {fonte: _fonte_exige_revisao(fonte, cfg) for fonte in FONTES_IMAGEM_DISPONIVEIS},
         'proxy_imagens_vps_ativo': cfg.get('PROXY_IMAGENS_VPS_ATIVO', 'false') == 'true',
@@ -2903,6 +2933,7 @@ def api_config():
         'rembg_enabled': cfg.get('REMBG_ENABLED', 'false') == 'true',
         'busca_imagem_online_ativa': cfg.get('BUSCA_IMAGEM_ONLINE_ATIVA', 'true') == 'true',
         'verificacao_descricao_ativa': cfg.get('VERIFICACAO_DESCRICAO_ATIVA', 'true') == 'true',
+        'gemini_ativo': cfg.get('GEMINI_ATIVO', 'true') == 'true',
         'fontes_imagem_ativas': {fonte: _fonte_imagem_ativa(fonte, cfg) for fonte in FONTES_IMAGEM_DISPONIVEIS},
         'fontes_imagem_revisao': {fonte: _fonte_exige_revisao(fonte, cfg) for fonte in FONTES_IMAGEM_DISPONIVEIS},
         'proxy_imagens_vps_ativo': cfg.get('PROXY_IMAGENS_VPS_ATIVO', 'false') == 'true',
@@ -3106,7 +3137,7 @@ def gerar_textos_arte_ia(produto):
             break
 
     api_key = _ler_todas_config().get('GEMINI_API_KEY', '').strip()
-    if not api_key:
+    if not api_key or not _gemini_ativo():
         return fallback_nome, None, [], None, (marca_fonte.title() if marca_fonte else None)
     try:
         client = genai.Client(vertexai=True, api_key=api_key)
@@ -3606,8 +3637,8 @@ def gerar_arte_publicitaria(produto, image_path):
     separadamente por texto) são desenhados por cima com fonte real, garantindo ortografia
     correta. Salva o resultado em ARTES_FOLDER e retorna o caminho do arquivo gerado."""
     api_key = _ler_todas_config().get('GEMINI_API_KEY', '').strip()
-    if not api_key:
-        raise ValueError('Nenhuma chave Gemini configurada. Configure em Configurações antes de gerar artes.')
+    if not api_key or not _gemini_ativo():
+        raise ValueError('Gemini desativado (sem chave configurada, ou desligado em Configurações → Flags de Funcionamento).')
 
     prompt = _montar_prompt_arte(produto)
 
@@ -3772,8 +3803,8 @@ def gerar_arte_publicitaria_vertical(produto, image_path):
     (<codbar>.webp), pra nunca colidir/sobrescrever uma com a outra; os dois podem coexistir
     pro mesmo produto (um terminal horizontal e um vertical na mesma loja, por exemplo)."""
     api_key = _ler_todas_config().get('GEMINI_API_KEY', '').strip()
-    if not api_key:
-        raise ValueError('Nenhuma chave Gemini configurada. Configure em Configurações antes de gerar artes.')
+    if not api_key or not _gemini_ativo():
+        raise ValueError('Gemini desativado (sem chave configurada, ou desligado em Configurações → Flags de Funcionamento).')
 
     prompt = _montar_prompt_arte(produto)
 
