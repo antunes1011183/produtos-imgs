@@ -1243,6 +1243,7 @@ def save_image_from_response(image_data, codbar, origem=None, url_origem=None):
             db.session.rollback()
             logging.warning(f"Não foi possível marcar tem_foto=True para {codbar}: {e}")
 
+        _incrementar_contador_fonte(origem)
         return jsonify({'imagem_url': img_url}), 200
     except Exception as e:
         logging.error(f"Erro ao salvar a imagem do produto {codbar}: {e}")
@@ -2614,6 +2615,25 @@ def _fonte_imagem_ativa(fonte, cfg=None):
     return cfg.get(f'FONTE_{fonte.upper()}_ATIVA', 'true') == 'true'
 
 
+def _incrementar_contador_fonte(origem):
+    """Contador cumulativo de "quantas imagens cada fonte já encontrou" (Configurações → Fontes
+    de Imagem), pedido do usuário pra ter visibilidade de quanto cada fonte contribui de verdade
+    — ao contrário dos contadores do resumo diário (STATS_*), este NUNCA reseta sozinho, é uma
+    métrica histórica acumulada desde sempre, não "desde o último resumo". Chamado de dentro de
+    `save_image_from_response`, no caminho de SUCESSO (imagem realmente salva como foto do
+    produto) — uma imagem que caiu em quarentena não conta, porque não foi "encontrada" de
+    verdade pro produto (ainda pendente de revisão, ou rejeitada). Só incrementa fontes que têm
+    linha na tabela (`FONTES_IMAGEM_DISPONIVEIS`) — outras origens (upload manual, "Buscar com
+    IA", reprocessamento de auditoria) não aparecem nessa tabela, não há onde contar. Guardado em
+    Config como string numérica (`FONTE_<NOME>_IMAGENS_ENCONTRADAS`), mesmo padrão de qualquer
+    outro contador deste projeto."""
+    if origem not in FONTES_IMAGEM_DISPONIVEIS:
+        return
+    chave = f'FONTE_{origem.upper()}_IMAGENS_ENCONTRADAS'
+    atual = int(_ler_todas_config().get(chave, '0') or '0')
+    set_config(chave, str(atual + 1))
+
+
 def _fonte_exige_revisao(fonte, cfg=None):
     """Segunda flag por fonte (Configurações → Fontes de Imagem), independente do toggle
     liga/desliga acima: quando marcada, a fonte continua buscando normalmente, mas TODA imagem
@@ -2930,6 +2950,7 @@ def configuracoes():
         'gemini_ativo': cfg.get('GEMINI_ATIVO', 'true') == 'true',
         'fontes_imagem_ativas': {fonte: _fonte_imagem_ativa(fonte, cfg) for fonte in FONTES_IMAGEM_DISPONIVEIS},
         'fontes_imagem_revisao': {fonte: _fonte_exige_revisao(fonte, cfg) for fonte in FONTES_IMAGEM_DISPONIVEIS},
+        'fontes_imagem_contagem': {fonte: int(cfg.get(f'FONTE_{fonte.upper()}_IMAGENS_ENCONTRADAS', '0') or '0') for fonte in FONTES_IMAGEM_DISPONIVEIS},
         'proxy_imagens_vps_ativo': cfg.get('PROXY_IMAGENS_VPS_ATIVO', 'false') == 'true',
         'proxy_imagens_vps_url': cfg.get('PROXY_IMAGENS_VPS_URL', '') or '',
     })
@@ -2958,6 +2979,7 @@ def api_config():
         'gemini_ativo': cfg.get('GEMINI_ATIVO', 'true') == 'true',
         'fontes_imagem_ativas': {fonte: _fonte_imagem_ativa(fonte, cfg) for fonte in FONTES_IMAGEM_DISPONIVEIS},
         'fontes_imagem_revisao': {fonte: _fonte_exige_revisao(fonte, cfg) for fonte in FONTES_IMAGEM_DISPONIVEIS},
+        'fontes_imagem_contagem': {fonte: int(cfg.get(f'FONTE_{fonte.upper()}_IMAGENS_ENCONTRADAS', '0') or '0') for fonte in FONTES_IMAGEM_DISPONIVEIS},
         'proxy_imagens_vps_ativo': cfg.get('PROXY_IMAGENS_VPS_ATIVO', 'false') == 'true',
         'proxy_imagens_vps_url': cfg.get('PROXY_IMAGENS_VPS_URL', '') or '',
     })

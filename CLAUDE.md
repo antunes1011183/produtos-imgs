@@ -960,6 +960,17 @@ Dois pedidos do usuário na sequência, ambos na aba Quarentena:
 
 Testado de ponta a ponta com 2 EANs descartáveis em quarentena (imagens sintéticas pequenas, criadas/removidas na própria sessão de teste): "Revelar tudo" clicado com 16 entradas pendentes na página — todas as 16 miniaturas (incluindo as 2 de teste) viraram blob `<img>` reais com dimensões corretas, num único clique; "Marcar como sem imagem" testado abrindo o popup de uma das entradas de teste — popup fechou sozinho, contador de pendentes caiu de 16 pra 15, produto passou a ter `foto_png` apontando pro placeholder, e a 2ª entrada de teste (EAN diferente) permaneceu pendente sem ser tocada.
 
+### Contador de "imagens encontradas" por fonte, na própria tabela de Fontes de Imagem
+
+Pedido do usuário: "quero que conte quantas imagens foi encontrada para cada fonte". Nova coluna "Imagens Encontradas" na tabela Configurações → Fontes de Imagem (ao lado de "Ativa"/"Revisão obrigatória"), uma por fonte (Google/Zaffari/PreçoMelhor/Rissul/Sonda/Unidasul/Serper).
+
+- **`_incrementar_contador_fonte(origem)`**: incrementa `Config['FONTE_<NOME>_IMAGENS_ENCONTRADAS']` (string numérica, mesmo padrão de qualquer outro contador do projeto). No-op silencioso se `origem` não estiver em `FONTES_IMAGEM_DISPONIVEIS` (upload manual, "Buscar com IA" via `origem='ia'`, reprocessamento de auditoria — nenhum desses tem linha na tabela, não há onde contar).
+- **Chamado de dentro de `save_image_from_response`**, no caminho de SUCESSO (depois de `_marcar_tem_foto`/`_eliminar_duplicatas_pendentes`, logo antes do `return 200`) — o mesmo chokepoint por onde passam as 7 fontes automáticas. Uma imagem que caiu em quarentena (rejeitada por conteúdo impróprio, política de fonte ou descrição incompatível) **não conta** — só incrementa quando a imagem realmente vira a foto do produto.
+- **Cumulativo, nunca reseta sozinho** — diferente dos contadores do resumo diário (`STATS_COSMOS_SUCESSOS` etc., que zeram a cada envio bem-sucedido), este é uma métrica histórica "desde sempre", não "desde o último resumo". Não foi pedido nenhum botão de reset, então não tem um.
+- Exposto em `fontes_imagem_contagem` nos dois endpoints JSON de configuração (`GET /configuracoes`, `/api/config`), populado no frontend no mesmo loop que já preenche os toggles "Ativa"/"Revisão obrigatória" de cada fonte.
+
+Testado: chamada direta a `save_image_from_response(..., origem='google', ...)` incrementou o contador de 0 pra 1 (dentro de `test_request_context`, já que a função usa `url_for` internamente e não tem contexto de request fora de uma rota HTTP real — mesma particularidade já documentada nesta sessão); `_incrementar_contador_fonte('ia')` confirmado como no-op (não cria nenhuma chave de config pra uma origem fora da tabela); tabela conferida visualmente no navegador com valores semeados manualmente (Google=42, Serper=7) — coluna nova renderiza corretamente ao lado dos toggles existentes. Valores de teste zerados depois, sem deixar contagem fictícia no ambiente.
+
 ## Gestão de imagem por produto (painel)
 
 O painel de detalhes (Consulta Rápida) ganhou "Enviar/Trocar imagem" (upload via `POST /upload-imagem-produto/<codbar>`, sobrescreve) e "Excluir imagem" (via `DELETE /deletar-imagem-produto/<codbar>`, com confirmação). Ambas as rotas já existiam — só não estavam expostas na UI. **Excluir a foto crua não apaga a arte publicitária já gerada** (são arquivos independentes, ver seção de arte acima) — intencional, mencionado no próprio diálogo de confirmação.
