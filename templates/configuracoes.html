@@ -1662,6 +1662,7 @@
                             </select>
                         </div>
                         <button class="btn btn-primary" id="btn-quarentena-filtrar">Filtrar</button>
+                        <button class="btn btn-secondary" id="btn-quarentena-revelar-tudo" title="Desborra todas as miniaturas já carregadas nesta página">👁 Revelar tudo</button>
                     </div>
                     <div id="quarentena-list" class="consulta-grid" style="grid-template-columns:repeat(auto-fill, minmax(220px, 1fr));">
                         <div class="empty-state">Carregando...</div>
@@ -1720,6 +1721,7 @@
                                     <button class="btn btn-secondary btn-sm" id="quarentena-detail-buscar-ia">Buscar com IA</button>
                                     <button class="btn btn-secondary btn-sm" id="quarentena-detail-upload">Enviar imagem manualmente</button>
                                     <input type="file" id="quarentena-detail-input-upload" accept="image/png,image/jpeg,image/webp" style="display:none;">
+                                    <button class="btn btn-secondary btn-sm" id="quarentena-detail-sem-imagem">Marcar como sem imagem</button>
                                     <button class="btn btn-secondary btn-sm" id="quarentena-detail-google">Ver no Google Imagens</button>
                                     <button class="btn btn-secondary btn-sm" id="quarentena-detail-copy-ean">Copiar EAN</button>
                                 </div>
@@ -3453,26 +3455,56 @@ $('#quarentena-status').addEventListener('change', () => loadQuarentena(1));
 $('#btn-quarentena-prev').addEventListener('click', () => { if (quarentenaPage > 1) loadQuarentena(quarentenaPage - 1); });
 $('#btn-quarentena-next').addEventListener('click', () => loadQuarentena(quarentenaPage + 1));
 
+// Desborra uma miniatura da grade (busca o arquivo autenticado, converte pra blob URL) —
+// compartilhada entre o clique individual "Revelar" e o botão "Revelar tudo" (abaixo), pra não
+// duplicar a lógica de fetch/blob nos dois lugares. No-op silencioso se já revelada ou se o card
+// não existir mais na página (ex.: removido por um filtro no meio de uma revelação em lote).
+async function revelarQuarentenaCard(id) {
+    const container = $(`#quarentena-img-${id}`);
+    if (!container || container.classList.contains('revelada')) return;
+    const btn = container.querySelector('.quarentena-reveal-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Carregando...'; }
+    try {
+        const res = await fetch(`/admin/quarentena-imagem/${id}`, { headers: authHeaders() });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const img = document.createElement('img');
+        img.src = url;
+        container.appendChild(img);
+        container.classList.add('revelada');
+    } catch (err) {
+        if (btn) { btn.disabled = false; btn.textContent = '👁 Revelar'; }
+        throw err;
+    }
+}
+
+$('#btn-quarentena-revelar-tudo').addEventListener('click', async (e) => {
+    // Só as miniaturas JÁ carregadas nesta página (mesmo escopo de "revelar tudo" — a grade
+    // é paginada, ~20 por vez, então não há um universo maior pra revelar de uma vez sem
+    // primeiro navegar/filtrar até lá). Em paralelo (Promise.allSettled): cada revelação é
+    // um fetch independente, não há motivo pra esperar uma terminar pra começar a próxima.
+    const botao = e.currentTarget;
+    const ids = [...document.querySelectorAll('.quarentena-reveal-btn')].map(b => b.dataset.id);
+    if (!ids.length) { toast('Nenhuma miniatura pra revelar nesta página (ou já estão todas reveladas)', 'info'); return; }
+    const originalHtml = botao.innerHTML;
+    botao.disabled = true;
+    botao.innerHTML = `<span class="spinner"></span> Revelando...`;
+    const resultados = await Promise.allSettled(ids.map(id => revelarQuarentenaCard(id)));
+    const falhas = resultados.filter(r => r.status === 'rejected').length;
+    botao.disabled = false;
+    botao.innerHTML = originalHtml;
+    if (falhas) toast(`Reveladas ${ids.length - falhas} de ${ids.length} — ${falhas} com erro`, 'error');
+    else toast(`${ids.length} miniatura(s) revelada(s)`, 'success');
+});
+
 $('#quarentena-list').addEventListener('click', async (e) => {
     const revelarBtn = e.target.closest('[data-action="quarentena-revelar"]');
     if (revelarBtn) {
-        const id = revelarBtn.dataset.id;
-        const container = $(`#quarentena-img-${id}`);
-        revelarBtn.disabled = true;
-        revelarBtn.textContent = 'Carregando...';
         try {
-            const res = await fetch(`/admin/quarentena-imagem/${id}`, { headers: authHeaders() });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const blob = await res.blob();
-            const url = URL.createObjectURL(blob);
-            const img = document.createElement('img');
-            img.src = url;
-            container.appendChild(img);
-            container.classList.add('revelada');
+            await revelarQuarentenaCard(revelarBtn.dataset.id);
         } catch (err) {
             toast('Erro ao carregar imagem: ' + err.message, 'error');
-            revelarBtn.disabled = false;
-            revelarBtn.textContent = '👁 Revelar';
         }
         return;
     }
@@ -3759,6 +3791,28 @@ $('#quarentena-detail-input-upload').addEventListener('change', async (e) => {
         btn.disabled = false;
         btn.textContent = original;
         e.target.value = '';
+    }
+});
+
+$('#quarentena-detail-sem-imagem').addEventListener('click', async (e) => {
+    const codbar = $('#quarentena-detail-panel').dataset.codbar;
+    if (!confirm(`Marcar o produto ${codbar} como "sem imagem"? Isso salva um gráfico genérico de "sem imagem" como a foto dele e fecha este caso de quarentena (a rota já limpa toda entrada pendente do mesmo EAN).`)) return;
+    const btn = e.currentTarget;
+    const original = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner"></span> Marcando...`;
+    try {
+        const res = await fetch(`/admin/marcar-sem-imagem/${encodeURIComponent(codbar)}`, { method: 'POST', headers: authHeaders() });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+        toast('Produto marcado como "sem imagem"', 'success');
+        fecharQuarentenaDetail();
+        loadQuarentena(quarentenaPage);
+    } catch (err) {
+        toast('Erro ao marcar como sem imagem: ' + err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = original;
     }
 });
 
