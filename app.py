@@ -67,6 +67,11 @@ GOOGLE_API_KEY = 'AIzaSyDcgpSF9cRmzLwGqIk44x-3_GZjTfUChtM'
 GOOGLE_CX = '053e66708840f4936'
 ZAFFARI_SEARCH_URL = 'https://zaffari.vtexcommercestable.com.br/api/catalog_system/pub/products/search'
 RISSUL_SEARCH_URL = 'https://superrissul.vtexcommercestable.com.br/api/catalog_system/pub/products/search'
+# Gráfico genérico de "sem imagem" usado pelo botão "Marcar como sem imagem" (ver
+# _obter_imagem_sem_foto_placeholder) — baixado uma vez e cacheado em disco, nunca em static/
+# (aqui não precisa de autenticação pra servir, é só um placeholder fixo sem dado sensível).
+IMAGEM_SEM_FOTO_URL = 'https://www.supratec.com.br/img/p/br-default-large_default.jpg'
+IMAGEM_SEM_FOTO_CACHE = 'static/sem_imagem_placeholder.jpg'
 
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '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')
 JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY', 'your-jwt-secret-key')
@@ -925,6 +930,23 @@ def _static_url(fs_path):
     'static\\imgs_produtos\\x.png' no Windows) em uma URL http correta e absoluta."""
     rel_path = os.path.relpath(fs_path, 'static').replace(os.sep, '/')
     return url_for('static', filename=rel_path, _external=True)
+
+
+def _obter_imagem_sem_foto_placeholder():
+    """Baixa (uma única vez, cacheado em `IMAGEM_SEM_FOTO_CACHE`) o gráfico genérico de "sem
+    imagem" usado pelo botão "Marcar como sem imagem" — evita bater no site externo a cada
+    clique, já que é sempre o mesmo arquivo fixo pra qualquer EAN. Levanta a exceção de rede pro
+    chamador decidir como responder (não há fallback sensato aqui: sem essa imagem, não há o que
+    salvar)."""
+    if os.path.exists(IMAGEM_SEM_FOTO_CACHE):
+        with open(IMAGEM_SEM_FOTO_CACHE, 'rb') as f:
+            return f.read()
+    resp = requests.get(IMAGEM_SEM_FOTO_URL, timeout=20, headers={'User-Agent': 'Mozilla/5.0'})
+    resp.raise_for_status()
+    os.makedirs(os.path.dirname(IMAGEM_SEM_FOTO_CACHE), exist_ok=True)
+    with open(IMAGEM_SEM_FOTO_CACHE, 'wb') as f:
+        f.write(resp.content)
+    return resp.content
 
 
 def _arte_url(codbar, orientacao='horizontal'):
@@ -4071,6 +4093,59 @@ def admin_definir_imagem_url(codbar):
     if resultado[1] == 200:
         _registrar_busca_imagem(codbar, True, origem='ia', via='admin')
     return resultado
+
+
+@app.route('/admin/marcar-sem-imagem/<string:codbar>', methods=['POST'])
+@jwt_required()
+def admin_marcar_sem_imagem(codbar):
+    """Marca o produto como "sem imagem disponível" — pedido do usuário pra um produto que
+    genuinamente não tem foto em NENHUMA fonte (descontinuado, item interno sem GTIN público,
+    etc.), em vez de deixar sem nenhuma imagem indefinidamente. Salva um gráfico genérico fixo de
+    "sem imagem" (ver _obter_imagem_sem_foto_placeholder) como a foto do produto — mesmo efeito
+    prático de "resolver" o EAN: como qualquer imagem salva já impede a busca automática de
+    disparar de novo (ver obter_imagem_produto), isso também tira o produto da fila de
+    pendências (Histórico "Não encontrados"/"Imagens Pendentes") sem inventar uma foto real que
+    não existe.
+
+    Cria um `Produto` mínimo (só codbar) se o EAN ainda não tiver cadastro — mesmo padrão de
+    admin_buscar_imagem, necessário pra funcionar também em "Imagens Pendentes" (que lista EAN
+    sem cadastro).
+
+    Deliberadamente NÃO passa por save_image_from_response: aquele pipeline roda remoção de
+    fundo (rembg trataria o próprio ícone do placeholder como "fundo" e destruiria o gráfico) e
+    os dois classificadores de conteúdo (_imagem_e_segura, _imagem_corresponde_descricao) — o
+    segundo rejeitaria este placeholder sempre, já que ele nunca "corresponde" à descrição de
+    produto nenhum. Como é um arquivo fixo e deliberado (mesma imagem pra qualquer EAN, escolhida
+    por um humano agora, não uma busca automática de fonte externa não confiável), salva direto."""
+    produto = Produto.query.filter_by(codbar=codbar).first()
+    if not produto:
+        produto = Produto(codbar=codbar)
+        db.session.add(produto)
+
+    try:
+        image_data = _obter_imagem_sem_foto_placeholder()
+    except requests.RequestException as e:
+        logging.error(f"Não foi possível baixar o placeholder de 'sem imagem': {e}")
+        db.session.rollback()
+        return jsonify({'message': 'Não foi possível baixar a imagem padrão de "sem imagem"'}), 502
+
+    processed_file_path = os.path.join(PROCESSED_IMAGES_FOLDER, f'{codbar}.png')
+    try:
+        img = Image.open(io.BytesIO(image_data)).convert('RGBA')
+        os.makedirs(PROCESSED_IMAGES_FOLDER, exist_ok=True)
+        img.save(processed_file_path, optimize=True)
+    except Exception as e:
+        logging.error(f"Erro ao salvar o placeholder de 'sem imagem' para {codbar}: {e}")
+        db.session.rollback()
+        return jsonify({'message': 'Erro ao salvar a imagem padrão'}), 500
+
+    _marcar_tem_foto(produto, True)
+    _eliminar_duplicatas_pendentes(codbar)
+    db.session.commit()
+
+    img_url = _static_url(processed_file_path)
+    logging.info(f"Produto {codbar} marcado como 'sem imagem' — placeholder genérico salvo.")
+    return jsonify({'message': 'Produto marcado como "sem imagem"', 'imagem_url': img_url}), 200
 
 
 @app.route('/admin/gerar-arte/<string:codbar>', methods=['POST'])

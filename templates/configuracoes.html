@@ -1936,6 +1936,7 @@
                     <button class="btn btn-secondary btn-sm" id="detail-btn-ver-arte" style="display:none;">Ver arte em tela cheia</button>
                     <button class="btn btn-secondary btn-sm" id="detail-btn-trocar-imagem">Enviar/Trocar imagem</button>
                     <input type="file" id="detail-input-imagem" accept="image/png,image/jpeg,image/webp" style="display:none;">
+                    <button class="btn btn-secondary btn-sm" id="detail-btn-marcar-sem-imagem">Marcar como sem imagem</button>
                     <button class="btn btn-danger btn-sm" id="detail-btn-excluir-imagem">Excluir imagem</button>
                 </div>
 
@@ -2003,6 +2004,7 @@
                     <button class="btn btn-secondary btn-sm" id="hist-detail-btn-ver-arte" style="display:none;">Ver arte em tela cheia</button>
                     <button class="btn btn-secondary btn-sm" id="hist-detail-btn-trocar-imagem">Enviar/Trocar imagem</button>
                     <input type="file" id="hist-detail-input-imagem" accept="image/png,image/jpeg,image/webp" style="display:none;">
+                    <button class="btn btn-secondary btn-sm" id="hist-detail-btn-marcar-sem-imagem">Marcar como sem imagem</button>
                 </div>
 
                 <div id="hist-detail-ia-picker" style="display:none;"></div>
@@ -3268,6 +3270,33 @@ async function openHistDetailPanel(ean, origemLista) {
             trocarImgBtn.disabled = false;
             trocarImgBtn.innerHTML = originalHtml;
             inputImagem.value = '';
+        }
+    };
+
+    const semImagemBtn = $('#hist-detail-btn-marcar-sem-imagem');
+    semImagemBtn.onclick = async () => {
+        if (!confirm(`Marcar o produto ${ean} como "sem imagem"? Isso salva um gráfico genérico de "sem imagem" como a foto dele (sobrescrevendo a atual, se houver) e tira o produto da fila de pendências.`)) return;
+        const originalHtml = semImagemBtn.innerHTML;
+        semImagemBtn.disabled = true;
+        semImagemBtn.innerHTML = `<span class="spinner"></span> Marcando...`;
+        try {
+            const res = await fetch(`/admin/marcar-sem-imagem/${encodeURIComponent(ean)}`, {
+                method: 'POST',
+                headers: authHeaders(),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+            toast('Produto marcado como "sem imagem"', 'success');
+            if (data.imagem_url && histDetailEan === ean) {
+                $('#hist-detail-modal-image').innerHTML = `<img src="${escHtml(data.imagem_url)}?t=${Date.now()}" alt="Sem imagem" onclick="openLightbox(this.src)">`;
+                $('#hist-detail-zoom').style.display = 'flex';
+            }
+            removerLinhaEmTodasAsListas(ean);
+        } catch (e2) {
+            toast('Erro ao marcar como sem imagem: ' + e2.message, 'error');
+        } finally {
+            semImagemBtn.disabled = false;
+            semImagemBtn.innerHTML = originalHtml;
         }
     };
 
@@ -4626,6 +4655,33 @@ async function openDetailModal(ean) {
             trocarImgBtn.disabled = false;
             trocarImgBtn.innerHTML = originalHtml;
             inputImagem.value = '';
+        }
+    };
+
+    const semImagemBtn = $('#detail-btn-marcar-sem-imagem');
+    semImagemBtn.onclick = async () => {
+        if (!confirm(`Marcar o produto ${ean} como "sem imagem"? Isso salva um gráfico genérico de "sem imagem" como a foto dele (sobrescrevendo a atual, se houver) e tira o produto da fila de pendências.`)) return;
+        const originalHtml = semImagemBtn.innerHTML;
+        semImagemBtn.disabled = true;
+        semImagemBtn.innerHTML = `<span class="spinner"></span> Marcando...`;
+        try {
+            const res = await fetch(`/admin/marcar-sem-imagem/${encodeURIComponent(ean)}`, {
+                method: 'POST',
+                headers: authHeaders(),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+            toast('Produto marcado como "sem imagem"', 'success');
+            if (data.imagem_url && detailEan === ean) {
+                $('#detail-modal-image').innerHTML = `<img src="${escHtml(data.imagem_url)}?t=${Date.now()}" alt="Sem imagem" onclick="openLightbox(this.src)">`;
+                $('#detail-zoom').style.display = 'flex';
+            }
+            loadConsulta(consultaPage);
+        } catch (e2) {
+            toast('Erro ao marcar como sem imagem: ' + e2.message, 'error');
+        } finally {
+            semImagemBtn.disabled = false;
+            semImagemBtn.innerHTML = originalHtml;
         }
     };
 
