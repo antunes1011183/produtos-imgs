@@ -155,17 +155,56 @@ def save_image_with_background_removal(image, file_path):
     SEMPRE salva algo em `file_path`, mesmo com `REMBG_ENABLED=false` (nesse caso, sem remover
     fundo) — desde que a foto crua deixou de ser guardada em paralelo (ver save_image_from_response),
     esse é o único lugar onde a imagem é persistida; se essa função "desistisse" silenciosamente
-    (comportamento antigo), a imagem simplesmente não seria salva em lugar nenhum."""
+    (comportamento antigo), a imagem simplesmente não seria salva em lugar nenhum.
+
+    Rede de segurança contra "imagem ficando tudo branco" (bug real reportado pelo usuário no
+    upload manual — "Enviar/Trocar imagem"): o rembg às vezes falha silenciosamente em fotos de
+    baixo contraste (produto claro contra fundo também claro/branco, ex. embalagem branca numa
+    mesa branca) classificando a imagem INTEIRA como fundo — o resultado não é um erro, é um PNG
+    genuinamente quase 100% transparente, que o painel então mostra contra o fundo claro do
+    container da miniatura (`#f1f5f9`), parecendo "tudo branco" mesmo a imagem tendo sido salva
+    "com sucesso". `_remocao_de_fundo_falhou` confere a fração de pixels realmente opacos no
+    resultado — se ficou baixa demais pra ser um produto de verdade, descarta o resultado do
+    rembg e salva a imagem ORIGINAL em vez de uma imagem em branco; prefere mostrar a foto com o
+    fundo que o usuário já tinha a mostrar uma miniatura vazia sem explicação nenhuma. Mesma
+    lógica protege contra o rembg lançar uma exceção (ex. falta de memória, já documentado antes
+    nesta sessão) — nesses casos, também cai pra imagem original em vez de deixar o upload
+    inteiro falhar com 500."""
     # Converte para RGBA se necessário
     image = image.convert("RGBA") if image.mode != "RGBA" else image
     if REMBG_ENABLED:
-        # Remove o fundo, com matting pra não cortar pedaço do produto nas bordas
-        output_image = remove(image, alpha_matting=True)
+        try:
+            # Remove o fundo, com matting pra não cortar pedaço do produto nas bordas
+            output_image = remove(image, alpha_matting=True)
+            if _remocao_de_fundo_falhou(output_image):
+                logging.warning(f"rembg aparentemente apagou a imagem inteira (quase 100% transparente) salvando {file_path} — mantendo a imagem original em vez de uma miniatura em branco.")
+                output_image = image
+        except Exception as e:
+            logging.error(f"rembg falhou processando {file_path}, mantendo a imagem original: {e}")
+            output_image = image
     else:
         logging.warning(f"rembg desativado - salvando {file_path} sem remover o fundo")
         output_image = image
     # Salva a imagem processada (lossless, só mais compacta)
     output_image.save(file_path, optimize=True)
+
+
+def _remocao_de_fundo_falhou(imagem_rgba, limiar_opacos=0.02):
+    """True quando uma imagem RGBA pós-rembg tem opacidade residual baixa demais pra ser um
+    produto de verdade (`limiar_opacos`, fração de pixels com alpha>200 — 2% por padrão: uma
+    foto de produto real quase sempre ocupa bem mais que isso do quadro, então ficar abaixo é um
+    sinal forte de que a segmentação removeu a imagem inteira, não só o fundo). Usa só
+    `Image.histogram()` do PIL (sem numpy, deliberadamente — mesmo padrão já usado em
+    `_aplicar_vinheta` neste arquivo)."""
+    try:
+        alpha_hist = imagem_rgba.getchannel('A').histogram()
+    except Exception:
+        return False  # imagem sem canal alpha (não deveria acontecer aqui, mas não é motivo pra travar o save)
+    total = sum(alpha_hist)
+    if not total:
+        return False
+    opacos = sum(alpha_hist[200:])
+    return (opacos / total) < limiar_opacos
 
 def fetch_product_from_google(ean):
     # safe=active: filtra conteúdo explícito no resultado — CRÍTICO aqui porque a busca é feita
