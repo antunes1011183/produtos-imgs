@@ -2,6 +2,7 @@ import os
 import io
 import sys
 import csv
+import hashlib
 import sqlite3
 import base64
 import threading
@@ -299,6 +300,35 @@ class HistoricoBuscaImagem(db.Model):
     via = db.Column(db.String(20), nullable=False, default='terminal')  # terminal, admin
     criado_em = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
     notificado_em = db.Column(db.DateTime, nullable=True)
+
+
+class AuditoriaImagem(db.Model):
+    """Resultado da auditoria das imagens já baixadas (aba "Auditoria", ver `_executar_auditoria`)
+    — uma linha por EAN que tem foto servida, guardando o resultado da última varredura.
+
+    `motivos` é uma lista de códigos separada por vírgula (vazia = nenhum sinal de problema):
+    `ean_invalido` (dígito verificador não bate / formato fora de GTIN — suspeita de erro de
+    leitura do código de barras), `descricao_corrompida` (mojibake no cadastro — erro de leitura
+    da importação), `imagem_duplicada` (mesma foto usada por EANs de produtos diferentes — típico
+    de mapeamento errado numa fonte), `imagem_vazia`/`imagem_pequena` (arquivo em branco ou
+    minúsculo) e `incompativel_ia` (a verificação opcional por IA achou que a foto não bate com
+    a descrição). `detalhes` é um JSON {motivo: texto explicativo}. `hash_imagem` identifica o
+    ARQUIVO auditado: se a foto mudar depois, a decisão humana anterior (`decisao='ok'`) deixa de
+    valer e o EAN volta a ser avaliado. `ia_hash` guarda o hash pra o qual a IA já rodou, pra uma
+    nova execução não gastar uma chamada paga repetindo a mesma imagem.
+
+    `decisao`: None = pendente de revisão, 'ok' = humano confirmou que está correta, 'separada' =
+    imagem tirada de circulação e enviada à Quarentena."""
+    id = db.Column(db.Integer, primary_key=True)
+    codbar = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    hash_imagem = db.Column(db.String(40), nullable=True)
+    motivos = db.Column(db.String(300), nullable=False, default='')
+    detalhes = db.Column(db.Text, nullable=True)
+    ia_hash = db.Column(db.String(40), nullable=True)
+    decisao = db.Column(db.String(20), nullable=True, index=True)
+    criado_em = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    atualizado_em = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    revisado_em = db.Column(db.DateTime, nullable=True)
 
 
 class ImagemQuarentena(db.Model):
@@ -1079,7 +1109,7 @@ def _verificacao_descricao_ativa():
     return _ler_todas_config().get('VERIFICACAO_DESCRICAO_ATIVA', 'true') == 'true'
 
 
-def _imagem_corresponde_descricao(image_data, descricao, marca=None):
+def _imagem_corresponde_descricao(image_data, descricao, marca=None, estrito=False):
     """Verifica se a imagem plausivelmente é do produto cadastrado (`Produto.description`/
     `Produto.marca`) — pedido do usuário depois do incidente do PreçoMelhor (ver CLAUDE.md):
     `_imagem_e_segura` só pega conteúdo IMPRÓPRIO, não pega uma imagem perfeitamente segura mas
@@ -1100,12 +1130,18 @@ def _imagem_corresponde_descricao(image_data, descricao, marca=None):
     Falha aberta deliberada, mesmo padrão de `_imagem_e_segura`: erro de classificação (sem
     chave, rede, cota esgotada) libera a imagem em vez de travar a busca inteira — essa camada é
     um reforço de qualidade, não a única linha de defesa (o bloqueio manual por EAN continua
-    disponível se algo passar despercebido)."""
+    disponível se algo passar despercebido).
+
+    `estrito=True` (usado só pela auditoria, ver `_executar_auditoria`): em vez de falhar aberto,
+    devolve `None` quando a classificação NÃO pôde rodar (verificação desligada, sem chave, erro
+    de rede/cota) — a auditoria precisa distinguir "verificada e ok" de "não deu pra verificar",
+    senão marcaria como conferida uma imagem que nunca foi olhada de verdade."""
+    falha = None if estrito else True
     if not _verificacao_descricao_ativa():
-        return True
+        return falha
     api_key = _ler_todas_config().get('GEMINI_API_KEY', '').strip()
     if not api_key or not _gemini_ativo():
-        return True
+        return falha
     try:
         client = genai.Client(vertexai=True, api_key=api_key)
         produto_ref = descricao if not marca else f'{descricao} (marca: {marca})'
@@ -1124,7 +1160,7 @@ def _imagem_corresponde_descricao(image_data, descricao, marca=None):
         return 'NAO_CORRESPONDE' not in texto
     except Exception as e:
         logging.warning(f"Erro ao verificar correspondência imagem/descrição (permitindo por padrão): {e}")
-        return True
+        return falha
 
 
 def _quarentenar_imagem(image_data, codbar, origem=None, motivo=None, url_origem=None):
@@ -4771,6 +4807,400 @@ def zerar_imagens_pendentes():
         db.session.rollback()
         logging.error(f"Erro ao zerar registros de imagens pendentes: {e}")
         return jsonify({'message': 'Erro ao zerar registros'}), 500
+
+
+# =====================================================================
+# Auditoria das imagens já baixadas (aba "Auditoria")
+# =====================================================================
+# Pedido do usuário: um botão "Auditoria" que separe as imagens encontradas que NÃO
+# correspondem ao produto, ou que têm suspeita de erro de leitura, e mesmo assim foram baixadas.
+# Duas camadas: (1) heurísticas locais, GRATUITAS, sempre disponíveis (EAN com dígito verificador
+# inválido, descrição corrompida, mesma foto em produtos diferentes, imagem em branco/minúscula)
+# e (2) verificação opcional por IA (o mesmo classificador de correspondência imagem×descrição
+# do upload, `_imagem_corresponde_descricao`), que só roda se o Gemini estiver ligado — ele foi
+# desligado de propósito por custo (ver `_gemini_ativo`), então a auditoria NUNCA o liga sozinha.
+
+_auditoria_lock = threading.Lock()
+_auditoria_estado = {
+    'rodando': False, 'etapa': '', 'total': 0, 'feito': 0, 'suspeitas': 0,
+    'ia_verificadas': 0, 'ia_solicitada': False, 'iniciado_em': None, 'terminou_em': None, 'erro': None,
+}
+AUDITORIA_POR_PAGINA = 24
+
+
+def _ean_checksum_ok(codbar):
+    """Valida o dígito verificador GS1 (EAN-8/UPC-12/EAN-13/GTIN-14). Falso também pra tamanho
+    fora desses ou caracteres não numéricos — nos dois casos o código não é um GTIN legível."""
+    if not codbar.isdigit() or len(codbar) not in (8, 12, 13, 14):
+        return False
+    digitos = [int(c) for c in codbar]
+    corpo, verificador = digitos[:-1], digitos[-1]
+    soma = sum(d * (3 if i % 2 == 0 else 1) for i, d in enumerate(reversed(corpo)))
+    return (10 - soma % 10) % 10 == verificador
+
+
+def _hash_placeholder_sem_imagem():
+    """SHA-1 do arquivo que `admin_marcar_sem_imagem` grava (o gráfico "IMAGEM INDISPONÍVEL"),
+    pra a auditoria não tratar esse placeholder — compartilhado de propósito por muitos EANs —
+    como "mesma foto em produtos diferentes". Só usa o cache em disco (nunca baixa nada); sem
+    cache, ainda ninguém usou o botão, então não há placeholder pra reconhecer."""
+    try:
+        if not os.path.exists(IMAGEM_SEM_FOTO_CACHE):
+            return None
+        with open(IMAGEM_SEM_FOTO_CACHE, 'rb') as f:
+            img = Image.open(io.BytesIO(f.read())).convert('RGBA')
+        buf = io.BytesIO()
+        img.save(buf, format='PNG', optimize=True)
+        return hashlib.sha1(buf.getvalue()).hexdigest()
+    except Exception:
+        return None
+
+
+def _arquivos_de_imagem_servidos():
+    """{codbar: caminho} de toda foto que o sistema serve hoje — `PROCESSED_IMAGES_FOLDER` tem
+    prioridade sobre a pasta crua legada, mesma regra do resto da aplicação."""
+    achados = {}
+    for pasta in (IMAGES_FOLDER, PROCESSED_IMAGES_FOLDER):
+        if not os.path.isdir(pasta):
+            continue
+        for nome in os.listdir(pasta):
+            base, _, ext = nome.rpartition('.')
+            if base and ext.lower() in ALLOWED_EXTENSIONS:
+                achados[base] = os.path.join(pasta, nome)
+    return achados
+
+
+def _analisar_arquivo_imagem(dados):
+    """Sinais ligados só ao arquivo: [(motivo, detalhe)]. Usa miniatura (256px) pra não decodificar
+    imagens grandes inteiras em cada uma das centenas/milhares de varreduras."""
+    try:
+        img = Image.open(io.BytesIO(dados))
+        largura, altura = img.size
+        img.thumbnail((256, 256))
+        rgba = img.convert('RGBA')
+    except Exception as e:
+        return [('imagem_vazia', f'Arquivo ilegível ou corrompido ({e})')]
+    achados = []
+    if min(largura, altura) < 120:
+        achados.append(('imagem_pequena', f'Apenas {largura}x{altura}px'))
+    if _remocao_de_fundo_falhou(rgba):
+        achados.append(('imagem_vazia', 'Quase toda a imagem é transparente'))
+    else:
+        fundo = Image.new('RGB', rgba.size, (255, 255, 255))
+        fundo.paste(rgba, mask=rgba.getchannel('A'))
+        minimo, maximo = fundo.convert('L').getextrema()
+        if maximo - minimo < 8:
+            achados.append(('imagem_vazia', 'Imagem de cor única (em branco)'))
+    return achados
+
+
+def _ia_disponivel_auditoria():
+    cfg = _ler_todas_config()
+    return bool(cfg.get('GEMINI_API_KEY', '').strip()) and _gemini_ativo() and _verificacao_descricao_ativa()
+
+
+def _normalizar_descricao(texto):
+    return re.sub(r'\s+', ' ', (texto or '').strip().lower())
+
+
+def _executar_auditoria(usar_ia, limite_ia):
+    """Corpo da auditoria — roda numa thread (ver `admin_auditoria_executar`). Reanalisa TODAS as
+    fotos servidas (barato, tudo local) e faz upsert em `AuditoriaImagem`; a parte de IA (paga) é
+    incremental: só olha fotos ainda não verificadas por ela, até `limite_ia` por execução, então
+    rodar de novo continua de onde parou em vez de repetir (e pagar) as mesmas imagens."""
+    estado = _auditoria_estado
+    with app.app_context():
+        try:
+            agora = datetime.utcnow()
+            arquivos = _arquivos_de_imagem_servidos()
+            codbars = sorted(arquivos)
+            estado.update(etapa='Lendo as imagens', total=len(codbars), feito=0)
+            hash_placeholder = _hash_placeholder_sem_imagem()
+
+            hashes, analises = {}, {}
+            for i, cb in enumerate(codbars):
+                try:
+                    with open(arquivos[cb], 'rb') as f:
+                        dados = f.read()
+                except OSError as e:
+                    hashes[cb] = None
+                    analises[cb] = [('imagem_vazia', f'Não foi possível ler o arquivo ({e})')]
+                    continue
+                hashes[cb] = hashlib.sha1(dados).hexdigest()
+                analises[cb] = None if hashes[cb] == hash_placeholder else _analisar_arquivo_imagem(dados)
+                estado['feito'] = i + 1
+
+            estado.update(etapa='Cruzando com o cadastro', feito=0)
+            produtos = {}
+            for i in range(0, len(codbars), 400):
+                for p in Produto.query.filter(Produto.codbar.in_(codbars[i:i + 400])).all():
+                    produtos[p.codbar] = p
+
+            grupos = {}
+            for cb in codbars:
+                if hashes[cb] and analises[cb] is not None:
+                    grupos.setdefault(hashes[cb], []).append(cb)
+
+            existentes = {r.codbar: r for r in AuditoriaImagem.query.all()}
+            for i, cb in enumerate(codbars):
+                produto = produtos.get(cb)
+                descricao = (produto.description or '') if produto else ''
+                marca = (produto.marca or '') if produto else ''
+                motivos, detalhes = [], {}
+                if analises[cb] is not None:  # None = placeholder "sem imagem", intencional
+                    if not _ean_checksum_ok(cb):
+                        motivos.append('ean_invalido')
+                        detalhes['ean_invalido'] = f'Código "{cb}" ({len(cb)} dígitos) não é um GTIN válido — possível erro de leitura do código de barras'
+                    if _texto_corrompido(descricao) or _texto_corrompido(marca):
+                        motivos.append('descricao_corrompida')
+                        detalhes['descricao_corrompida'] = 'Descrição/marca com caracteres corrompidos (erro de leitura da importação)'
+                    for motivo, detalhe in analises[cb]:
+                        if motivo not in motivos:
+                            motivos.append(motivo)
+                            detalhes[motivo] = detalhe
+                    irmaos = [x for x in grupos.get(hashes[cb], []) if x != cb]
+                    if irmaos:
+                        descs = {_normalizar_descricao(produtos[x].description) for x in irmaos + [cb] if x in produtos}
+                        descs.discard('')
+                        if len(descs) > 1:
+                            motivos.append('imagem_duplicada')
+                            resto = f' e mais {len(irmaos) - 4}' if len(irmaos) > 4 else ''
+                            detalhes['imagem_duplicada'] = f'A mesma foto está em {len(irmaos) + 1} produtos diferentes (também: {", ".join(irmaos[:4])}{resto})'
+
+                row = existentes.get(cb)
+                if row is None:
+                    row = AuditoriaImagem(codbar=cb, criado_em=agora)
+                    db.session.add(row)
+                    existentes[cb] = row
+                mudou = row.hash_imagem != hashes[cb]
+                if mudou:
+                    row.decisao, row.ia_hash, row.revisado_em = None, None, None
+                    row.hash_imagem = hashes[cb]
+                elif 'incompativel_ia' in (row.motivos or '').split(','):
+                    anteriores = json.loads(row.detalhes or '{}')
+                    motivos.append('incompativel_ia')
+                    detalhes['incompativel_ia'] = anteriores.get('incompativel_ia', 'A IA achou que a foto não corresponde à descrição')
+                row.motivos = ','.join(motivos)
+                row.detalhes = json.dumps(detalhes, ensure_ascii=False)
+                row.atualizado_em = agora
+                estado['feito'] = i + 1
+                if (i + 1) % 200 == 0:
+                    db.session.commit()
+
+            for cb, row in list(existentes.items()):
+                if cb not in arquivos and row.decisao != 'separada':
+                    db.session.delete(row)
+            db.session.commit()
+
+            if usar_ia:
+                if not _ia_disponivel_auditoria():
+                    estado['erro'] = 'Verificação por IA indisponível (Gemini desligado, sem chave, ou verificação imagem×descrição desativada) — só as checagens locais rodaram.'
+                else:
+                    candidatos = []
+                    for cb in codbars:
+                        row, produto = existentes.get(cb), produtos.get(cb)
+                        if (row and row.decisao is None and analises[cb] is not None and produto
+                                and (produto.description or '').strip() and row.ia_hash != row.hash_imagem):
+                            candidatos.append((0 if row.motivos else 1, -os.path.getmtime(arquivos[cb]), cb))
+                    candidatos.sort()
+                    candidatos = candidatos[:max(1, limite_ia)]
+                    estado.update(etapa='Verificando com IA', total=len(candidatos), feito=0, ia_verificadas=0)
+                    falhas_seguidas = 0
+                    for i, (_, _, cb) in enumerate(candidatos):
+                        row, produto = existentes[cb], produtos[cb]
+                        with open(arquivos[cb], 'rb') as f:
+                            dados = f.read()
+                        resultado = _imagem_corresponde_descricao(dados, produto.description.strip(), (produto.marca or '').strip() or None, estrito=True)
+                        if resultado is None:
+                            falhas_seguidas += 1
+                            if falhas_seguidas >= 3:
+                                estado['erro'] = 'A verificação por IA falhou 3 vezes seguidas (chave, cota ou rede) — interrompida; rode de novo mais tarde.'
+                                break
+                            continue
+                        falhas_seguidas = 0
+                        row.ia_hash = row.hash_imagem
+                        if resultado is False:
+                            lista = [m for m in (row.motivos or '').split(',') if m]
+                            if 'incompativel_ia' not in lista:
+                                lista.append('incompativel_ia')
+                            row.motivos = ','.join(lista)
+                            detalhes = json.loads(row.detalhes or '{}')
+                            detalhes['incompativel_ia'] = f'A IA avaliou que a foto não corresponde a "{produto.description.strip()}"'
+                            row.detalhes = json.dumps(detalhes, ensure_ascii=False)
+                        row.atualizado_em = datetime.utcnow()
+                        db.session.commit()
+                        estado['feito'] = i + 1
+                        estado['ia_verificadas'] += 1
+
+            estado['suspeitas'] = AuditoriaImagem.query.filter(AuditoriaImagem.decisao.is_(None), AuditoriaImagem.motivos != '').count()
+        except Exception as e:
+            db.session.rollback()
+            logging.error(f"Erro na auditoria de imagens: {e}")
+            estado['erro'] = f'Erro inesperado: {e}'
+        finally:
+            estado.update(rodando=False, etapa='Concluída', terminou_em=datetime.utcnow().isoformat() + 'Z')
+
+
+def _separar_imagem_auditada(row):
+    """Tira a foto de circulação e manda pra Quarentena (`motivo='auditoria_suspeita'`), onde já
+    existem todas as ferramentas de correção (buscar de novo, IA, upload, sem imagem...). A
+    quarentena também bloqueia a busca automática do EAN, pra a mesma foto errada não voltar
+    sozinha. SÓ apaga os arquivos servidos depois de confirmar que a cópia na quarentena existe
+    de fato (`_quarentenar_imagem` engole exceções por dentro). A arte publicitária gerada a
+    partir da foto errada também é apagada — é derivada dela e continuaria sendo servida.
+    Retorna (ok, mensagem)."""
+    codbar = row.codbar
+    caminho = (find_existing_image(codbar, PROCESSED_IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+               or find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS))
+    if not caminho:
+        row.decisao, row.revisado_em = 'separada', datetime.utcnow()
+        db.session.commit()
+        return True, 'A imagem já não existe mais no disco'
+    with open(caminho, 'rb') as f:
+        dados = f.read()
+    _quarentenar_imagem(dados, codbar, origem='auditoria', motivo='auditoria_suspeita')
+    copia = ImagemQuarentena.query.filter(
+        ImagemQuarentena.codbar == codbar, ImagemQuarentena.decisao.is_(None), ImagemQuarentena.arquivo.isnot(None)
+    ).all()
+    if not any(os.path.exists(os.path.join(QUARENTENA_FOLDER, c.arquivo)) for c in copia):
+        return False, 'Não foi possível copiar a imagem pra quarentena — nada foi apagado'
+
+    for pasta in (IMAGES_FOLDER, PROCESSED_IMAGES_FOLDER):
+        for ext in ALLOWED_EXTENSIONS:
+            p = os.path.join(pasta, f'{codbar}.{ext}')
+            if os.path.exists(p):
+                os.remove(p)
+    for nome in (f'{codbar}.webp', f'{codbar}_vertical.webp'):
+        p = os.path.join(ARTES_FOLDER, nome)
+        if os.path.exists(p):
+            os.remove(p)
+    _marcar_tem_foto(codbar, False)
+    row.decisao, row.revisado_em = 'separada', datetime.utcnow()
+    db.session.commit()
+    return True, 'Imagem separada e enviada pra Quarentena'
+
+
+@app.route('/admin/auditoria/executar', methods=['POST'])
+@jwt_required()
+def admin_auditoria_executar():
+    """Dispara a auditoria numa thread (pode levar bastante com milhares de imagens + IA) e
+    responde na hora; o painel acompanha por `GET /admin/auditoria/status`. Só uma por vez."""
+    data = request.get_json(silent=True) or {}
+    usar_ia = bool(data.get('usar_ia'))
+    limite_ia = min(max(int(data.get('limite_ia') or 50), 1), 500)
+    with _auditoria_lock:
+        if _auditoria_estado['rodando']:
+            return jsonify({'message': 'Já existe uma auditoria em andamento'}), 409
+        _auditoria_estado.update(
+            rodando=True, etapa='Iniciando', total=0, feito=0, suspeitas=0, ia_verificadas=0,
+            ia_solicitada=usar_ia, iniciado_em=datetime.utcnow().isoformat() + 'Z', terminou_em=None, erro=None,
+        )
+    threading.Thread(target=_executar_auditoria, args=(usar_ia, limite_ia), daemon=True).start()
+    return jsonify({'message': 'Auditoria iniciada'}), 202
+
+
+@app.route('/admin/auditoria/status', methods=['GET'])
+@jwt_required()
+def admin_auditoria_status():
+    ultima = db.session.query(db.func.max(AuditoriaImagem.atualizado_em)).scalar()
+    return jsonify({
+        **_auditoria_estado,
+        'ia_disponivel': _ia_disponivel_auditoria(),
+        'total_auditadas': AuditoriaImagem.query.filter(db.or_(AuditoriaImagem.decisao.is_(None), AuditoriaImagem.decisao != 'separada')).count(),
+        'pendentes': AuditoriaImagem.query.filter(AuditoriaImagem.decisao.is_(None), AuditoriaImagem.motivos != '').count(),
+        'ultima_execucao': ultima.isoformat() + 'Z' if ultima else None,
+    })
+
+
+@app.route('/admin/auditoria', methods=['GET'])
+@jwt_required()
+def admin_auditoria_listar():
+    """Lista as imagens sinalizadas. `status`: 'pendente' (padrão), 'ok', 'separada' ou 'todos';
+    `motivo` filtra por um código; `codbar` por substring do EAN. `resumo` conta os pendentes por
+    motivo (alimenta os filtros em chips do painel), independente do filtro atual."""
+    page = request.args.get('page', 1, type=int)
+    status = request.args.get('status', 'pendente')
+    motivo = request.args.get('motivo', '').strip()
+    codbar_filtro = request.args.get('codbar', '').strip()
+
+    query = AuditoriaImagem.query.filter(AuditoriaImagem.motivos != '')
+    if status == 'pendente':
+        query = query.filter(AuditoriaImagem.decisao.is_(None))
+    elif status in ('ok', 'separada'):
+        query = query.filter_by(decisao=status)
+    if motivo:
+        query = query.filter(AuditoriaImagem.motivos.like(f'%{motivo}%'))
+    if codbar_filtro:
+        query = query.filter(AuditoriaImagem.codbar.like(f'%{codbar_filtro}%'))
+
+    total = query.count()
+    linhas = query.order_by(AuditoriaImagem.atualizado_em.desc(), AuditoriaImagem.id).offset((page - 1) * AUDITORIA_POR_PAGINA).limit(AUDITORIA_POR_PAGINA).all()
+    produtos = {p.codbar: p for p in Produto.query.filter(Produto.codbar.in_([r.codbar for r in linhas])).all()} if linhas else {}
+
+    resumo = {}
+    for (motivos,) in db.session.query(AuditoriaImagem.motivos).filter(AuditoriaImagem.decisao.is_(None), AuditoriaImagem.motivos != '').all():
+        for m in motivos.split(','):
+            resumo[m] = resumo.get(m, 0) + 1
+
+    itens = []
+    for r in linhas:
+        caminho = (find_existing_image(r.codbar, PROCESSED_IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+                   or find_existing_image(r.codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS))
+        produto = produtos.get(r.codbar)
+        itens.append({
+            'id': r.id, 'codbar': r.codbar,
+            'descricao': produto.description if produto else None,
+            'marca': produto.marca if produto else None,
+            'imagem_url': f'{_static_url(caminho)}?v={int(os.path.getmtime(caminho))}' if caminho else None,
+            'motivos': [m for m in r.motivos.split(',') if m],
+            'detalhes': json.loads(r.detalhes or '{}'),
+            'decisao': r.decisao,
+            'atualizado_em': r.atualizado_em.isoformat() + 'Z',
+        })
+    return jsonify({
+        'itens': itens, 'total': total, 'page': page,
+        'pages': (total + AUDITORIA_POR_PAGINA - 1) // AUDITORIA_POR_PAGINA if total else 1,
+        'resumo': resumo,
+    })
+
+
+@app.route('/admin/auditoria/<int:auditoria_id>/ok', methods=['POST'])
+@jwt_required()
+def admin_auditoria_ok(auditoria_id):
+    """Humano confirma que a imagem está correta (falso alarme). Vale enquanto o ARQUIVO for o
+    mesmo — se a foto for trocada, o hash muda e o EAN volta a ser avaliado (ver `_executar_auditoria`)."""
+    row = AuditoriaImagem.query.get_or_404(auditoria_id)
+    row.decisao, row.revisado_em = 'ok', datetime.utcnow()
+    db.session.commit()
+    return jsonify({'message': 'Marcada como correta'})
+
+
+@app.route('/admin/auditoria/<int:auditoria_id>/separar', methods=['POST'])
+@jwt_required()
+def admin_auditoria_separar(auditoria_id):
+    row = AuditoriaImagem.query.get_or_404(auditoria_id)
+    ok, mensagem = _separar_imagem_auditada(row)
+    return jsonify({'message': mensagem}), (200 if ok else 500)
+
+
+@app.route('/admin/auditoria/separar-todas', methods=['POST'])
+@jwt_required()
+def admin_auditoria_separar_todas():
+    """Separa de uma vez todas as pendentes de UM `motivo` (obrigatório, ver abaixo) — até 500 por
+    chamada, pra uma requisição não ficar presa por muito tempo."""
+    data = request.get_json(silent=True) or {}
+    motivo = (data.get('motivo') or '').strip()
+    if not motivo:
+        # Motivo obrigatório de propósito: sem ele, um clique só tiraria de circulação TODAS as
+        # pendentes, inclusive as de motivos fracos (ex.: descrição corrompida, que é só "não dá
+        # pra conferir", não "a foto está errada" — em dados reais isso atinge dezenas de fotos boas).
+        return jsonify({'message': 'Escolha um motivo (chip) antes de separar em lote'}), 400
+    query = AuditoriaImagem.query.filter(AuditoriaImagem.decisao.is_(None), AuditoriaImagem.motivos.like(f'%{motivo}%'))
+    separadas, falhas = 0, 0
+    for row in query.limit(500).all():
+        ok, _ = _separar_imagem_auditada(row)
+        separadas, falhas = separadas + (1 if ok else 0), falhas + (0 if ok else 1)
+    return jsonify({'message': f'{separadas} imagem(ns) separada(s)' + (f', {falhas} falha(s)' if falhas else ''), 'separadas': separadas, 'falhas': falhas})
 
 
 @app.route('/admin/quarentena', methods=['GET'])

@@ -707,11 +707,16 @@
            dos .nav-tab; nas outras abas o display continua 'block', essa regra fica inerte).
            #tab-pendentes/#tab-quarentena não usam .consulta-layout (só têm um .card direto),
            por isso o `>.card` dedicado pra elas logo abaixo. */
-        #tab-consulta, #tab-historico, #tab-pendentes, #tab-quarentena { flex-direction: column; height: 100%; min-height: 0; }
-        #tab-pendentes > .card, #tab-quarentena > .card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+        #tab-consulta, #tab-historico, #tab-pendentes, #tab-quarentena, #tab-auditoria { flex-direction: column; height: 100%; min-height: 0; }
+        #tab-pendentes > .card, #tab-quarentena > .card, #tab-auditoria > .card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
         /* A lista/tabela em si é quem realmente rola — mantém o overflow-x:auto que já existia
            inline (tabela larga em tela estreita) e ganha overflow-y:auto + flex:1 aqui. */
-        #consulta-list, #historico-list, #pendentes-list, #quarentena-list { flex: 1; min-height: 0; overflow-y: auto; }
+        #consulta-list, #historico-list, #pendentes-list, #quarentena-list, #auditoria-list { flex: 1; min-height: 0; overflow-y: auto; }
+        .auditoria-img { height: 150px; flex-shrink: 0; background: repeating-conic-gradient(#e2e8f0 0 25%, #f8fafc 0 50%) 0 0 / 16px 16px; border-radius: var(--radius-sm) var(--radius-sm) 0 0; overflow: hidden; cursor: zoom-in; }
+        .auditoria-img img { width: 100%; height: 100%; object-fit: contain; }
+        .auditoria-motivo { display: block; font-size: 0.72rem; line-height: 1.35; padding: 0.3rem 0.45rem; border-radius: 6px; background: #fef3c7; color: #92400e; margin-top: 0.25rem; }
+        .auditoria-chip { cursor: pointer; border: 1px solid var(--border); background: var(--card); color: var(--text); border-radius: 999px; padding: 0.2rem 0.65rem; font-size: 0.75rem; }
+        .auditoria-chip.ativo { background: var(--accent); border-color: var(--accent); color: #fff; }
 
         /* ===== Popup de detalhes da Quarentena: centralizado na tela (não mais deslizando pela
            lateral), com botões de navegação anterior/próximo fixos nas bordas esquerda/direita da
@@ -1039,6 +1044,10 @@
             <button class="nav-tab" data-tab="quarentena" data-title="Quarentena de Imagens" data-subtitle="Imagens rejeitadas pelo filtro de conteúdo, aguardando revisão">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
                 Quarentena <span class="badge" id="quarentena-badge-sidebar" style="display:none;"></span>
+            </button>
+            <button class="nav-tab" data-tab="auditoria" data-title="Auditoria de Imagens" data-subtitle="Imagens baixadas que não correspondem ao produto ou têm suspeita de erro de leitura">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                Auditoria <span class="badge" id="auditoria-badge-sidebar" style="display:none;"></span>
             </button>
             <button class="nav-tab" data-tab="whatsapp" data-title="WhatsApp" data-subtitle="Conecte um número via Evolution API para receber o resumo diário">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
@@ -1735,6 +1744,59 @@
                 </div>
             </div>
 
+            <!-- ===== TAB: AUDITORIA DE IMAGENS ===== -->
+            <div id="tab-auditoria" class="tab-content" style="display:none;">
+                <div class="card">
+                    <h2>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                        Auditoria de Imagens <span class="badge" id="auditoria-count-badge">carregando...</span>
+                    </h2>
+                    <p style="font-size:0.82rem; color:var(--muted); margin:0 0 0.85rem;">
+                        Varre todas as fotos já baixadas e <strong>separa as suspeitas</strong>: EAN com dígito verificador inválido (possível erro de leitura do código de barras), descrição corrompida, a mesma foto em produtos diferentes, imagem em branco/minúscula e — opcionalmente — foto que a IA acha que não corresponde à descrição. Nada é apagado sozinho: você decide por item (<em>Está correta</em> ou <em>Separar</em>, que envia pra Quarentena e tira a foto de circulação).
+                    </p>
+                    <div id="alert-auditoria"></div>
+                    <div class="form-row" style="flex-direction:row; gap:0.6rem; flex-wrap:wrap; align-items:center; margin-bottom:0.6rem;">
+                        <button class="btn btn-primary" id="btn-auditoria-executar">Executar auditoria</button>
+                        <label id="auditoria-ia-label" style="display:flex; align-items:center; gap:0.4rem; font-size:0.82rem; cursor:pointer;">
+                            <input type="checkbox" id="auditoria-usar-ia" style="width:auto;">
+                            Verificar correspondência com IA (Gemini, tem custo)
+                        </label>
+                        <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.82rem;">
+                            até <input type="number" id="auditoria-limite-ia" value="50" min="1" max="500" style="width:72px;"> imagens por execução
+                        </label>
+                    </div>
+                    <div id="auditoria-progresso" style="display:none; font-size:0.82rem; color:var(--muted); margin-bottom:0.6rem;"></div>
+                    <div id="auditoria-chips" style="display:flex; gap:0.4rem; flex-wrap:wrap; margin-bottom:0.6rem;"></div>
+                    <div class="form-row" style="flex-direction:row; gap:0.5rem; flex-wrap:wrap; align-items:flex-end; margin-bottom:0.85rem;">
+                        <div style="flex:1; min-width:160px;">
+                            <label for="auditoria-codbar" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">Filtrar por EAN</label>
+                            <input type="text" id="auditoria-codbar" placeholder="Ex: 7896116900050" autocomplete="off">
+                        </div>
+                        <div style="flex:1; min-width:160px;">
+                            <label for="auditoria-status" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">Status</label>
+                            <select id="auditoria-status" style="width:100%;">
+                                <option value="pendente" selected>Pendentes de revisão</option>
+                                <option value="ok">Marcadas como corretas</option>
+                                <option value="separada">Separadas (na Quarentena)</option>
+                                <option value="todos">Todas</option>
+                            </select>
+                        </div>
+                        <button class="btn btn-primary" id="btn-auditoria-filtrar">Filtrar</button>
+                        <button class="btn btn-danger" id="btn-auditoria-separar-todas" title="Separa todas as pendentes do filtro de motivo atual">Separar todas</button>
+                    </div>
+                    <div id="auditoria-list" class="consulta-grid" style="grid-template-columns:repeat(auto-fill, minmax(220px, 1fr));">
+                        <div class="empty-state">Carregando...</div>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:0.85rem; font-size:0.82rem; color:var(--muted);">
+                        <span id="auditoria-info">—</span>
+                        <span style="display:flex; gap:0.4rem;">
+                            <button class="btn btn-secondary btn-sm" id="btn-auditoria-prev">← Anterior</button>
+                            <button class="btn btn-secondary btn-sm" id="btn-auditoria-next">Próximo →</button>
+                        </span>
+                    </div>
+                </div>
+            </div>
+
             <!-- ===== TAB: WHATSAPP (Evolution API) ===== -->
             <div id="tab-whatsapp" class="tab-content" style="display:none;">
                 <div class="card">
@@ -2273,7 +2335,7 @@ $$('.nav-tab').forEach(btn => {
         // Abas com lista/tabela dominante viram flex column (altura travada no viewport, scroll
         // fica dentro da lista — ver regras de #tab-consulta etc. no CSS); as demais continuam
         // um bloco normal que cresce com o conteúdo e rola inteiro dentro de .content.
-        const ABAS_COM_TABELA = ['consulta', 'historico', 'pendentes', 'quarentena'];
+        const ABAS_COM_TABELA = ['consulta', 'historico', 'pendentes', 'quarentena', 'auditoria'];
         $(`#tab-${tab}`).style.display = ABAS_COM_TABELA.includes(tab) ? 'flex' : 'block';
 
         const titleEl = $('#page-title');
@@ -2288,6 +2350,7 @@ $$('.nav-tab').forEach(btn => {
         if (tab === 'historico') loadHistorico(1);
         if (tab === 'pendentes') loadImagensPendentes(1);
         if (tab === 'quarentena') loadQuarentena(1);
+        if (tab === 'auditoria') iniciarAuditoriaTab();
         if (tab === 'whatsapp') loadWhatsapp();
 
         closeSidebarMobile();
@@ -3423,7 +3486,7 @@ async function loadQuarentena(page = 1) {
             const dataFmt = new Date(r.criado_em).toLocaleString('pt-BR');
             const decisao = r.decisao || 'pendente';
             const badgeTxt = decisao === 'pendente' ? 'Pendente' : decisao === 'confirmada' ? 'Confirmada' : 'Liberada';
-            const motivoTxt = { impropria: 'Conteúdo impróprio', revisao_obrigatoria_fonte: 'Fonte exige revisão', descricao_incompativel: 'Não corresponde à descrição' }[r.motivo] || r.motivo || 'Conteúdo impróprio';
+            const motivoTxt = { impropria: 'Conteúdo impróprio', revisao_obrigatoria_fonte: 'Fonte exige revisão', descricao_incompativel: 'Não corresponde à descrição', auditoria_suspeita: 'Suspeita da auditoria' }[r.motivo] || r.motivo || 'Conteúdo impróprio';
             // "Detalhes" sempre aparece (mesmo em entradas já revisadas — dá pra reabrir o
             // contexto/link de origem depois). Confirmar/Liberar só quando ainda dá pra agir.
             const acoes = (decisao === 'pendente' && r.tem_arquivo
@@ -3451,6 +3514,196 @@ async function loadQuarentena(page = 1) {
         showAlert('alert-quarentena', `Erro: ${e.message}`, 'error');
     }
 }
+
+// ===== Auditoria de imagens (aba "Auditoria") =====
+// Botão "Executar auditoria" dispara a varredura no servidor (thread) e acompanha por polling;
+// a grade lista só o que foi sinalizado, com os motivos, e cada item tem "Está correta" ou
+// "Separar" (envia pra Quarentena e tira a foto de circulação — ver _separar_imagem_auditada).
+const AUDITORIA_ROTULOS = {
+    ean_invalido: 'EAN inválido', descricao_corrompida: 'Descrição corrompida',
+    imagem_duplicada: 'Mesma foto em outros produtos', imagem_vazia: 'Imagem em branco',
+    imagem_pequena: 'Imagem minúscula', incompativel_ia: 'IA: não corresponde',
+};
+let auditoriaPage = 1;
+let auditoriaTotalPages = 1;
+let auditoriaMotivo = '';
+let auditoriaPollTimer = null;
+
+async function auditoriaFetchJson(url, opts = {}) {
+    const res = await fetch(url, { ...opts, headers: { ...authHeaders(), ...(opts.headers || {}) } });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+    return data;
+}
+
+function renderAuditoriaProgresso(st) {
+    const el = $('#auditoria-progresso');
+    if (st.rodando) {
+        el.style.display = 'block';
+        el.innerHTML = `<span class="spinner"></span> ${escHtml(st.etapa)}${st.total ? ` — ${st.feito} de ${st.total}` : ''}`;
+    } else {
+        el.style.display = 'none';
+    }
+    $('#btn-auditoria-executar').disabled = !!st.rodando;
+    const ia = $('#auditoria-usar-ia');
+    ia.disabled = !st.ia_disponivel;
+    $('#auditoria-ia-label').title = st.ia_disponivel ? '' : 'Indisponível: o Gemini está desligado (Configurações → Comportamento), sem chave, ou a verificação imagem×descrição está desativada';
+    if (!st.ia_disponivel) ia.checked = false;
+    const badge = $('#auditoria-badge-sidebar');
+    if (st.pendentes > 0) { badge.textContent = st.pendentes; badge.style.display = 'inline-flex'; }
+    else badge.style.display = 'none';
+}
+
+async function auditoriaPoll() {
+    try {
+        const st = await auditoriaFetchJson('/admin/auditoria/status');
+        renderAuditoriaProgresso(st);
+        if (st.rodando) return;
+        clearInterval(auditoriaPollTimer);
+        auditoriaPollTimer = null;
+        if (st.terminou_em) {
+            if (st.erro) toast(st.erro, 'error');
+            else toast(`Auditoria concluída: ${st.suspeitas} imagem(ns) suspeita(s)${st.ia_verificadas ? ` · ${st.ia_verificadas} verificada(s) por IA` : ''}`, 'success');
+            loadAuditoria(1);
+        }
+    } catch (e) {
+        clearInterval(auditoriaPollTimer);
+        auditoriaPollTimer = null;
+    }
+}
+
+function auditoriaIniciarPolling() {
+    if (!auditoriaPollTimer) auditoriaPollTimer = setInterval(auditoriaPoll, 2000);
+}
+
+async function iniciarAuditoriaTab() {
+    await loadAuditoria(1);
+    try {
+        const st = await auditoriaFetchJson('/admin/auditoria/status');
+        renderAuditoriaProgresso(st);
+        if (st.rodando) auditoriaIniciarPolling();
+    } catch (e) { /* o loadAuditoria já mostra o erro */ }
+}
+
+async function loadAuditoria(page = 1) {
+    try {
+        const params = new URLSearchParams({ page, status: $('#auditoria-status').value || 'pendente' });
+        if (auditoriaMotivo) params.append('motivo', auditoriaMotivo);
+        const codbar = ($('#auditoria-codbar').value || '').trim();
+        if (codbar) params.append('codbar', codbar);
+        const data = await auditoriaFetchJson('/admin/auditoria?' + params.toString());
+        auditoriaPage = data.page;
+        auditoriaTotalPages = data.pages || 1;
+
+        $('#auditoria-count-badge').textContent = `${data.total} ${data.total === 1 ? 'imagem' : 'imagens'}`;
+        $('#auditoria-info').textContent = data.total > 0 ? `Página ${data.page} de ${data.pages} · ${data.total} imagem(ns)` : 'Nenhuma imagem encontrada';
+        $('#btn-auditoria-prev').disabled = data.page <= 1;
+        $('#btn-auditoria-next').disabled = data.page >= data.pages;
+
+        const totalPend = Object.values(data.resumo).reduce((a, b) => a + b, 0);
+        const chips = [`<button class="auditoria-chip ${auditoriaMotivo ? '' : 'ativo'}" data-motivo="">Todos os motivos</button>`]
+            .concat(Object.entries(data.resumo).sort((a, b) => b[1] - a[1]).map(([m, n]) =>
+                `<button class="auditoria-chip ${auditoriaMotivo === m ? 'ativo' : ''}" data-motivo="${escHtml(m)}">${escHtml(AUDITORIA_ROTULOS[m] || m)} (${n})</button>`));
+        $('#auditoria-chips').innerHTML = totalPend || auditoriaMotivo ? chips.join('') : '';
+        // Lote só com um motivo escolhido (o backend também exige) — ver admin_auditoria_separar_todas.
+        const btnLote = $('#btn-auditoria-separar-todas');
+        btnLote.disabled = !auditoriaMotivo;
+        btnLote.title = auditoriaMotivo ? 'Separa todas as pendentes deste motivo' : 'Escolha um motivo acima pra separar em lote';
+
+        const list = $('#auditoria-list');
+        if (!data.itens.length) {
+            list.innerHTML = `<div class="empty-state">Nenhuma imagem suspeita com esse filtro. Clique em "Executar auditoria" pra varrer as fotos.</div>`;
+            return;
+        }
+        list.innerHTML = data.itens.map(r => {
+            const motivos = r.motivos.map(m => `<span class="auditoria-motivo" title="${escHtml(r.detalhes[m] || '')}"><strong>${escHtml(AUDITORIA_ROTULOS[m] || m)}</strong><br>${escHtml(r.detalhes[m] || '')}</span>`).join('');
+            const acoes = r.decisao === null
+                ? `<button class="btn btn-secondary btn-sm" data-action="auditoria-ok" data-id="${r.id}">Está correta</button>
+                   <button class="btn btn-danger btn-sm" data-action="auditoria-separar" data-id="${r.id}">Separar</button>`
+                : `<span class="quarentena-card-badge ${r.decisao === 'ok' ? 'liberada' : 'confirmada'}">${r.decisao === 'ok' ? 'Correta' : 'Separada'}</span>`;
+            return `<div class="produto-card">
+                <div class="auditoria-img" data-action="auditoria-zoom">${r.imagem_url ? `<img src="${escHtml(r.imagem_url)}" alt="Foto do produto" loading="lazy">` : `<span style="color:var(--muted); font-size:0.75rem; padding:1rem; display:block;">Sem arquivo</span>`}</div>
+                <div class="produto-card-body">
+                    <span class="produto-card-ean">${escHtml(r.codbar)}</span>
+                    <div class="produto-card-desc">${escHtml(r.descricao || 'Descrição não disponível')}</div>
+                    ${r.marca ? `<div class="produto-card-marca">${escHtml(r.marca)}</div>` : ''}
+                    <div>${motivos}</div>
+                    <div class="produto-card-actions">${acoes}</div>
+                </div>
+            </div>`;
+        }).join('');
+    } catch (e) {
+        $('#auditoria-list').innerHTML = `<div class="empty-state">Erro ao carregar a auditoria.</div>`;
+        showAlert('alert-auditoria', `Erro: ${e.message}`, 'error');
+    }
+}
+
+$('#btn-auditoria-executar').addEventListener('click', async () => {
+    const usarIa = $('#auditoria-usar-ia').checked;
+    const limite = parseInt($('#auditoria-limite-ia').value, 10) || 50;
+    if (usarIa && !confirm(`A verificação por IA usa o Gemini (pago) em até ${limite} imagens nesta execução. Continuar?`)) return;
+    try {
+        await auditoriaFetchJson('/admin/auditoria/executar', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ usar_ia: usarIa, limite_ia: limite }),
+        });
+        $('#btn-auditoria-executar').disabled = true;
+        auditoriaIniciarPolling();
+        auditoriaPoll();
+    } catch (e) {
+        toast('Erro ao iniciar a auditoria: ' + e.message, 'error');
+    }
+});
+
+$('#btn-auditoria-filtrar').addEventListener('click', () => loadAuditoria(1));
+$('#auditoria-status').addEventListener('change', () => loadAuditoria(1));
+$('#auditoria-codbar').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadAuditoria(1); });
+$('#btn-auditoria-prev').addEventListener('click', () => { if (auditoriaPage > 1) loadAuditoria(auditoriaPage - 1); });
+$('#btn-auditoria-next').addEventListener('click', () => { if (auditoriaPage < auditoriaTotalPages) loadAuditoria(auditoriaPage + 1); });
+$('#auditoria-chips').addEventListener('click', (e) => {
+    const chip = e.target.closest('.auditoria-chip');
+    if (!chip) return;
+    auditoriaMotivo = chip.dataset.motivo || '';
+    loadAuditoria(1);
+});
+
+$('#btn-auditoria-separar-todas').addEventListener('click', async () => {
+    if (!auditoriaMotivo) return;
+    const alvo = `as pendentes do motivo "${AUDITORIA_ROTULOS[auditoriaMotivo] || auditoriaMotivo}"`;
+    if (!confirm(`Separar ${alvo}? As fotos saem de circulação (vão pra Quarentena) e as artes geradas a partir delas são apagadas. Até 500 por vez.`)) return;
+    try {
+        const data = await auditoriaFetchJson('/admin/auditoria/separar-todas', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ motivo: auditoriaMotivo }),
+        });
+        toast(data.message, data.falhas ? 'error' : 'success');
+        iniciarAuditoriaTab();
+    } catch (e) {
+        toast('Erro: ' + e.message, 'error');
+    }
+});
+
+$('#auditoria-list').addEventListener('click', async (e) => {
+    const zoom = e.target.closest('[data-action="auditoria-zoom"]');
+    if (zoom) {
+        const img = zoom.querySelector('img');
+        if (img) openLightbox(img.src);
+        return;
+    }
+    const btn = e.target.closest('[data-action="auditoria-ok"], [data-action="auditoria-separar"]');
+    if (!btn) return;
+    const separar = btn.dataset.action === 'auditoria-separar';
+    if (separar && !confirm('Separar esta imagem? Ela sai de circulação e vai pra Quarentena (a arte gerada a partir dela também é apagada).')) return;
+    btn.disabled = true;
+    try {
+        const data = await auditoriaFetchJson(`/admin/auditoria/${btn.dataset.id}/${separar ? 'separar' : 'ok'}`, { method: 'POST' });
+        toast(data.message, 'success');
+        iniciarAuditoriaTab();
+    } catch (err) {
+        toast('Erro: ' + err.message, 'error');
+        btn.disabled = false;
+    }
+});
 
 $('#btn-quarentena-filtrar').addEventListener('click', () => loadQuarentena(1));
 $('#quarentena-codbar').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadQuarentena(1); });
@@ -3624,7 +3877,7 @@ async function openQuarentenaDetail(id) {
     $('#quarentena-detail-prev').disabled = (indice <= 0) && quarentenaPage <= 1;
     $('#quarentena-detail-next').disabled = (indice === -1 || indice >= ultimaQuarentenaData.length - 1) && quarentenaPage >= quarentenaTotalPages;
 
-    const motivoTxt = { impropria: 'Conteúdo impróprio', revisao_obrigatoria_fonte: 'Fonte exige revisão', descricao_incompativel: 'Não corresponde à descrição' }[r.motivo] || r.motivo || 'Conteúdo impróprio';
+    const motivoTxt = { impropria: 'Conteúdo impróprio', revisao_obrigatoria_fonte: 'Fonte exige revisão', descricao_incompativel: 'Não corresponde à descrição', auditoria_suspeita: 'Suspeita da auditoria' }[r.motivo] || r.motivo || 'Conteúdo impróprio';
     const decisao = r.decisao || 'pendente';
     const decisaoTxt = decisao === 'pendente' ? 'Pendente de revisão' : decisao === 'confirmada' ? 'Confirmada (imprópria)' : 'Liberada (falso positivo)';
 
