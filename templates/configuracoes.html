@@ -2361,6 +2361,27 @@ $('#btn-2fa-desativar').addEventListener('click', async () => {
     } catch (err) { showAlert('alert-2fa', err.message, 'error'); }
 });
 
+// Sessão revogada/expirada no servidor (ex.: login em duas etapas foi ativado): volta pra tela de
+// login em vez de deixar o painel cheio de erro. Só reage a 401 de rota nossa com Authorization.
+(function () {
+    const fetchOriginal = window.fetch.bind(window);
+    window.fetch = async function (input, init) {
+        const resp = await fetchOriginal(input, init);
+        try {
+            const url = typeof input === 'string' ? input : (input && input.url) || '';
+            const enviouToken = init && init.headers && (init.headers.Authorization || init.headers.authorization);
+            if (resp.status === 401 && enviouToken && url.startsWith('/') && !url.startsWith('/login')) {
+                const corpo = await resp.clone().json().catch(() => ({}));
+                if (/revoked|expired/i.test(corpo.msg || '')) {
+                    limparSessao();
+                    mostrarTelaLogin();
+                }
+            }
+        } catch (e) {}
+        return resp;
+    };
+})();
+
 function salvarSessao(tok, expiraEmMs) {
     token = tok;
     definirCookieImagens(tok, expiraEmMs);

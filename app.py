@@ -2992,6 +2992,23 @@ def _chaves_terminal():
     return chaves
 
 
+def _sessao_admin_revogada(jwt_data):
+    """True se um token de PAINEL foi emitido antes do corte `SESSAO_MINIMA_IAT` (gravado ao
+    ativar o login em duas etapas): quem já estava logado só com senha precisa entrar de novo,
+    agora com o código do e-mail. Token de terminal não é afetado."""
+    if jwt_data.get('tipo') == 'terminal':
+        return False
+    try:
+        return float(jwt_data.get('iat', 0)) < float(_config_cacheada('SESSAO_MINIMA_IAT', '0', ttl=5) or 0)
+    except (TypeError, ValueError):
+        return False
+
+
+@jwt.token_in_blocklist_loader
+def _token_do_painel_revogado(jwt_header, jwt_data):
+    return _sessao_admin_revogada(jwt_data)
+
+
 @jwt.token_verification_loader
 def _restringir_token_de_terminal(jwt_header, jwt_data):
     """Token de terminal só vale nas rotas de imagem — as rotas do painel (`@jwt_required()`)
@@ -3055,9 +3072,9 @@ def _exigir_token_nas_imagens():
     tok = tok or request.args.get('token') or request.cookies.get('mupa_img')
     if tok:
         try:
-            decode_token(tok)
-            _token_imagens_stats['com_token'] += 1
-            return None
+            if not _sessao_admin_revogada(decode_token(tok)):
+                _token_imagens_stats['com_token'] += 1
+                return None
         except Exception:
             pass
     _token_imagens_stats['sem_token'] += 1
@@ -3086,7 +3103,8 @@ def _proteger_documentacao_da_api():
     tok = auth[7:].strip() if auth.lower().startswith('bearer ') else request.cookies.get('mupa_img')
     if tok:
         try:
-            if decode_token(tok).get('tipo') != 'terminal':
+            dados_tok = decode_token(tok)
+            if dados_tok.get('tipo') != 'terminal' and not _sessao_admin_revogada(dados_tok):
                 return None
         except Exception:
             pass
@@ -3320,8 +3338,9 @@ def configuracoes():
                 return jsonify({'message': 'Código incorreto.'}), 400
             pend.clear()
             set_config('LOGIN_2FA_ATIVO', 'true')
+            set_config('SESSAO_MINIMA_IAT', str(int(time.time())))
             _config_cache.clear()
-            return jsonify({'message': 'Login em duas etapas ativado.', 'saved': True})
+            return jsonify({'message': 'Login em duas etapas ativado. Você será desconectado: entre de novo com e-mail, senha e o código.', 'saved': True})
 
         elif action == '2fa_desativar':
             set_config('LOGIN_2FA_ATIVO', 'false')
