@@ -6353,6 +6353,164 @@ def admin_upload_artes_lote():
                     'falhas': sum(1 for r in resultados if not r['ok'])}), 200
 
 
+def _nome_legivel_para_arte(texto):
+    """Descrições do catálogo costumam vir TODAS EM MAIÚSCULAS ('ACHOCOLATADO EM PÓ NESCAU 800G');
+    pra aparecer numa arte fica melhor em maiúsculas/minúsculas normais. Só mexe quando o texto
+    está todo em caixa alta — o que alguém digitou do jeito certo é mantido."""
+    texto = re.sub(r'\s{2,}', ' ', (texto or '').strip())
+    if texto and texto.isupper():
+        minusculas = {'DE', 'DA', 'DO', 'DAS', 'DOS', 'E', 'EM', 'COM', 'PARA', 'SEM', 'A', 'O'}
+        palavras = texto.lower().split(' ')
+        capitalizar = lambda w: '-'.join(parte.capitalize() for parte in w.split('-'))
+        return ' '.join(p if (i > 0 and p.upper() in minusculas) else capitalizar(p) for i, p in enumerate(palavras))
+    return texto
+
+
+def _formatar_quantidade_embalagem(quantidade):
+    """'800G' -> '800g', '600ML' -> '600ml', '2L' -> '2L' (litro fica maiúsculo, como na embalagem)."""
+    q = (quantidade or '').strip()
+    m = re.fullmatch(r'(\d+[.,]?\d*)\s?([A-Za-z]+)', q)
+    if not m:
+        return q
+    unidade = m.group(2).lower()
+    return f"{m.group(1)}{'L' if unidade == 'l' else unidade}"
+
+
+def _montar_prompt_arte_manual(descricao, marca, nome, quantidade, headline, beneficios, orientacao, cor):
+    """Prompt COMPLETO pra colar numa IA de imagem de chat (Gemini, ChatGPT...) junto com a foto
+    do produto, quando a arte vai ser feita à mão em vez de pela fila automática. Diferente do
+    `ARTE_PROMPT_TEMPLATE` (que pede só a CENA e deixa o texto pro PIL), aqui a IA desenha a peça
+    inteira — cena, painel de cor e textos — já no layout que o terminal espera, com a área do
+    preço vazia (o app desenha o preço por cima). Depois é só enviar a imagem na aba Artes."""
+    vertical = orientacao == 'vertical'
+    largura, altura, _ = ARTES_ORIENTACOES['vertical' if vertical else 'horizontal']
+    proporcao = '5:8' if vertical else '16:10'
+    nome = _nome_legivel_para_arte(nome or descricao)
+    nome, qtd = _extrair_quantidade_embalagem(descricao, nome)
+    quantidade = (quantidade or qtd or '').strip()
+    quantidade = _formatar_quantidade_embalagem(quantidade)
+    marca = _nome_legivel_para_arte(marca)
+    destaque, resto = _separar_marca_do_nome(nome, marca)
+    if marca and resto:
+        # a marca já aparece grande na linha 1: não repetir dentro do nome menor
+        resto = re.sub(re.escape(marca), '', resto, flags=re.IGNORECASE)
+        resto = re.sub(r'\s{2,}', ' ', resto).strip(' -,')
+    linha_nome = ' '.join(x for x in [resto, quantidade] if x).strip()
+    cor_txt = (cor or '').strip() or 'a cor dominante da embalagem do produto, vibrante e saturada, de tom médio-escuro e com bom contraste para texto branco'
+    beneficios = [b.strip() for b in (beneficios or []) if b and b.strip()][:3]
+
+    textos = []
+    if destaque:
+        textos.append(f'- Linha 1, GRANDE e em destaque (fonte sem serifa, peso regular): "{destaque}"')
+    if linha_nome:
+        textos.append(f'- Linha 2, bem MENOR e mais leve (peso fino), logo abaixo da linha 1: "{linha_nome}"')
+    textos.append('- Um sublinhado branco fino logo abaixo dos nomes.')
+    if (headline or '').strip():
+        textos.append(f'- Frase de destaque, curta, abaixo do sublinhado: "{headline.strip()}"')
+    else:
+        textos.append('- Uma frase de destaque curta (no máximo 6 palavras, em português) abaixo do sublinhado, coerente com o produto e SEM prometer nada que não esteja na embalagem.')
+    bloco_textos = '\n'.join(textos)
+    if beneficios:
+        lista = '\n'.join(f'  {i + 1}. "{b}"' for i, b in enumerate(beneficios))
+        onde = ('dentro da faixa superior, encostados na borda direita e na parte de baixo da cena' if vertical
+                else 'encostados na borda direita da imagem, na parte de baixo')
+        quantos = 'exatamente este texto' if len(beneficios) == 1 else 'exatamente estes %d textos, nesta ordem' % len(beneficios)
+        bloco_benef = f'SELOS DE BENEFÍCIO ({quantos}):\n{lista}\nCada um dentro de uma cápsula escura translúcida com um círculo de check na cor do painel, empilhados, {onde}, sem cobrir o produto.'
+    else:
+        bloco_benef = 'NÃO inclua selos de benefício nem listas de vantagens.'
+
+    if vertical:
+        layout = f"""LAYOUT (imagem EM PÉ, {largura}x{altura} px, proporção {proporcao}) — siga exatamente:
+- FAIXA SUPERIOR (de 0% a 45% da altura): a cena fotográfica com o produto, grande, centralizado e 100% visível, sem nenhum corte. Nenhum texto aqui.
+- FAIXA INFERIOR (de 45% a 100% da altura): um painel de cor sólida, na cor: {cor_txt}, cobrindo toda a largura, com a borda de cima em uma curva suave e orgânica (uma onda), sobreposto à base da cena.
+- Dentro do painel, a partir do topo (logo abaixo da curva), nesta ordem:
+{bloco_textos}
+- CAIXA RESERVADA PARA O PREÇO: um retângulo branco de cantos bem arredondados com sombra suave embaixo (efeito de elevação), ocupando de 7% a 93% da largura e de 61% a 75% da altura total da imagem. Deve ficar COMPLETAMENTE VAZIA (sem número, sem "R$", sem texto) — o preço real é colocado por cima depois pelo app.
+- O restante do painel abaixo da caixa fica liso, só na cor do painel.
+{bloco_benef}"""
+    else:
+        layout = f"""LAYOUT (imagem DEITADA, {largura}x{altura} px, proporção {proporcao}) — siga exatamente:
+- METADE DIREITA: a cena fotográfica com o produto, grande, centralizado nessa metade, 100% visível, sem nenhum corte e sem invadir a metade esquerda.
+- METADE ESQUERDA: um painel de cor sólida, na cor: {cor_txt}, cobrindo toda a altura, com a borda direita em uma curva suave e orgânica (uma onda) que não passa de 46% da largura total e nunca encosta no produto.
+- Dentro do painel, na faixa de CIMA (começando a cerca de 13% da altura), nesta ordem:
+{bloco_textos}
+- A parte de BAIXO do painel (cerca de 40% da altura) fica LISA, só na cor do painel e SEM nenhum texto ou número — o preço é colocado ali depois pelo app. Não escreva preço, "R$" nem desenhe caixa de preço.
+{bloco_benef}"""
+
+    cabecalho = '\n'.join(x for x in [f'PRODUTO: {descricao}', f'Marca: {marca}' if marca else '', f'Quantidade/tamanho: {quantidade}' if quantidade else ''] if x)
+
+    return f"""Crie UMA imagem final de peça publicitária premium para a tela de um terminal de consulta de preços em supermercado. Estou anexando a FOTO DO PRODUTO: use exatamente essa embalagem.
+
+{cabecalho}
+
+OBJETIVO: uma microexperiência de venda. O cliente já está com o produto em mãos; a imagem deve provocar "isso parece ótimo, eu quero levar" antes de ler qualquer texto. Aparência de campanha real de uma grande marca (padrão Coca-Cola, Nestlé, Ambev), nunca de panfleto ou ficha técnica.
+
+CENA:
+- Se o produto é alimento ou bebida: cena gastronômica apetitosa, ingredientes frescos, textura real. Bebida gelada: só um leve toque de condensação, discreto, sem escorrer, mantendo o rótulo totalmente legível.
+- Se NÃO é alimento (higiene, beleza, limpeza, eletrônico etc.): contexto de uso real da categoria (banheiro/spa moderno, rotina de cuidado, casa impecável). Nunca coloque comida só porque o nome cita um sabor ou fragrância (chocolate, menta, coco...).
+- Na dúvida, cenário neutro e elegante com iluminação de estúdio.
+- Fotografia de still-life comercial: iluminação cinematográfica, profundidade de campo controlada, fundo levemente desfocado, texturas realistas, cores vibrantes.
+
+REGRAS DO PRODUTO:
+- Remova COMPLETAMENTE o fundo branco da foto anexada e integre o produto à cena de forma realista (luz, sombras, reflexos e perspectiva coerentes), como se tivesse sido fotografado ali.
+- Preserve fielmente embalagem, formato, proporções, cores, logotipo e textos do rótulo. Não invente informações nem altere a identidade visual.
+- O produto aparece UMA ÚNICA VEZ. Nada de cópia, reflexo, versão menor ou desfocada dele em outro lugar.
+- Sem pessoas, rostos ou mãos. Sem QR Code. Sem preço e sem promoção. Não adicione logotipos de terceiros além do que já está impresso na embalagem.
+
+{layout}
+
+REGRA DE TEXTO: escreva SOMENTE os textos listados acima, exatamente como estão, com ortografia e acentuação corretas, em fonte limpa e legível. Nenhum outro texto na imagem além do que já vem impresso na embalagem.
+
+ANTES DE ENTREGAR: confira se todos os textos estão sem erro de digitação, se o produto está inteiro e aparece uma vez só, e se a caixa/área do preço está vazia. Se algo estiver errado, corrija e gere de novo.
+
+SAÍDA: imagem {largura}x{altura} px ({proporcao}). Se a ferramenta não aceitar o tamanho exato, gere nessa proporção."""
+
+
+@app.route('/admin/artes/produto/<codbar>', methods=['GET'])
+@jwt_required()
+def admin_artes_produto(codbar):
+    """Dados pra montar o prompt de uma arte feita à mão: busca o EAN no nosso banco e devolve
+    descrição/marca (quando existem), sugestão de nome/quantidade e a foto atual, se houver."""
+    codbar = (codbar or '').strip()
+    if not re.fullmatch(r'\d{8,14}', codbar):
+        return jsonify({'message': 'EAN inválido (use de 8 a 14 dígitos).'}), 400
+    produto = Produto.query.filter_by(codbar=codbar).first()
+    foto = find_existing_image(codbar, PROCESSED_IMAGES_FOLDER, ALLOWED_EXTENSIONS) or find_existing_image(codbar, IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+    descricao = (produto.description or '').strip() if produto else ''
+    corrompida = bool(descricao) and _texto_corrompido(descricao)
+    nome_sugerido, quantidade = _extrair_quantidade_embalagem(descricao, _nome_legivel_para_arte(descricao)) if descricao and not corrompida else ('', None)
+    return jsonify({
+        'encontrado': bool(produto and descricao), 'cadastrado': produto is not None,
+        'descricao': '' if corrompida else descricao, 'descricao_corrompida': corrompida,
+        'marca': (produto.marca or '').strip() if produto and not _texto_corrompido(produto.marca or '') else '',
+        'nome_sugerido': nome_sugerido, 'quantidade_sugerida': _formatar_quantidade_embalagem(quantidade or ''),
+        'foto_url': _static_url(foto) if foto else None,
+        'tem_arte': {o: os.path.exists(os.path.join(ARTES_FOLDER, f'{codbar}{v[2]}.webp')) for o, v in ARTES_ORIENTACOES.items()},
+    })
+
+
+@app.route('/admin/artes/prompt', methods=['POST'])
+@jwt_required()
+def admin_artes_prompt():
+    """Gera o prompt pra colar numa IA de imagem de chat (ver `_montar_prompt_arte_manual`).
+    JSON: descricao (obrigatória), marca, nome, quantidade, headline, beneficios[], orientacao, cor."""
+    d = request.get_json(silent=True) or {}
+    descricao = (d.get('descricao') or '').strip()
+    if len(descricao) < 3:
+        return jsonify({'message': 'Informe a descrição do produto.'}), 400
+    orientacao = (d.get('orientacao') or 'horizontal').strip().lower()
+    if orientacao not in ARTES_ORIENTACOES:
+        return jsonify({'message': 'Orientação inválida.'}), 400
+    beneficios = d.get('beneficios') or []
+    if isinstance(beneficios, str):
+        beneficios = beneficios.splitlines()
+    prompt = _montar_prompt_arte_manual(
+        descricao, (d.get('marca') or '').strip(), (d.get('nome') or '').strip(),
+        (d.get('quantidade') or '').strip(), d.get('headline') or '', beneficios, orientacao, d.get('cor') or '')
+    return jsonify({'prompt': prompt, 'orientacao': orientacao,
+                    'tamanho': '%dx%d' % ARTES_ORIENTACOES[orientacao][:2]})
+
+
 @app.route('/admin/artes/<codbar>', methods=['DELETE'])
 @jwt_required()
 def admin_excluir_arte(codbar):
