@@ -66,7 +66,10 @@ PROCESSED_IMAGES_FOLDER = 'static/processed_images'
 QUARENTENA_FOLDER = 'quarentena_imagens'
 AUDIO_FOLDER = 'static/audios'
 ARTES_FOLDER = 'static/artes_geradas'
-FONT_PATH = 'static/fonts/Montserrat-Variable.ttf'
+# Fonte da arte: fica em assets/ (versionado), NÃO em static/ — static/ não vai pro git, e na VPS a
+# fonte nunca existiu: toda geração de arte falhava com "cannot open resource" DEPOIS de o Gemini
+# já ter gerado (e cobrado) a cena.
+FONT_PATH = 'assets/fonts/Montserrat-Variable.ttf'
 GOOGLE_API_KEY = 'AIzaSyDcgpSF9cRmzLwGqIk44x-3_GZjTfUChtM'
 GOOGLE_CX = '053e66708840f4936'
 ZAFFARI_SEARCH_URL = 'https://zaffari.vtexcommercestable.com.br/api/catalog_system/pub/products/search'
@@ -1144,6 +1147,9 @@ def _worker_fila_arte():
         job = _fila_arte.get()
         try:
             with app.app_context():
+                if not os.path.exists(FONT_PATH):
+                    # confere ANTES de chamar o Gemini: sem a fonte a arte não fecha, e a chamada seria paga à toa
+                    raise FileNotFoundError(f'Fonte da arte ausente no servidor ({FONT_PATH})')
                 produto = Produto.query.filter_by(codbar=job.codbar).first()
                 if produto:
                     if job.orientacao == 'vertical':
