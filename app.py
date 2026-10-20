@@ -3279,6 +3279,21 @@ def configuracoes():
             set_config('TERMINAL_API_KEYS', texto)
             return jsonify({'message': 'Chaves dos terminais salvas', 'saved': True})
 
+        elif action == 'save_2fa_config':
+            # E-mail que recebe o código e remetente (precisa ser de um domínio verificado no
+            # Resend, senão o Resend só entrega para o dono da conta). Vazio = usa o padrão.
+            destino = (data.get('destino') or '').strip()
+            remetente = (data.get('remetente') or '').strip()
+            if destino and not re.fullmatch(r'[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+', destino):
+                return jsonify({'message': 'E-mail de destino inválido.'}), 400
+            if remetente and not re.search(r'[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+', remetente):
+                return jsonify({'message': 'Remetente inválido. Use o formato: Mupa Brain <no-reply@seudominio.com>'}), 400
+            set_config('LOGIN_2FA_DESTINO', destino)
+            set_config('LOGIN_2FA_REMETENTE', remetente)
+            _config_cache.clear()
+            _codigo_teste_2fa.clear()
+            return jsonify({'message': 'Configuração do e-mail salva. Envie um novo código de teste.', 'saved': True})
+
         elif action == '2fa_enviar_teste':
             # Passo 1 de ligar o login em duas etapas: manda um código de teste pro e-mail de
             # segurança. Só liga depois de a pessoa digitar o código recebido (prova que o e-mail
@@ -3466,6 +3481,8 @@ def configuracoes():
         'exigir_token_imagens': cfg.get('EXIGIR_TOKEN_IMAGENS', 'false') == 'true',
         'login_2fa_ativo': cfg.get('LOGIN_2FA_ATIVO', 'false') == 'true',
         'login_2fa_destino': _mascarar_email((cfg.get('LOGIN_2FA_DESTINO') or '').strip() or LOGIN_2FA_DESTINO_PADRAO),
+        'login_2fa_destino_cfg': (cfg.get('LOGIN_2FA_DESTINO') or '').strip(),
+        'login_2fa_remetente': (cfg.get('LOGIN_2FA_REMETENTE') or '').strip(),
         'cosmos_tokens_full': '\n'.join(_lista_tokens_cosmos()),
         'cosmos_status': cosmos_status,
         'notificacoes': {chave: cfg.get(chave, '') for chave in NOTIFICACAO_CONFIG_KEYS},
@@ -3502,6 +3519,8 @@ def api_config():
         'exigir_token_imagens': cfg.get('EXIGIR_TOKEN_IMAGENS', 'false') == 'true',
         'login_2fa_ativo': cfg.get('LOGIN_2FA_ATIVO', 'false') == 'true',
         'login_2fa_destino': _mascarar_email((cfg.get('LOGIN_2FA_DESTINO') or '').strip() or LOGIN_2FA_DESTINO_PADRAO),
+        'login_2fa_destino_cfg': (cfg.get('LOGIN_2FA_DESTINO') or '').strip(),
+        'login_2fa_remetente': (cfg.get('LOGIN_2FA_REMETENTE') or '').strip(),
         'use_openai': cfg.get('USE_OPENAI_SUGESTIONS', 'true') == 'true',
         'rembg_enabled': cfg.get('REMBG_ENABLED', 'false') == 'true',
         'busca_imagem_online_ativa': cfg.get('BUSCA_IMAGEM_ONLINE_ATIVA', 'true') == 'true',

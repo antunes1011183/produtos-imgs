@@ -1429,6 +1429,15 @@
                     </h2>
                     <p style="font-size:0.85rem; color:var(--muted); margin-bottom:0.75rem;">Com isto ligado, depois de e-mail e senha o painel pede um código de 6 dígitos enviado para <strong id="twofa-destino">support@mupa.app</strong>. O código vale 10 minutos e só pode ser usado uma vez. Os terminais de consulta de preço não são afetados.</p>
                     <div id="alert-2fa"></div>
+                    <div class="form-row" style="margin-bottom:0.6rem;">
+                        <label for="twofa-destino-input">E-mail que recebe o código</label>
+                        <input type="text" id="twofa-destino-input" placeholder="support@mupa.app" autocomplete="off">
+                    </div>
+                    <div class="form-row" style="margin-bottom:0.6rem;">
+                        <label for="twofa-remetente-input">Remetente (domínio verificado no Resend)</label>
+                        <input type="text" id="twofa-remetente-input" placeholder="Mupa Brain &lt;no-reply@mupa.app&gt;" autocomplete="off">
+                    </div>
+                    <button class="btn btn-secondary btn-sm" id="btn-2fa-salvar-cfg" style="margin-bottom:0.9rem;">Salvar e-mail</button>
                     <div id="twofa-status" style="font-size:0.9rem; font-weight:600; margin-bottom:0.75rem;">—</div>
                     <div id="twofa-ativar-box">
                         <button class="btn btn-primary btn-sm" id="btn-2fa-enviar">Enviar código de teste</button>
@@ -2311,6 +2320,16 @@ async function acao2fa(action, extra) {
     return data;
 }
 
+$('#btn-2fa-salvar-cfg').addEventListener('click', async (e) => {
+    const btn = e.currentTarget; btn.disabled = true;
+    try {
+        const d = await acao2fa('save_2fa_config', { destino: $('#twofa-destino-input').value, remetente: $('#twofa-remetente-input').value });
+        showAlert('alert-2fa', d.message, 'success');
+        if ($('#twofa-destino-input').value.trim()) $('#twofa-destino').textContent = $('#twofa-destino-input').value.trim();
+    } catch (err) { showAlert('alert-2fa', err.message, 'error'); }
+    finally { btn.disabled = false; }
+});
+
 $('#btn-2fa-enviar').addEventListener('click', async (e) => {
     const btn = e.currentTarget; btn.disabled = true;
     try {
@@ -2572,6 +2591,8 @@ async function loadConfig() {
         $('#terminal-keys').value = cfg.terminal_keys_full || '';
         setToggle('toggle-exigir-token', cfg.exigir_token_imagens);
         atualizarCard2fa(cfg.login_2fa_ativo, cfg.login_2fa_destino);
+        $('#twofa-destino-input').value = cfg.login_2fa_destino_cfg || '';
+        $('#twofa-remetente-input').value = cfg.login_2fa_remetente || '';
         loadTokenTerminalStatus();
         $('#proxy-vps-url').value = cfg.proxy_imagens_vps_url || '';
         $('#proxy-vps-ativo').checked = !!cfg.proxy_imagens_vps_ativo;
