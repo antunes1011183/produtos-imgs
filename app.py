@@ -6174,6 +6174,158 @@ def admin_enviar_resumo_diario():
 
 
 # =====================================================================
+# Galeria de artes publicitárias (listar tudo que já foi criado + enviar arte própria por EAN)
+# =====================================================================
+ARTES_ORIENTACOES = {
+    'horizontal': (ARTE_LARGURA_HORIZONTAL, ARTE_ALTURA_HORIZONTAL, ''),
+    'vertical': (ARTE_LARGURA_VERTICAL, ARTE_ALTURA_VERTICAL, '_vertical'),
+}
+
+
+def _listar_artes_em_disco():
+    """Varre `ARTES_FOLDER` e devolve uma entrada por arquivo `<ean>.webp` (horizontal) ou
+    `<ean>_vertical.webp` (vertical) — a mesma convenção de `_arte_url`. Outros arquivos da
+    pasta (nome que não é um EAN) são ignorados."""
+    artes = []
+    try:
+        with os.scandir(ARTES_FOLDER) as it:
+            for e in it:
+                if not e.is_file() or not e.name.lower().endswith('.webp'):
+                    continue
+                stem = e.name[:-5]
+                orient = 'vertical' if stem.endswith('_vertical') else 'horizontal'
+                ean = stem[:-9] if orient == 'vertical' else stem
+                if not re.fullmatch(r'\d{6,14}', ean):
+                    continue
+                st = e.stat()
+                artes.append({'codbar': ean, 'orientacao': orient, 'arquivo': e.name,
+                              'mtime': st.st_mtime, 'tamanho': st.st_size})
+    except FileNotFoundError:
+        pass
+    return artes
+
+
+@app.route('/admin/artes', methods=['GET'])
+@jwt_required()
+def admin_listar_artes():
+    """Lista paginada das artes já criadas (geradas pela IA ou enviadas à mão), mais recentes
+    primeiro. Filtros: `q` (EAN, parte do EAN, ou texto da descrição/marca) e `orientacao`."""
+    q = (request.args.get('q') or '').strip()
+    orient = (request.args.get('orientacao') or 'todas').strip().lower()
+    try:
+        page = max(1, int(request.args.get('page', 1)))
+        per_page = min(60, max(1, int(request.args.get('per_page', 24))))
+    except ValueError:
+        page, per_page = 1, 24
+
+    artes = _listar_artes_em_disco()
+    contagem = {'horizontal': sum(1 for a in artes if a['orientacao'] == 'horizontal'),
+                'vertical': sum(1 for a in artes if a['orientacao'] == 'vertical')}
+    if orient in ARTES_ORIENTACOES:
+        artes = [a for a in artes if a['orientacao'] == orient]
+    if q:
+        if q.isdigit():
+            artes = [a for a in artes if q in a['codbar']]
+        else:
+            like = f'%{q}%'
+            achados = Produto.query.filter(
+                db.or_(Produto.description.ilike(like), Produto.marca.ilike(like))
+            ).with_entities(Produto.codbar).limit(2000).all()
+            eans = {r[0] for r in achados}
+            artes = [a for a in artes if a['codbar'] in eans]
+    artes.sort(key=lambda a: a['mtime'], reverse=True)
+
+    total = len(artes)
+    pagina = artes[(page - 1) * per_page: page * per_page]
+    produtos = {p.codbar: p for p in Produto.query.filter(Produto.codbar.in_([a['codbar'] for a in pagina])).all()} if pagina else {}
+    registros = []
+    for a in pagina:
+        prod = produtos.get(a['codbar'])
+        registros.append({
+            'codbar': a['codbar'], 'orientacao': a['orientacao'],
+            'descricao': prod.description if prod else None, 'marca': prod.marca if prod else None,
+            'cadastrado': prod is not None,
+            'url': f"/static/artes_geradas/{a['arquivo']}?v={int(a['mtime'])}",
+            'atualizado_em': datetime.utcfromtimestamp(a['mtime']).isoformat() + 'Z',
+            'tamanho': a['tamanho'],
+        })
+    return jsonify({'registros': registros, 'total': total, 'page': page, 'per_page': per_page,
+                    'total_pages': max(1, -(-total // per_page)), 'contagem': contagem})
+
+
+@app.route('/admin/artes/upload/<codbar>', methods=['POST'])
+@jwt_required()
+def admin_upload_arte(codbar):
+    """Envia uma arte pronta para um EAN (campo `file`; `orientacao` = horizontal|vertical).
+    A arte SEMPRE sai no tamanho fixo do terminal (1280x800 ou 1200x1920, mesma regra de
+    `_normalizar_tamanho_arte`): imagem de outra proporção é redimensionada e cortada no centro.
+    Substitui a arte existente. Arte que existe nunca é regerada sozinha, então a enviada fica."""
+    codbar = (codbar or '').strip()
+    if not re.fullmatch(r'\d{8,14}', codbar):
+        return jsonify({'message': 'EAN inválido (use de 8 a 14 dígitos).'}), 400
+    orient = (request.form.get('orientacao') or 'horizontal').strip().lower()
+    if orient not in ARTES_ORIENTACOES:
+        return jsonify({'message': 'Orientação inválida (horizontal ou vertical).'}), 400
+    arquivo = request.files.get('file')
+    if not arquivo:
+        return jsonify({'message': 'Envie o arquivo da arte no campo "file".'}), 400
+    dados = arquivo.read()
+    if not dados:
+        return jsonify({'message': 'Arquivo vazio.'}), 400
+    if len(dados) > 15 * 1024 * 1024:
+        return jsonify({'message': 'Arquivo grande demais (máximo 15 MB).'}), 413
+    try:
+        img = Image.open(io.BytesIO(dados))
+        img.load()
+    except Exception:
+        return jsonify({'message': 'Não foi possível ler a imagem. Use PNG, JPG ou WEBP.'}), 400
+    if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+        img = img.convert('RGBA')
+        fundo = Image.new('RGB', img.size, (255, 255, 255))
+        fundo.paste(img, mask=img.split()[-1])
+        img = fundo
+    else:
+        img = img.convert('RGB')
+    if not _imagem_e_segura(dados):
+        return jsonify({'message': 'A imagem foi reprovada pelo filtro de conteúdo e não foi salva.'}), 422
+
+    largura, altura, sufixo = ARTES_ORIENTACOES[orient]
+    img = _normalizar_tamanho_arte(img, largura, altura)
+    os.makedirs(ARTES_FOLDER, exist_ok=True)
+    destino = os.path.join(ARTES_FOLDER, f'{codbar}{sufixo}.webp')
+    temporario = destino + '.tmp'
+    img.save(temporario, format='WEBP', quality=88)
+    os.replace(temporario, destino)
+    existe = Produto.query.filter_by(codbar=codbar).first() is not None
+    logging.info(f"Arte {orient} enviada manualmente para {codbar} ({largura}x{altura})")
+    return jsonify({
+        'message': f'Arte {orient} salva para {codbar} ({largura}x{altura}).' + ('' if existe else ' Atenção: este EAN não está cadastrado no catálogo.'),
+        'codbar': codbar, 'orientacao': orient, 'cadastrado': existe,
+        'url': f"/static/artes_geradas/{codbar}{sufixo}.webp?v={int(time.time())}",
+    }), 200
+
+
+@app.route('/admin/artes/<codbar>', methods=['DELETE'])
+@jwt_required()
+def admin_excluir_arte(codbar):
+    """Apaga a arte de um EAN (`?orientacao=horizontal|vertical`). Com o Gemini ligado, a próxima
+    consulta de um terminal gera uma arte nova sozinha."""
+    codbar = (codbar or '').strip()
+    orient = (request.args.get('orientacao') or 'horizontal').strip().lower()
+    if not re.fullmatch(r'\d{6,14}', codbar) or orient not in ARTES_ORIENTACOES:
+        return jsonify({'message': 'EAN ou orientação inválidos.'}), 400
+    caminho = os.path.join(ARTES_FOLDER, f'{codbar}{ARTES_ORIENTACOES[orient][2]}.webp')
+    if not os.path.exists(caminho):
+        return jsonify({'message': 'Esta arte não existe.'}), 404
+    try:
+        os.remove(caminho)
+    except OSError as e:
+        logging.error(f"Falha ao excluir arte {caminho}: {e}")
+        return jsonify({'message': 'Não foi possível excluir o arquivo agora (em uso). Tente de novo.'}), 409
+    return jsonify({'message': f'Arte {orient} de {codbar} excluída.'}), 200
+
+
+# =====================================================================
 # WhatsApp — gestão de instância via Evolution API (self-hosted)
 # =====================================================================
 # Documentação: https://docs.evolutionfoundation.com.br/evolution-api/installation

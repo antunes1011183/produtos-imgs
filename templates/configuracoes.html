@@ -930,6 +930,18 @@
              */
             .card select, .card input[type="text"], .card input[type="password"] { max-width: 100%; }
         }
+
+        /* ===== Aba Artes: galeria + envio por EAN ===== */
+        .artes-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 0.85rem; }
+        .arte-card { border: 1px solid var(--border); border-radius: 10px; background: var(--card); display: flex; flex-direction: column; }
+        .arte-card-img { position: relative; height: 150px; flex-shrink: 0; background: var(--bg); border-radius: 10px 10px 0 0; overflow: hidden; display: flex; align-items: center; justify-content: center; cursor: zoom-in; }
+        .arte-card-img img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+        .arte-card-body { padding: 0.6rem 0.7rem 0.7rem; display: flex; flex-direction: column; gap: 0.25rem; flex: 1; min-width: 0; }
+        .arte-card-body .ean { font-family: monospace; font-size: 0.8rem; font-weight: 600; }
+        .arte-card-body .nome { font-size: 0.8rem; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 2.2em; }
+        .arte-card-body .acoes { display: flex; gap: 0.35rem; margin-top: auto; padding-top: 0.45rem; flex-wrap: wrap; }
+        .arte-tag { font-size: 0.68rem; font-weight: 600; padding: 1px 7px; border-radius: 99px; background: var(--hover); color: var(--muted); }
+        .arte-upload-preview { max-width: 220px; max-height: 140px; border-radius: 8px; border: 1px solid var(--border); display: none; }
     </style>
 </head>
 <body>
@@ -1056,6 +1068,10 @@
             <button class="nav-tab" data-tab="auditoria" data-title="Auditoria de Imagens" data-subtitle="Imagens baixadas que não correspondem ao produto ou têm suspeita de erro de leitura">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
                 Auditoria <span class="badge" id="auditoria-badge-sidebar" style="display:none;"></span>
+            </button>
+            <button class="nav-tab" data-tab="artes" data-title="Artes Publicitárias" data-subtitle="Todas as artes já criadas e envio de arte própria por EAN">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                Artes <span class="badge" id="artes-badge-sidebar" style="display:none;"></span>
             </button>
             <button class="nav-tab" data-tab="whatsapp" data-title="WhatsApp" data-subtitle="Conecte um número via Evolution API para receber o resumo diário">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
@@ -1863,6 +1879,61 @@
             </div>
 
             <!-- ===== TAB: WHATSAPP (Evolution API) ===== -->
+            <div id="tab-artes" class="tab-content" style="display:none;">
+                <div class="card">
+                    <h2>Enviar arte por EAN</h2>
+                    <p style="font-size:0.82rem; color:var(--muted); margin:0 0 0.85rem;">Envie uma arte pronta para um produto. Ela é ajustada ao tamanho do terminal (horizontal 1280×800, vertical 1200×1920; outra proporção é cortada no centro) e passa a ser a arte exibida. Uma arte que já existe não é gerada de novo pela IA.</p>
+                    <div id="alert-artes-upload"></div>
+                    <div class="form-row" style="flex-direction:row; gap:0.6rem; flex-wrap:wrap; align-items:flex-end;">
+                        <div style="flex:1; min-width:170px;">
+                            <label for="artes-up-ean" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">EAN</label>
+                            <input type="text" id="artes-up-ean" inputmode="numeric" placeholder="Ex: 7894900011609" autocomplete="off">
+                        </div>
+                        <div style="min-width:150px;">
+                            <label for="artes-up-orient" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">Orientação do terminal</label>
+                            <select id="artes-up-orient" style="width:100%;">
+                                <option value="horizontal">Horizontal (1280×800)</option>
+                                <option value="vertical">Vertical (1200×1920)</option>
+                            </select>
+                        </div>
+                        <div style="flex:1; min-width:200px;">
+                            <label for="artes-up-file" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">Arquivo (PNG, JPG ou WEBP)</label>
+                            <input type="file" id="artes-up-file" accept="image/*">
+                        </div>
+                        <button class="btn btn-primary" id="btn-artes-enviar">Enviar arte</button>
+                    </div>
+                    <img id="artes-up-preview" class="arte-upload-preview" alt="Prévia da arte" style="margin-top:0.75rem;">
+                </div>
+                <div class="card">
+                    <h2>Artes criadas <span class="badge" id="artes-count-badge">carregando...</span></h2>
+                    <div id="alert-artes"></div>
+                    <div class="form-row" style="flex-direction:row; gap:0.5rem; flex-wrap:wrap; align-items:flex-end; margin-bottom:0.85rem;">
+                        <div style="flex:1; min-width:180px;">
+                            <label for="artes-q" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">Buscar por EAN, nome ou marca</label>
+                            <input type="text" id="artes-q" placeholder="Ex: 7894900011609 ou coca" autocomplete="off">
+                        </div>
+                        <div style="min-width:160px;">
+                            <label for="artes-orient" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">Orientação</label>
+                            <select id="artes-orient" style="width:100%;">
+                                <option value="todas">Todas</option>
+                                <option value="horizontal">Horizontais</option>
+                                <option value="vertical">Verticais</option>
+                            </select>
+                        </div>
+                        <button class="btn btn-primary" id="btn-artes-filtrar">Filtrar</button>
+                    </div>
+                    <div id="artes-list"></div>
+                    <div id="artes-pagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:0.85rem; font-size:0.82rem; color:var(--muted);">
+                        <span id="artes-info">—</span>
+                        <span style="display:flex; gap:0.4rem;">
+                            <button class="btn btn-secondary btn-sm" id="btn-artes-prev">← Anterior</button>
+                            <button class="btn btn-secondary btn-sm" id="btn-artes-next">Próximo →</button>
+                        </span>
+                    </div>
+                    <input type="file" id="artes-trocar-file" accept="image/*" style="display:none;">
+                </div>
+            </div>
+
             <div id="tab-whatsapp" class="tab-content" style="display:none;">
                 <div class="card">
                     <h2>
@@ -2558,6 +2629,7 @@ $$('.nav-tab').forEach(btn => {
         if (tab === 'pendentes') loadImagensPendentes(1);
         if (tab === 'quarentena') loadQuarentena(1);
         if (tab === 'auditoria') iniciarAuditoriaTab();
+        if (tab === 'artes') loadArtes(1);
         if (tab === 'whatsapp') loadWhatsapp();
 
         closeSidebarMobile();
@@ -3965,6 +4037,134 @@ $('#auditoria-list').addEventListener('click', async (e) => {
 $('#btn-quarentena-filtrar').addEventListener('click', () => loadQuarentena(1));
 $('#quarentena-codbar').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadQuarentena(1); });
 $('#quarentena-status').addEventListener('change', () => loadQuarentena(1));
+// ===== Aba Artes =====
+let artesPage = 1, artesTotalPages = 1;
+
+async function loadArtes(page) {
+    const lista = $('#artes-list');
+    lista.innerHTML = '<p style="color:var(--muted); font-size:0.85rem;">Carregando...</p>';
+    try {
+        const params = new URLSearchParams({ page, per_page: 24, q: $('#artes-q').value.trim(), orientacao: $('#artes-orient').value });
+        const res = await fetch('/admin/artes?' + params, { headers: authHeaders() });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || data.msg || 'Erro ao carregar as artes.');
+        artesPage = data.page; artesTotalPages = data.total_pages;
+        $('#artes-count-badge').textContent = `${data.contagem.horizontal} horizontais · ${data.contagem.vertical} verticais`;
+        $('#artes-info').textContent = data.total ? `${data.total} arte(s) · página ${data.page} de ${data.total_pages}` : '—';
+        $('#btn-artes-prev').disabled = data.page <= 1;
+        $('#btn-artes-next').disabled = data.page >= data.total_pages;
+        if (!data.registros.length) {
+            lista.innerHTML = '<p style="color:var(--muted); font-size:0.85rem; padding:1rem 0;">Nenhuma arte encontrada para este filtro.</p>';
+            return;
+        }
+        lista.innerHTML = '<div class="artes-grid">' + data.registros.map(r => `
+            <div class="arte-card">
+                <div class="arte-card-img" data-action="arte-zoom" data-url="${escHtml(r.url)}" title="Clique para ampliar">
+                    <img src="${escHtml(r.url)}" alt="Arte ${escHtml(r.codbar)}" loading="lazy">
+                </div>
+                <div class="arte-card-body">
+                    <div style="display:flex; justify-content:space-between; gap:0.4rem; align-items:center;">
+                        <span class="ean">${escHtml(r.codbar)}</span>
+                        <span class="arte-tag">${r.orientacao === 'vertical' ? 'Vertical' : 'Horizontal'}</span>
+                    </div>
+                    <div class="nome">${r.descricao ? escHtml(r.descricao) : '<em>Produto não cadastrado</em>'}</div>
+                    <div style="font-size:0.72rem; color:var(--muted);">${new Date(r.atualizado_em).toLocaleString('pt-BR')} · ${Math.round(r.tamanho / 1024)} KB</div>
+                    <div class="acoes">
+                        <button class="btn btn-secondary btn-sm" data-action="arte-trocar" data-codbar="${escHtml(r.codbar)}" data-orient="${r.orientacao}">Trocar arte</button>
+                        <button class="btn btn-danger btn-sm" data-action="arte-excluir" data-codbar="${escHtml(r.codbar)}" data-orient="${r.orientacao}">Excluir</button>
+                    </div>
+                </div>
+            </div>`).join('') + '</div>';
+    } catch (e) {
+        lista.innerHTML = '';
+        showAlert('alert-artes', e.message, 'error');
+    }
+}
+
+async function enviarArte(ean, orient, arquivo, alertaId) {
+    const fd = new FormData();
+    fd.append('file', arquivo);
+    fd.append('orientacao', orient);
+    const res = await fetch('/admin/artes/upload/' + encodeURIComponent(ean), { method: 'POST', headers: authHeaders(), body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || data.msg || 'Erro ao enviar a arte.');
+    showAlert(alertaId, data.message, 'success');
+    toast(data.message, 'success');
+    return data;
+}
+
+$('#btn-artes-filtrar').addEventListener('click', () => loadArtes(1));
+$('#artes-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadArtes(1); });
+$('#artes-orient').addEventListener('change', () => loadArtes(1));
+$('#btn-artes-prev').addEventListener('click', () => { if (artesPage > 1) loadArtes(artesPage - 1); });
+$('#btn-artes-next').addEventListener('click', () => { if (artesPage < artesTotalPages) loadArtes(artesPage + 1); });
+
+$('#artes-up-file').addEventListener('change', (e) => {
+    const f = e.target.files[0], prev = $('#artes-up-preview');
+    if (!f) { prev.style.display = 'none'; return; }
+    prev.src = URL.createObjectURL(f);
+    prev.style.display = 'block';
+});
+
+$('#btn-artes-enviar').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    const ean = $('#artes-up-ean').value.replace(/\D/g, '');
+    const arquivo = $('#artes-up-file').files[0];
+    if (!/^\d{8,14}$/.test(ean)) { showAlert('alert-artes-upload', 'Informe um EAN com 8 a 14 dígitos.', 'error'); return; }
+    if (!arquivo) { showAlert('alert-artes-upload', 'Escolha o arquivo da arte.', 'error'); return; }
+    btn.disabled = true; btn.textContent = 'Enviando…';
+    try {
+        await enviarArte(ean, $('#artes-up-orient').value, arquivo, 'alert-artes-upload');
+        $('#artes-up-file').value = ''; $('#artes-up-preview').style.display = 'none';
+        $('#artes-q').value = ean;
+        loadArtes(1);
+    } catch (err) {
+        showAlert('alert-artes-upload', err.message, 'error');
+    } finally {
+        btn.disabled = false; btn.textContent = 'Enviar arte';
+    }
+});
+
+$('#artes-list').addEventListener('click', async (e) => {
+    const el = e.target.closest('[data-action]');
+    if (!el) return;
+    const acao = el.dataset.action;
+    if (acao === 'arte-zoom') { openLightbox(el.dataset.url); return; }
+    if (acao === 'arte-trocar') {
+        const input = $('#artes-trocar-file');
+        input.dataset.codbar = el.dataset.codbar;
+        input.dataset.orient = el.dataset.orient;
+        input.value = '';
+        input.click();
+        return;
+    }
+    if (acao === 'arte-excluir') {
+        if (!window.confirm(`Excluir a arte ${el.dataset.orient} do EAN ${el.dataset.codbar}? Se a geração por IA estiver ligada, o terminal pode gerar uma nova na próxima consulta.`)) return;
+        el.disabled = true;
+        try {
+            const res = await fetch(`/admin/artes/${encodeURIComponent(el.dataset.codbar)}?orientacao=${el.dataset.orient}`, { method: 'DELETE', headers: authHeaders() });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.message || data.msg || 'Erro ao excluir.');
+            toast(data.message, 'success');
+            loadArtes(artesPage);
+        } catch (err) {
+            showAlert('alert-artes', err.message, 'error');
+            el.disabled = false;
+        }
+    }
+});
+
+$('#artes-trocar-file').addEventListener('change', async (e) => {
+    const input = e.target, arquivo = input.files[0];
+    if (!arquivo) return;
+    try {
+        await enviarArte(input.dataset.codbar, input.dataset.orient, arquivo, 'alert-artes');
+        loadArtes(artesPage);
+    } catch (err) {
+        showAlert('alert-artes', err.message, 'error');
+    }
+});
+
 $('#btn-quarentena-prev').addEventListener('click', () => { if (quarentenaPage > 1) loadQuarentena(quarentenaPage - 1); });
 $('#btn-quarentena-next').addEventListener('click', () => loadQuarentena(quarentenaPage + 1));
 
