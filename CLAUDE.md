@@ -1008,3 +1008,18 @@ Pedido do usuário: investigar "consulta de imagens em loop" e bloquear. Fonte: 
 ## Gestão de imagem por produto (painel)
 
 O painel de detalhes (Consulta Rápida) ganhou "Enviar/Trocar imagem" (upload via `POST /upload-imagem-produto/<codbar>`, sobrescreve) e "Excluir imagem" (via `DELETE /deletar-imagem-produto/<codbar>`, com confirmação). Ambas as rotas já existiam — só não estavam expostas na UI. **Excluir a foto crua não apaga a arte publicitária já gerada** (são arquivos independentes, ver seção de arte acima) — intencional, mencionado no próprio diálogo de confirmação.
+
+## Token dos terminais (Mplayer) — expira a cada 3600s
+
+Objetivo: parar o download em massa/crawl de fotos (ver seção do rate limit por IP) sem quebrar os terminais. Cada terminal tem uma **chave fixa** (`Config['TERMINAL_API_KEYS']`, uma por linha `nome:chave`, gerada/rotacionada em Configurações → Infraestrutura → "Token dos terminais") que ele troca por um **JWT de 3600s**.
+
+- `POST /terminal/token` body JSON `{"chave": "<chave>"}` (também aceita `{"api_key": ...}`) → `200 {"access_token", "token_type":"Bearer", "expires_in":3600, "terminal":"<nome>"}`; chave inválida → 401 (com limite de tentativas por IP).
+- O JWT leva a claim `tipo:'terminal'` e só vale para rotas `/produto-imagem/` — em rota administrativa (`@jwt_required`) é bloqueado (400/401).
+- Aceito em: `Authorization: Bearer <token>`, `?token=<token>` ou cookie `mupa_img` (o painel usa o cookie porque `<img>` não manda header).
+- Rotas protegidas (`before_request`): `/produto-imagem/`, `/static/processed_images/`, `/static/imgs_produtos/`, `/static/artes_geradas/`.
+- **Enforcement**: `Config['EXIGIR_TOKEN_IMAGENS']` (toggle no painel). `false` (padrão) = só CONTA requisições com/sem token (`GET /admin/token-terminal/status`); `true` = responde `401 {"codigo":"token_invalido"}` + `WWW-Authenticate: Bearer`. **Rollout**: gerar chaves → dev do Mplayer publica versão que usa o token → acompanhar % com token no painel → só ligar o enforcement quando ~100%.
+- Proxy srv-mupa → VPS (`PROXY_IMAGENS_VPS`) também repassa `/terminal/token`, para o token ser assinado pelo servidor que valida (VPS).
+- Manual completo para o dev do Mplayer: publicado como Artifact (link com o usuário).
+
+### Segurança: segredo JWT
+`JWT_SECRET_KEY` vem de variável de ambiente; o default público `'your-jwt-secret-key'` permite forjar tokens (inclusive de admin). Em produção DEVE estar definida (o app avisa no startup se não estiver). Trocar o segredo invalida as sessões do painel (todos precisam logar de novo).

@@ -1386,6 +1386,34 @@
                         <button class="btn btn-primary" id="btn-save-proxy-vps">Salvar</button>
                     </div>
                 </div>
+
+                <div class="card">
+                    <h2>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                        Token dos terminais (Mplayer)
+                    </h2>
+                    <p style="margin:-0.4rem 0 0.85rem; color:var(--muted); font-size:0.85rem;">
+                        Cada terminal/loja troca uma <strong>chave fixa</strong> por um <strong>token que expira a cada 3600s</strong> (<code>POST /terminal/token</code>) e manda esse token nas rotas de imagem. Uma chave por linha, no formato <code>nome:chave</code> (chave com 16+ caracteres); apagar a linha revoga só aquela loja. Manual de integração pro dev do Mplayer: no <code>CLAUDE.md</code> do projeto.
+                    </p>
+                    <div id="alert-terminal-keys"></div>
+                    <div class="form-row">
+                        <label for="terminal-keys">Chaves (nome:chave, uma por linha)</label>
+                        <textarea id="terminal-keys" rows="4" placeholder="loja-centro:3f9a1c... (use o botão Gerar chave)" style="font-family:monospace; font-size:0.8rem;" autocomplete="off"></textarea>
+                    </div>
+                    <div class="form-row" style="flex-direction:row; gap:0.6rem; flex-wrap:wrap; align-items:center;">
+                        <button class="btn btn-secondary" id="btn-terminal-gerar">Gerar chave</button>
+                        <button class="btn btn-primary" id="btn-terminal-salvar">Salvar chaves</button>
+                    </div>
+                    <div class="toggle-row" style="margin-top:0.85rem;">
+                        <div class="toggle-label">
+                            <span class="name">Exigir token nas imagens</span>
+                            <span class="desc">Desligado (padrão): quem chega sem token continua sendo atendido, só é contado abaixo. Ligue <strong>depois</strong> que o Mplayer estiver atualizado em todas as lojas — ligado, foto/arte/consulta sem token válido respondem 401. O painel continua funcionando (usa o próprio login).</span>
+                        </div>
+                        <div class="toggle" id="toggle-exigir-token" data-key="EXIGIR_TOKEN_IMAGENS"></div>
+                    </div>
+                    <div id="terminal-token-status" style="margin-top:0.6rem; font-size:0.82rem; color:var(--muted);">—</div>
+                    <button class="btn btn-secondary btn-sm" id="btn-terminal-status" style="margin-top:0.4rem;">Atualizar contagem</button>
+                </div>
                 </div><!-- /config-section: infra -->
 
                 <div class="config-section" data-section="emergencia">
@@ -2227,8 +2255,17 @@ const TOKEN_STORAGE_KEY = 'mupa_painel_token';
 const TOKEN_EXPIRA_STORAGE_KEY = 'mupa_painel_token_expira';
 let token = null;
 
+// <img src> não manda o header Authorization — com "Exigir token nas imagens" ligado, as
+// miniaturas do painel dependem deste cookie (lido só pelo guard das rotas de imagem no
+// servidor, ver _exigir_token_nas_imagens). Mesmo token do localStorage, mesma validade.
+function definirCookieImagens(tok, expiraEmMs) {
+    const seg = Math.max(0, Math.floor(((expiraEmMs || (Date.now() + 3600000)) - Date.now()) / 1000));
+    document.cookie = `mupa_img=${tok}; path=/; SameSite=Strict; Max-Age=${seg}`;
+}
+
 function salvarSessao(tok, expiraEmMs) {
     token = tok;
+    definirCookieImagens(tok, expiraEmMs);
     try {
         localStorage.setItem(TOKEN_STORAGE_KEY, tok);
         localStorage.setItem(TOKEN_EXPIRA_STORAGE_KEY, String(expiraEmMs));
@@ -2237,6 +2274,7 @@ function salvarSessao(tok, expiraEmMs) {
 
 function limparSessao() {
     token = null;
+    document.cookie = 'mupa_img=; path=/; Max-Age=0';
     try {
         localStorage.removeItem(TOKEN_STORAGE_KEY);
         localStorage.removeItem(TOKEN_EXPIRA_STORAGE_KEY);
@@ -2402,6 +2440,9 @@ async function loadConfig() {
         $('#gemini-key').value = cfg.gemini_key_full || '';
         $('#unidasul-token').value = cfg.unidasul_token_full || '';
         $('#serper-key').value = cfg.serper_key_full || '';
+        $('#terminal-keys').value = cfg.terminal_keys_full || '';
+        setToggle('toggle-exigir-token', cfg.exigir_token_imagens);
+        loadTokenTerminalStatus();
         $('#proxy-vps-url').value = cfg.proxy_imagens_vps_url || '';
         $('#proxy-vps-ativo').checked = !!cfg.proxy_imagens_vps_ativo;
         $('#cosmos-tokens').value = cfg.cosmos_tokens_full || '';
@@ -2592,6 +2633,50 @@ $('#btn-save-unidasul').addEventListener('click', async () => {
         }
     } catch (e) {
         showAlert('alert-unidasul', `Erro: ${e.message}`, 'error');
+    }
+});
+
+async function loadTokenTerminalStatus() {
+    const el = $('#terminal-token-status');
+    try {
+        const res = await fetch('/admin/token-terminal/status', { headers: authHeaders() });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const s = await res.json();
+        const ips = (s.ips_sem_token || []).map(([ip, n]) => `${ip} (${n})`).join(', ');
+        el.innerHTML = s.pct_com_token === null
+            ? `Nenhuma requisição de imagem registrada desde o último restart do serviço. Terminais com chave: <strong>${escHtml((s.terminais || []).join(', ') || 'nenhum')}</strong>.`
+            : `Desde ${new Date(s.desde).toLocaleString('pt-BR')}: <strong>${s.com_token}</strong> com token, <strong>${s.sem_token}</strong> sem token (${s.pct_com_token}% com token). Terminais com chave: <strong>${escHtml((s.terminais || []).join(', ') || 'nenhum')}</strong>.${ips ? `<br>IPs ainda sem token: ${escHtml(ips)}` : ''}`;
+    } catch (e) {
+        el.textContent = 'Não foi possível carregar a contagem: ' + e.message;
+    }
+}
+
+$('#btn-terminal-status').addEventListener('click', loadTokenTerminalStatus);
+
+$('#btn-terminal-gerar').addEventListener('click', () => {
+    const nome = (prompt('Nome do terminal/loja (sem ":" nem espaços, ex.: loja-centro):') || '').trim().replace(/[:\s]+/g, '-');
+    if (!nome) return;
+    const bytes = new Uint8Array(24);
+    crypto.getRandomValues(bytes);
+    const chave = [...bytes].map(b => b.toString(16).padStart(2, '0')).join('');
+    const area = $('#terminal-keys');
+    area.value = (area.value.trim() ? area.value.trim() + '\n' : '') + `${nome}:${chave}`;
+    showAlert('alert-terminal-keys', `Chave gerada pra "${nome}" — clique em Salvar chaves e passe-a ao dev/instalador do terminal.`, 'info');
+});
+
+$('#btn-terminal-salvar').addEventListener('click', async () => {
+    try {
+        const res = await fetch('/configuracoes', {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ action: 'save_terminal_keys', terminal_keys: $('#terminal-keys').value })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.saved) throw new Error(data.message || `HTTP ${res.status}`);
+        showAlert('alert-terminal-keys', 'Chaves salvas.', 'success');
+        loadTokenTerminalStatus();
+    } catch (e) {
+        showAlert('alert-terminal-keys', `Erro: ${e.message}`, 'error');
     }
 });
 
@@ -5217,6 +5302,7 @@ $('#btn-api-send').addEventListener('click', async () => {
     const tokenSalvo = sessaoSalvaValida();
     if (tokenSalvo) {
         token = tokenSalvo;
+        definirCookieImagens(tokenSalvo, parseInt(localStorage.getItem(TOKEN_EXPIRA_STORAGE_KEY) || '0', 10));
         iniciarPainelAutenticado();
     } else {
         limparSessao();

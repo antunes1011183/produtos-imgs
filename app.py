@@ -4,6 +4,7 @@ import sys
 import csv
 import collections
 import hashlib
+import hmac
 import sqlite3
 import base64
 import threading
@@ -19,7 +20,7 @@ from io import StringIO
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, url_for, render_template, redirect, send_file, send_from_directory, Response
 from flask_sqlalchemy import SQLAlchemy
-from flask_jwt_extended import JWTManager, create_access_token, jwt_required, verify_jwt_in_request
+from flask_jwt_extended import JWTManager, create_access_token, decode_token, jwt_required, verify_jwt_in_request
 from werkzeug.utils import secure_filename
 from flasgger import Swagger, swag_from
 import openai
@@ -77,6 +78,8 @@ IMAGEM_SEM_FOTO_CACHE = 'static/sem_imagem_placeholder.jpg'
 
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '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')
 JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY', 'your-jwt-secret-key')
+if JWT_SECRET_KEY == 'your-jwt-secret-key':
+    print('[SEGURANCA] JWT_SECRET_KEY nao definida: usando segredo padrao PUBLICO — tokens podem ser forjados. Defina a variavel de ambiente.', flush=True)
 AZURE_SUBSCRIPTION_KEY = os.getenv('AZURE_SUBSCRIPTION_KEY', '9beaf866156a478a9bfac946c05cddde')
 AZURE_REGION = os.getenv('AZURE_REGION', 'brazilsouth')
 TIMEZONE = os.getenv('TIMEZONE', 'UTC')
@@ -2742,7 +2745,9 @@ def _proxy_imagens_para_vps():
     `requests` recalcula os dois sozinho pro destino certo). Timeout de 30s: geração de arte na
     VPS pode legitimamente demorar (fila do Gemini), mas não pode travar pra sempre se a VPS cair
     — nesse caso responde 502 pro terminal em vez de pendurar a requisição."""
-    if not request.path.startswith('/produto-imagem/'):
+    # `/terminal/token` também vai pra VPS: o token tem que ser assinado por quem vai VALIDAR as
+    # fotos (a VPS), senão um token emitido aqui seria recusado lá (ver `terminal_token`).
+    if not request.path.startswith(('/produto-imagem/', '/terminal/token')):
         return None
     if _ler_todas_config().get('PROXY_IMAGENS_VPS_ATIVO', 'false') != 'true':
         return None
@@ -2764,6 +2769,133 @@ def _proxy_imagens_para_vps():
     except requests.RequestException as e:
         logging.error(f"Erro ao encaminhar {request.path} pra VPS ({destino}): {e}")
         return jsonify({'message': 'Erro ao encaminhar requisição para a VPS'}), 502
+
+
+# ---------------------------------------------------------------------------------------------
+# Token dos terminais (Mplayer): chave fixa por loja/terminal -> token curto (3600s) nas imagens
+# ---------------------------------------------------------------------------------------------
+# Pedido do usuário: "um token que vai expirar a cada 3600s" pros terminais. Fluxo: o app troca
+# uma chave fixa (`Config['TERMINAL_API_KEYS']`, linhas `nome:chave`, gerenciada no painel) por um
+# JWT de 3600s em `POST /terminal/token` e manda `Authorization: Bearer` nas rotas de imagem. Um
+# token vazado vale no máximo 1h; uma chave vazada se revoga apagando a linha, sem mexer nas
+# outras lojas. Manual pro dev do Mplayer: ver CLAUDE.md (seção do token dos terminais).
+#
+# `Config['EXIGIR_TOKEN_IMAGENS']` (padrão 'false') decide se a falta de token BLOQUEIA (401) ou
+# só é contada: terminais em campo ainda não mandam token, então ligar na hora derrubaria todos;
+# a ordem é atualizar o app, conferir em Configurações que quase ninguém chega sem token e só
+# então exigir. Nunca valida pelo IP (vários terminais saem pelo mesmo IP/CGNAT).
+TERMINAL_TOKEN_TTL_SEGUNDOS = 3600
+TERMINAL_CAMINHOS_PERMITIDOS = ('/produto-imagem/',)
+IMAGENS_PROTEGIDAS_PREFIXOS = ('/produto-imagem/', '/static/processed_images/', '/static/imgs_produtos/', '/static/artes_geradas/')
+_token_imagens_stats = {'com_token': 0, 'sem_token': 0, 'ips_sem_token': collections.Counter(), 'desde': time.time()}
+_config_cache = {}
+_terminal_token_falhas = {}
+
+
+def _config_cacheada(chave, padrao='', ttl=15):
+    """Config com cache curto em memória — as rotas de foto são chamadas aos milhares por dia e
+    não devem ir ao banco a cada requisição só pra ler um flag."""
+    agora = time.time()
+    hit = _config_cache.get(chave)
+    if hit and agora - hit[0] < ttl:
+        return hit[1]
+    valor = _ler_todas_config().get(chave, padrao)
+    _config_cache[chave] = (agora, valor)
+    return valor
+
+
+def _chaves_terminal():
+    """{chave: nome} a partir de `Config['TERMINAL_API_KEYS']` (linhas `nome:chave`, `#` comenta;
+    chave com menos de 16 caracteres é ignorada — muito fraca pra ser aceita)."""
+    chaves = {}
+    for linha in (_ler_todas_config().get('TERMINAL_API_KEYS', '') or '').splitlines():
+        linha = linha.strip()
+        if not linha or linha.startswith('#'):
+            continue
+        nome, sep, chave = linha.partition(':')
+        if sep and nome.strip() and len(chave.strip()) >= 16:
+            chaves[chave.strip()] = nome.strip()
+    return chaves
+
+
+@jwt.token_verification_loader
+def _restringir_token_de_terminal(jwt_header, jwt_data):
+    """Token de terminal só vale nas rotas de imagem — as rotas do painel (`@jwt_required()`)
+    aceitam qualquer JWT válido, então sem esta trava um terminal poderia usar o próprio token
+    pra chamar a API administrativa."""
+    if jwt_data.get('tipo') == 'terminal':
+        return request.path.startswith(TERMINAL_CAMINHOS_PERMITIDOS)
+    return True
+
+
+@app.route('/terminal/token', methods=['POST'])
+def terminal_token():
+    """Troca a chave do terminal por um token de 3600s. Sem JWT (é justamente como se obtém um).
+    Chave em `X-Api-Key` ou no corpo JSON/form (`api_key`). Resposta: `access_token`,
+    `token_type`, `expires_in` (segundos) e `expires_at` (epoch ms, mesmo formato do `/login`).
+    Comparação em tempo constante e no máximo 10 falhas/min por IP (429)."""
+    ip = request.remote_addr or '?'
+    agora = time.time()
+    falhas = [t for t in _terminal_token_falhas.get(ip, []) if t > agora - 60]
+    if len(falhas) >= 10:
+        resp = jsonify({'message': 'Muitas tentativas com chave inválida — aguarde um minuto'})
+        resp.status_code = 429
+        resp.headers['Retry-After'] = '60'
+        return resp
+    dados = request.get_json(silent=True) or {}
+    informada = (request.headers.get('X-Api-Key') or dados.get('api_key') or request.form.get('api_key') or '').strip()
+    nome = None
+    for chave, n in _chaves_terminal().items():
+        if hmac.compare_digest(chave.encode(), informada.encode()):
+            nome = n
+    if not nome:
+        falhas.append(agora)
+        _terminal_token_falhas[ip] = falhas
+        logging.warning(f"/terminal/token: chave inválida de {ip}")
+        return jsonify({'message': 'api_key inválida'}), 401
+    _terminal_token_falhas.pop(ip, None)
+    token_novo = create_access_token(
+        identity=nome, expires_delta=timedelta(seconds=TERMINAL_TOKEN_TTL_SEGUNDOS),
+        additional_claims={'tipo': 'terminal'},
+    )
+    return jsonify({
+        'access_token': token_novo, 'token_type': 'Bearer',
+        'expires_in': TERMINAL_TOKEN_TTL_SEGUNDOS,
+        'expires_at': int((agora + TERMINAL_TOKEN_TTL_SEGUNDOS) * 1000),
+    })
+
+
+@app.before_request
+def _exigir_token_nas_imagens():
+    """Confere o token nas rotas de imagem (`IMAGENS_PROTEGIDAS_PREFIXOS`). Aceita qualquer JWT
+    válido e não expirado — de terminal OU do painel — por `Authorization: Bearer`, `?token=` ou o
+    cookie `mupa_img` (o painel grava o próprio token nele no login, porque `<img src>` não manda
+    header). Com `EXIGIR_TOKEN_IMAGENS` desligado só CONTA quem chega sem token (por IP, em
+    memória, desde o último restart) pra saber quando dá pra exigir; ligado, responde 401."""
+    if not request.path.startswith(IMAGENS_PROTEGIDAS_PREFIXOS):
+        return None
+    tok = None
+    auth = request.headers.get('Authorization', '')
+    if auth.lower().startswith('bearer '):
+        tok = auth[7:].strip()
+    tok = tok or request.args.get('token') or request.cookies.get('mupa_img')
+    if tok:
+        try:
+            decode_token(tok)
+            _token_imagens_stats['com_token'] += 1
+            return None
+        except Exception:
+            pass
+    _token_imagens_stats['sem_token'] += 1
+    ips = _token_imagens_stats['ips_sem_token']
+    if request.remote_addr in ips or len(ips) < 500:
+        ips[request.remote_addr] += 1
+    if _config_cacheada('EXIGIR_TOKEN_IMAGENS', 'false') == 'true':
+        resp = jsonify({'message': 'Token ausente ou expirado — obtenha um novo em POST /terminal/token', 'codigo': 'token_invalido'})
+        resp.status_code = 401
+        resp.headers['WWW-Authenticate'] = 'Bearer'
+        return resp
+    return None
 
 
 _limite_fotos_estado = {'cache_em': 0.0, 'por_minuto': 120}
@@ -2933,6 +3065,28 @@ def configuracoes():
             else:
                 return jsonify({'message': 'Chave inválida', 'saved': False}), 400
 
+        elif action == 'save_terminal_keys':
+            # Chaves dos terminais (uma por linha, `nome:chave`) — ver `_chaves_terminal`. Vazio é
+            # válido: revoga todas. Linha sem `:` ou com chave curta demais é rejeitada aqui pra
+            # não ficar "salva" mas ignorada em silêncio na hora de validar.
+            texto = (data.get('terminal_keys') or '').strip()
+            for linha in texto.splitlines():
+                linha = linha.strip()
+                if not linha or linha.startswith('#'):
+                    continue
+                nome, sep, chave = linha.partition(':')
+                if not sep or not nome.strip() or len(chave.strip()) < 16:
+                    return jsonify({'message': f'Linha inválida: "{linha[:40]}" — use nome:chave (chave com 16+ caracteres)', 'saved': False}), 400
+            set_config('TERMINAL_API_KEYS', texto)
+            return jsonify({'message': 'Chaves dos terminais salvas', 'saved': True})
+
+        elif action == 'toggle_exigir_token_imagens':
+            val = data.get('EXIGIR_TOKEN_IMAGENS')
+            ativa = (val == 'true' or val is True)
+            set_config('EXIGIR_TOKEN_IMAGENS', str(ativa).lower())
+            _config_cache.clear()
+            return jsonify({'message': f'EXIGIR_TOKEN_IMAGENS = {ativa}', 'saved': True})
+
         elif action == 'save_serper_key':
             # Token da Serper (serper.dev, X-API-KEY) — ver buscar_e_salvar_imagem_serper. Mesmo
             # padrão do token Unidasul: fica no banco, editável sem deploy.
@@ -3075,6 +3229,8 @@ def configuracoes():
         'gemini_key_full': gemini_key_full,
         'unidasul_token_full': unidasul_token_full,
         'serper_key_full': serper_key_full,
+        'terminal_keys_full': cfg.get('TERMINAL_API_KEYS', '') or '',
+        'exigir_token_imagens': cfg.get('EXIGIR_TOKEN_IMAGENS', 'false') == 'true',
         'cosmos_tokens_full': '\n'.join(_lista_tokens_cosmos()),
         'cosmos_status': cosmos_status,
         'notificacoes': {chave: cfg.get(chave, '') for chave in NOTIFICACAO_CONFIG_KEYS},
@@ -3107,6 +3263,8 @@ def api_config():
         'gemini_key_full': gemini_key_full,
         'unidasul_token_full': unidasul_token_full,
         'serper_key_full': serper_key_full,
+        'terminal_keys_full': cfg.get('TERMINAL_API_KEYS', '') or '',
+        'exigir_token_imagens': cfg.get('EXIGIR_TOKEN_IMAGENS', 'false') == 'true',
         'use_openai': cfg.get('USE_OPENAI_SUGESTIONS', 'true') == 'true',
         'rembg_enabled': cfg.get('REMBG_ENABLED', 'false') == 'true',
         'busca_imagem_online_ativa': cfg.get('BUSCA_IMAGEM_ONLINE_ATIVA', 'true') == 'true',
@@ -5261,6 +5419,24 @@ def admin_auditoria_separar_todas():
         ok, _ = _separar_imagem_auditada(row)
         separadas, falhas = separadas + (1 if ok else 0), falhas + (0 if ok else 1)
     return jsonify({'message': f'{separadas} imagem(ns) separada(s)' + (f', {falhas} falha(s)' if falhas else ''), 'separadas': separadas, 'falhas': falhas})
+
+
+@app.route('/admin/token-terminal/status', methods=['GET'])
+@jwt_required()
+def admin_token_terminal_status():
+    """Quanto das requisições de imagem já chegam com token (desde o último restart do serviço) e
+    de quais IPs ainda chegam sem — é o que diz se já dá pra ligar `EXIGIR_TOKEN_IMAGENS`."""
+    s = _token_imagens_stats
+    total = s['com_token'] + s['sem_token']
+    return jsonify({
+        'exigir': _config_cacheada('EXIGIR_TOKEN_IMAGENS', 'false') == 'true',
+        'com_token': s['com_token'], 'sem_token': s['sem_token'],
+        'pct_com_token': round(100 * s['com_token'] / total, 1) if total else None,
+        'desde': datetime.utcfromtimestamp(s['desde']).isoformat() + 'Z',
+        'ips_sem_token': s['ips_sem_token'].most_common(10),
+        'terminais': sorted(set(_chaves_terminal().values())),
+        'ttl_segundos': TERMINAL_TOKEN_TTL_SEGUNDOS,
+    })
 
 
 @app.route('/admin/quarentena', methods=['GET'])
