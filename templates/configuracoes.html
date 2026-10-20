@@ -1447,6 +1447,13 @@
                         </div>
                         <div class="toggle" id="toggle-exigir-token" data-key="EXIGIR_TOKEN_IMAGENS"></div>
                     </div>
+                    <div class="toggle-row" style="margin-top:0.5rem;">
+                        <div class="toggle-label">
+                            <span class="name">Liberar terminais antigos (sem token)</span>
+                            <span class="desc">Ligado (padrão) junto com "Exigir token": quem se identifica como app Android (OkHttp/Dalvik) continua sendo atendido sem token, até o Mplayer novo chegar em todas as lojas. Navegador, curl, wget e scripts são bloqueados. Quando o Mplayer novo estiver em todas as lojas, <strong>desligue</strong> para fechar de vez.</span>
+                        </div>
+                        <div class="toggle" id="toggle-permitir-antigos" data-key="PERMITIR_TERMINAIS_SEM_TOKEN"></div>
+                    </div>
                     <div id="terminal-token-status" style="margin-top:0.6rem; font-size:0.82rem; color:var(--muted);">—</div>
                     <button class="btn btn-secondary btn-sm" id="btn-terminal-status" style="margin-top:0.4rem;">Atualizar contagem</button>
                 </div>
@@ -2868,6 +2875,7 @@ async function loadConfig() {
         $('#serper-key').value = cfg.serper_key_full || '';
         $('#terminal-keys').value = cfg.terminal_keys_full || '';
         setToggle('toggle-exigir-token', cfg.exigir_token_imagens);
+        setToggle('toggle-permitir-antigos', cfg.permitir_terminais_sem_token);
         atualizarCard2fa(cfg.login_2fa_ativo, cfg.login_2fa_destino);
         $('#twofa-remetente-input').value = cfg.login_2fa_remetente || '';
         loadTokenTerminalStatus();
@@ -3073,7 +3081,7 @@ async function loadTokenTerminalStatus() {
         const ips = (s.ips_sem_token || []).map(([ip, n]) => `${ip} (${n})`).join(', ');
         el.innerHTML = s.pct_com_token === null
             ? `Nenhuma requisição de imagem registrada desde o último restart do serviço. Terminais com chave: <strong>${escHtml((s.terminais || []).join(', ') || 'nenhum')}</strong>.`
-            : `Desde ${new Date(s.desde).toLocaleString('pt-BR')}: <strong>${s.com_token}</strong> com token, <strong>${s.sem_token}</strong> sem token (${s.pct_com_token}% com token). Terminais com chave: <strong>${escHtml((s.terminais || []).join(', ') || 'nenhum')}</strong>.${ips ? `<br>IPs ainda sem token: ${escHtml(ips)}` : ''}`;
+            : `Desde ${new Date(s.desde).toLocaleString('pt-BR')}: <strong>${s.com_token}</strong> com token, <strong>${s.sem_token}</strong> sem token (${s.pct_com_token}% com token). Terminais com chave: <strong>${escHtml((s.terminais || []).join(', ') || 'nenhum')}</strong>.${ips ? `<br>IPs ainda sem token: ${escHtml(ips)}` : ''}${s.exigir ? `<br>Bloqueio ligado: <strong>${s.bloqueados}</strong> requisição(ões) barrada(s), <strong>${s.terminais_antigos}</strong> de terminais antigos liberadas.${(s.uas_bloqueados || []).length ? ' Barrados por: ' + escHtml(s.uas_bloqueados.map(([u, n]) => `${u} (${n})`).join(' · ')) : ''}` : ''}`;
     } catch (e) {
         el.textContent = 'Não foi possível carregar a contagem: ' + e.message;
     }

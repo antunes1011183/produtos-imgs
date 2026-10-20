@@ -3244,7 +3244,17 @@ def _proxy_imagens_para_vps():
 TERMINAL_TOKEN_TTL_SEGUNDOS = 3600
 TERMINAL_CAMINHOS_PERMITIDOS = ('/produto-imagem/',)
 IMAGENS_PROTEGIDAS_PREFIXOS = ('/produto-imagem/', '/static/processed_images/', '/static/imgs_produtos/', '/static/artes_geradas/', '/miniatura/')
-_token_imagens_stats = {'com_token': 0, 'sem_token': 0, 'ips_sem_token': collections.Counter(), 'desde': time.time()}
+_token_imagens_stats = {'com_token': 0, 'sem_token': 0, 'ips_sem_token': collections.Counter(), 'desde': time.time(),
+                        'terminais_antigos': 0, 'bloqueados': 0, 'uas_bloqueados': collections.Counter()}
+
+
+def _user_agent_de_terminal(ua):
+    """True se o User-Agent é o de um app Android (OkHttp/Coil do Mplayer, ou o Dalvik/HttpURLConnection do
+    sistema). Os terminais em campo ainda não mandam token; enquanto isso, só eles passam sem token.
+    Navegador (Mozilla...), curl, wget, python-requests e crawlers comuns NÃO passam. É uma trava de
+    transição: o User-Agent pode ser falsificado, quem fecha de verdade é o token (manual do Mplayer)."""
+    ua = (ua or '').lower()
+    return 'okhttp' in ua or 'dalvik' in ua
 _config_cache = {}
 _terminal_token_falhas = {}
 
@@ -3365,7 +3375,16 @@ def _exigir_token_nas_imagens():
     if request.remote_addr in ips or len(ips) < 500:
         ips[request.remote_addr] += 1
     if _config_cacheada('EXIGIR_TOKEN_IMAGENS', 'false') == 'true':
-        resp = jsonify({'message': 'Token ausente ou expirado — obtenha um novo em POST /terminal/token', 'codigo': 'token_invalido'})
+        ua = request.headers.get('User-Agent', '')
+        if _config_cacheada('PERMITIR_TERMINAIS_SEM_TOKEN', 'true') == 'true' and _user_agent_de_terminal(ua):
+            _token_imagens_stats['terminais_antigos'] += 1
+            return None
+        _token_imagens_stats['bloqueados'] += 1
+        uas = _token_imagens_stats['uas_bloqueados']
+        chave_ua = (ua or '(vazio)')[:80]
+        if chave_ua in uas or len(uas) < 100:
+            uas[chave_ua] += 1
+        resp = jsonify({'message': 'Acesso negado — esta rota exige o token do terminal (POST /terminal/token) ou sessão do painel', 'codigo': 'token_invalido'})
         resp.status_code = 401
         resp.headers['WWW-Authenticate'] = 'Bearer'
         return resp
@@ -3705,6 +3724,13 @@ def configuracoes():
             _config_cache.clear()
             return jsonify({'message': 'Login em duas etapas desativado.', 'saved': True})
 
+        elif action == 'toggle_permitir_terminais_sem_token':
+            val = data.get('PERMITIR_TERMINAIS_SEM_TOKEN')
+            ativa = (val == 'true' or val is True)
+            set_config('PERMITIR_TERMINAIS_SEM_TOKEN', str(ativa).lower())
+            _config_cache.clear()
+            return jsonify({'message': f'PERMITIR_TERMINAIS_SEM_TOKEN = {ativa}', 'saved': True})
+
         elif action == 'toggle_exigir_token_imagens':
             val = data.get('EXIGIR_TOKEN_IMAGENS')
             ativa = (val == 'true' or val is True)
@@ -3856,6 +3882,7 @@ def configuracoes():
         'serper_key_full': serper_key_full,
         'terminal_keys_full': cfg.get('TERMINAL_API_KEYS', '') or '',
         'exigir_token_imagens': cfg.get('EXIGIR_TOKEN_IMAGENS', 'false') == 'true',
+        'permitir_terminais_sem_token': cfg.get('PERMITIR_TERMINAIS_SEM_TOKEN', 'true') == 'true',
         'login_2fa_ativo': cfg.get('LOGIN_2FA_ATIVO', 'false') == 'true',
         'login_2fa_destino': _mascarar_email((cfg.get('LOGIN_2FA_DESTINO') or '').strip() or LOGIN_2FA_DESTINO_PADRAO),
         'login_2fa_destino_cfg': (cfg.get('LOGIN_2FA_DESTINO') or '').strip(),
@@ -3894,6 +3921,7 @@ def api_config():
         'serper_key_full': serper_key_full,
         'terminal_keys_full': cfg.get('TERMINAL_API_KEYS', '') or '',
         'exigir_token_imagens': cfg.get('EXIGIR_TOKEN_IMAGENS', 'false') == 'true',
+        'permitir_terminais_sem_token': cfg.get('PERMITIR_TERMINAIS_SEM_TOKEN', 'true') == 'true',
         'login_2fa_ativo': cfg.get('LOGIN_2FA_ATIVO', 'false') == 'true',
         'login_2fa_destino': _mascarar_email((cfg.get('LOGIN_2FA_DESTINO') or '').strip() or LOGIN_2FA_DESTINO_PADRAO),
         'login_2fa_destino_cfg': (cfg.get('LOGIN_2FA_DESTINO') or '').strip(),
@@ -6087,6 +6115,9 @@ def admin_token_terminal_status():
         'pct_com_token': round(100 * s['com_token'] / total, 1) if total else None,
         'desde': datetime.utcfromtimestamp(s['desde']).isoformat() + 'Z',
         'ips_sem_token': s['ips_sem_token'].most_common(10),
+        'permitir_terminais_sem_token': _config_cacheada('PERMITIR_TERMINAIS_SEM_TOKEN', 'true') == 'true',
+        'terminais_antigos': s['terminais_antigos'], 'bloqueados': s['bloqueados'],
+        'uas_bloqueados': s['uas_bloqueados'].most_common(8),
         'terminais': sorted(set(_chaves_terminal().values())),
         'ttl_segundos': TERMINAL_TOKEN_TTL_SEGUNDOS,
     })
