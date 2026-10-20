@@ -6530,7 +6530,10 @@ def _iniciar_agendador_status_horario():
 def _notificar_atualizacao_whatsapp(commit_antigo, commit_novo):
     """Avisa por WhatsApp que uma atualização automática via GitHub foi aplicada e o processo
     vai reiniciar — mesmo espírito do heartbeat horário (visibilidade sem precisar checar log
-    manualmente), mas disparado pelo evento, não por horário."""
+    manualmente), mas disparado pelo evento, não por horário. Respeita WHATSAPP_ATIVO: com o
+    canal desligado no painel não tenta enviar (evita erro de instância inexistente a cada deploy)."""
+    if _ler_todas_config().get('WHATSAPP_ATIVO', 'false') != 'true':
+        return
     mensagem = (
         "🔄 *Mupa Brain* - Atualização aplicada\n"
         f"{datetime.now().strftime('%d/%m/%Y %H:%M')}\n\n"
