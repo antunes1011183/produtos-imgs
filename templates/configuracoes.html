@@ -4082,10 +4082,19 @@ async function loadArtes(page) {
 }
 
 async function enviarArte(ean, orient, arquivo, alertaId) {
+    // Antes de subir o arquivo, confere a sessão com uma chamada leve: com sessão vencida o
+    // servidor responde 401 sem ler o upload, e o navegador só mostra "Failed to fetch".
+    const teste = await fetch('/admin/artes?per_page=1', { headers: authHeaders() });
+    if (teste.status === 401) throw new Error('Sua sessão expirou. Entre de novo no painel e repita o envio.');
     const fd = new FormData();
     fd.append('file', arquivo);
     fd.append('orientacao', orient);
-    const res = await fetch('/admin/artes/upload/' + encodeURIComponent(ean), { method: 'POST', headers: authHeaders(), body: fd });
+    let res;
+    try {
+        res = await fetch('/admin/artes/upload/' + encodeURIComponent(ean), { method: 'POST', headers: authHeaders(), body: fd });
+    } catch (e) {
+        throw new Error('A conexão com o servidor foi interrompida durante o envio. Tente de novo; se repetir, use um arquivo menor (até 15 MB).');
+    }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.message || data.msg || 'Erro ao enviar a arte.');
     showAlert(alertaId, data.message, 'success');
