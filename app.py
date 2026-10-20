@@ -1595,6 +1595,7 @@ def _imagem_corresponde_descricao(image_data, descricao, marca=None, estrito=Fal
     devolve `None` quando a classificação NÃO pôde rodar (verificação desligada, sem chave, erro
     de rede/cota) — a auditoria precisa distinguir "verificada e ok" de "não deu pra verificar",
     senão marcaria como conferida uma imagem que nunca foi olhada de verdade."""
+    marca = _marca_valida(marca)
     falha = None if estrito else True
     if not _verificacao_descricao_ativa():
         return falha
@@ -2112,6 +2113,7 @@ def _buscar_imagens_gemini_web(nome_produto, marca, codbar):
     vazia quando a IA genuinamente não acha nada confiável); erro só vem preenchido quando a
     própria chamada ao Gemini falhou (chave inválida, rede, etc.) — nesse caso o chamador deve
     mostrar esse erro pro usuário, em vez de tratar como "nenhuma imagem encontrada"."""
+    marca = _marca_valida(marca)
     api_key = _ler_todas_config().get('GEMINI_API_KEY', '').strip()
     if not api_key or not _gemini_ativo():
         return [], 'Busca por IA desativada (Gemini desligado em Configurações → Flags de Funcionamento, ou nenhuma chave configurada).'
@@ -4018,8 +4020,8 @@ Produto de referência: {descricao}."""
 def _montar_prompt_arte(produto):
     """Monta o prompt de geração de arte a partir das regras fixas + dados do produto."""
     descricao = produto.description or 'produto embalado'
-    if produto.marca:
-        descricao = f"{descricao} (marca {produto.marca})"
+    if _marca_valida(produto.marca):
+        descricao = f"{descricao} (marca {_marca_valida(produto.marca)})"
     return ARTE_PROMPT_TEMPLATE.format(descricao=descricao)
 
 
@@ -4048,6 +4050,26 @@ def _extrair_quantidade_embalagem(descricao_original, nome_atual):
     nome_limpo = re.sub(re.escape(quantidade), '', nome_atual or '', flags=re.IGNORECASE).strip()
     nome_limpo = re.sub(r'\s{2,}', ' ', nome_limpo).rstrip(',- ')
     return (nome_limpo or nome_atual), quantidade
+
+
+_MARCAS_PLACEHOLDER = {
+    'n/a', 'na', 'n.a.', 'n.a', 'n/d', 'nd', 'n.d.', 'null', 'none', 'nan', 'undefined', 'unknown',
+    'sem marca', 'sem-marca', 's/ marca', 's/marca', 's/m', 'desconhecida', 'desconhecido',
+    'nao informado', 'não informado', 'nao informada', 'não informada', 'indefinido', 'indefinida',
+    'marca nao disponivel', 'marca não disponível', 'nao disponivel', 'não disponível', 'generico', 'genérico',
+}
+
+
+def _marca_valida(marca):
+    """Devolve a marca limpa, ou '' quando o valor é só um marcador de "sem dado" ('N/A', 'DESCONHECIDO',
+    'SEM MARCA', '-', 'null'...). Parte do catálogo importado tem esses marcadores no campo `marca` (na
+    produção: 633 com 'N/A', 38 'DESCONHECIDO'), e eles apareciam desenhados em destaque na arte
+    ("N/A" gigante acima do nome do produto). Sem marca real, o resto do código já cai no fallback
+    de usar a 1ª palavra do nome como destaque."""
+    m = re.sub(r'\s+', ' ', str(marca or '')).strip()
+    if not m or m.lower() in _MARCAS_PLACEHOLDER or re.fullmatch(r'[\W_]*', m):
+        return ''
+    return m
 
 
 def _texto_corrompido(texto):
@@ -4084,7 +4106,7 @@ def gerar_textos_arte_ia(produto):
     ou fonte externa) já em Title Case, usada pra destacar tipograficamente o nome da marca
     separado do resto da descrição — ou None se não houver marca conhecida."""
     descricao_fonte = produto.description or ''
-    marca_fonte = produto.marca or ''
+    marca_fonte = _marca_valida(produto.marca)
     fallback_nome = (descricao_fonte or 'Produto').title()
     fonte_confiavel = False
 
@@ -4101,7 +4123,7 @@ def gerar_textos_arte_ia(produto):
             fonte_confiavel = True
             marca_externa = dados.get('brand', {}).get('name', '') if isinstance(dados.get('brand'), dict) else (dados.get('marca') or '')
             if marca_externa and marca_externa != 'Marca não disponível':
-                marca_fonte = marca_externa
+                marca_fonte = _marca_valida(marca_externa) or marca_fonte
             break
 
     api_key = _ler_todas_config().get('GEMINI_API_KEY', '').strip()
@@ -4181,7 +4203,7 @@ def gerar_textos_arte_ia(produto):
                     beneficios.append(valor)
         nome_final = fallback_nome if fonte_confiavel else (nome or fallback_nome)
         nome_final, quantidade = _extrair_quantidade_embalagem(descricao_fonte, nome_final)
-        marca_exibicao = marca_fonte.title() if marca_fonte and marca_fonte != 'Marca não disponível' else None
+        marca_exibicao = _marca_valida(marca_fonte).title() or None
         return nome_final, headline, beneficios[:3], quantidade, marca_exibicao
     except Exception as e:
         rate_limited = '429' in str(e) or 'RESOURCE_EXHAUSTED' in str(e)
@@ -4452,7 +4474,7 @@ def _separar_marca_do_nome(nome, marca):
     tamanho porque a marca não veio identificada daquela vez. Não é a marca de verdade, mas
     aplica a mesma regra visual (1ª palavra grande/Regular, resto pequeno/ExtraLight) — melhor
     que nome inteiro sem hierarquia."""
-    marca = (marca or '').strip()
+    marca = _marca_valida(marca)
     nome = (nome or '').strip()
     if not marca:
         partes = nome.split(' ', 1)
@@ -6745,7 +6767,7 @@ def _montar_prompt_arte_manual(descricao, marca, nome, quantidade, headline, ben
     nome, qtd = _extrair_quantidade_embalagem(descricao, nome)
     quantidade = (quantidade or qtd or '').strip()
     quantidade = _formatar_quantidade_embalagem(quantidade)
-    marca = _nome_legivel_para_arte(marca)
+    marca = _nome_legivel_para_arte(_marca_valida(marca))
     destaque, resto = _separar_marca_do_nome(nome, marca)
     if marca and resto:
         # a marca já aparece grande na linha 1: não repetir dentro do nome menor
@@ -6838,7 +6860,7 @@ def admin_artes_produto(codbar):
     return jsonify({
         'encontrado': bool(produto and descricao), 'cadastrado': produto is not None,
         'descricao': '' if corrompida else descricao, 'descricao_corrompida': corrompida,
-        'marca': (produto.marca or '').strip() if produto and not _texto_corrompido(produto.marca or '') else '',
+        'marca': _marca_valida(produto.marca) if produto and not _texto_corrompido(produto.marca or '') else '',
         'nome_sugerido': nome_sugerido, 'quantidade_sugerida': _formatar_quantidade_embalagem(quantidade or ''),
         'foto_url': _static_url(foto) if foto else None,
         'tem_arte': {o: os.path.exists(os.path.join(ARTES_FOLDER, f'{codbar}{v[2]}.webp')) for o, v in ARTES_ORIENTACOES.items()},
