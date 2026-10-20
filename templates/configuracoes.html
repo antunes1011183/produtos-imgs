@@ -1905,6 +1905,31 @@
                     <img id="artes-up-preview" class="arte-upload-preview" alt="Prévia da arte" style="margin-top:0.75rem;">
                 </div>
                 <div class="card">
+                    <h2>Enviar várias artes de uma vez</h2>
+                    <p style="font-size:0.82rem; color:var(--muted); margin:0 0 0.85rem;">Até <strong>100 arquivos</strong> por vez. O <strong>nome de cada arquivo é o EAN</strong> do produto (ex.: <code>7894900011609.png</code>). Para terminal em pé, coloque <code>vertical</code> no nome (<code>7894900011609_vertical.png</code>); sem isso, imagem mais alta que larga vira vertical e as demais horizontais.</p>
+                    <div id="alert-artes-lote"></div>
+                    <div id="artes-lote-drop" style="border:2px dashed var(--border); border-radius:10px; padding:1.1rem; text-align:center; font-size:0.85rem; color:var(--muted); margin-bottom:0.7rem;">
+                        Arraste os arquivos aqui ou
+                        <label for="artes-lote-files" class="btn btn-secondary btn-sm" style="cursor:pointer; margin-left:0.3rem;">Escolher arquivos</label>
+                        <input type="file" id="artes-lote-files" accept="image/*" multiple style="display:none;">
+                    </div>
+                    <div class="form-row" style="flex-direction:row; gap:0.6rem; flex-wrap:wrap; align-items:center; margin-bottom:0.6rem;">
+                        <label for="artes-lote-orient" style="font-size:0.82rem; color:var(--muted);">Quando o nome não diz:</label>
+                        <select id="artes-lote-orient">
+                            <option value="auto">Automática (pelo formato da imagem)</option>
+                            <option value="horizontal">Sempre horizontal (1280×800)</option>
+                            <option value="vertical">Sempre vertical (1200×1920)</option>
+                        </select>
+                        <button class="btn btn-primary" id="btn-artes-lote-enviar" disabled>Enviar</button>
+                        <button class="btn btn-secondary btn-sm" id="btn-artes-lote-limpar" style="display:none;">Limpar lista</button>
+                    </div>
+                    <div id="artes-lote-progresso" style="display:none; margin-bottom:0.6rem;">
+                        <div style="height:8px; border-radius:99px; background:var(--hover); overflow:hidden;"><div id="artes-lote-barra" style="height:100%; width:0%; background:var(--accent); transition:width .2s;"></div></div>
+                        <div id="artes-lote-progresso-txt" style="font-size:0.8rem; color:var(--muted); margin-top:0.3rem;"></div>
+                    </div>
+                    <div id="artes-lote-lista" style="max-height:320px; overflow:auto; font-size:0.82rem;"></div>
+                </div>
+                <div class="card">
                     <h2>Artes criadas <span class="badge" id="artes-count-badge">carregando...</span></h2>
                     <div id="alert-artes"></div>
                     <div class="form-row" style="flex-direction:row; gap:0.5rem; flex-wrap:wrap; align-items:flex-end; margin-bottom:0.85rem;">
@@ -4037,6 +4062,104 @@ $('#auditoria-list').addEventListener('click', async (e) => {
 $('#btn-quarentena-filtrar').addEventListener('click', () => loadQuarentena(1));
 $('#quarentena-codbar').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadQuarentena(1); });
 $('#quarentena-status').addEventListener('change', () => loadQuarentena(1));
+// ===== Envio de artes em lote =====
+const ARTES_LOTE_MAX = 100, ARTES_LOTE_POR_REQUISICAO = 4;
+let artesLote = [];   // { file, ean, orient, status: 'pendente'|'ok'|'erro', msg }
+
+function eanDoNomeArquivo(nome) {
+    const base = nome.replace(/\.[^.]+$/, '');
+    const m = base.match(/^\s*(\d{8,14})(?!\d)(.*)$/);
+    if (!m) return { ean: null, orient: null };
+    const resto = m[2].toLowerCase();
+    return { ean: m[1], orient: resto.includes('vertical') ? 'vertical' : (resto.includes('horizontal') ? 'horizontal' : null) };
+}
+
+function adicionarArquivosLote(lista) {
+    const novos = [...lista].filter(f => f.type.startsWith('image/') || /\.(png|jpe?g|webp)$/i.test(f.name));
+    let ignorados = lista.length - novos.length;
+    for (const f of novos) {
+        if (artesLote.length >= ARTES_LOTE_MAX) { ignorados++; continue; }
+        if (artesLote.some(a => a.file.name === f.name && a.file.size === f.size)) continue;
+        const { ean, orient } = eanDoNomeArquivo(f.name);
+        artesLote.push({ file: f, ean, orient, status: ean ? 'pendente' : 'erro', msg: ean ? '' : 'O nome precisa começar com o EAN (8 a 14 dígitos).' });
+    }
+    if (ignorados) showAlert('alert-artes-lote', `${ignorados} arquivo(s) ignorado(s): fora do limite de ${ARTES_LOTE_MAX} ou não é imagem.`, 'error');
+    renderLoteArtes();
+}
+
+function renderLoteArtes() {
+    const validos = artesLote.filter(a => a.status === 'pendente').length;
+    const btn = $('#btn-artes-lote-enviar');
+    btn.disabled = validos === 0;
+    btn.textContent = validos ? `Enviar ${validos} arte(s)` : 'Enviar';
+    $('#btn-artes-lote-limpar').style.display = artesLote.length ? 'inline-flex' : 'none';
+    const rotulo = { pendente: ['Pronta', 'var(--muted)'], ok: ['Enviada', '#16a34a'], erro: ['Erro', '#dc2626'], enviando: ['Enviando…', 'var(--accent)'] };
+    $('#artes-lote-lista').innerHTML = artesLote.length ? `<table style="width:100%; border-collapse:collapse;">
+        <thead><tr><th style="text-align:left;">Arquivo</th><th style="text-align:left;">EAN</th><th style="text-align:left;">Orientação</th><th style="text-align:left;">Situação</th></tr></thead>
+        <tbody>${artesLote.map(a => {
+            const [txt, cor] = rotulo[a.status];
+            return `<tr><td style="word-break:break-all;">${escHtml(a.file.name)}</td>
+                <td style="font-family:monospace;">${a.ean ? escHtml(a.ean) : '—'}</td>
+                <td>${a.orient ? (a.orient === 'vertical' ? 'Vertical' : 'Horizontal') : 'Automática'}</td>
+                <td style="color:${cor};">${txt}${a.msg ? ' · ' + escHtml(a.msg) : ''}</td></tr>`;
+        }).join('')}</tbody></table>` : '';
+}
+
+async function enviarLoteArtes() {
+    const fila = artesLote.filter(a => a.status === 'pendente');
+    if (!fila.length) return;
+    const btn = $('#btn-artes-lote-enviar');
+    btn.disabled = true;
+    $('#artes-lote-progresso').style.display = 'block';
+    const padrao = $('#artes-lote-orient').value;
+    let feitas = 0, okCount = 0, falhas = 0;
+    const atualizarBarra = () => {
+        $('#artes-lote-barra').style.width = Math.round(feitas / fila.length * 100) + '%';
+        $('#artes-lote-progresso-txt').textContent = `${feitas} de ${fila.length} · ${okCount} enviada(s)` + (falhas ? ` · ${falhas} com erro` : '');
+    };
+    atualizarBarra();
+    for (let i = 0; i < fila.length; i += ARTES_LOTE_POR_REQUISICAO) {
+        const grupo = fila.slice(i, i + ARTES_LOTE_POR_REQUISICAO);
+        grupo.forEach(a => { a.status = 'enviando'; });
+        renderLoteArtes();
+        const fd = new FormData();
+        fd.append('orientacao', padrao);
+        grupo.forEach(a => fd.append('files', a.file, a.file.name));
+        try {
+            const res = await fetch('/admin/artes/upload-lote', { method: 'POST', headers: authHeaders(), body: fd });
+            if (res.status === 401) throw new Error('Sua sessão expirou. Entre de novo e envie os que faltam.');
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.message || data.msg || 'Erro ao enviar.');
+            data.resultados.forEach((r, k) => {
+                const a = grupo[k];
+                a.status = r.ok ? 'ok' : 'erro'; a.msg = r.ok ? '' : r.message;
+                if (r.ok) okCount++; else falhas++;
+            });
+        } catch (e) {
+            const msg = /Failed to fetch/i.test(e.message) ? 'Conexão interrompida durante o envio.' : e.message;
+            grupo.forEach(a => { a.status = 'erro'; a.msg = msg; falhas++; });
+            feitas += grupo.length; atualizarBarra(); renderLoteArtes();
+            if (/sessão expirou/.test(msg)) { fila.slice(i + grupo.length).forEach(a => { a.status = 'pendente'; }); break; }
+            continue;
+        }
+        feitas += grupo.length; atualizarBarra(); renderLoteArtes();
+    }
+    showAlert('alert-artes-lote', `${okCount} arte(s) enviada(s)` + (falhas ? `, ${falhas} com erro (veja a lista).` : '.'), falhas ? 'error' : 'success');
+    toast(`${okCount} arte(s) enviada(s)`, falhas ? 'error' : 'success');
+    renderLoteArtes();
+    loadArtes(1);
+}
+
+$('#artes-lote-files').addEventListener('change', (e) => { adicionarArquivosLote(e.target.files); e.target.value = ''; });
+$('#btn-artes-lote-enviar').addEventListener('click', enviarLoteArtes);
+$('#btn-artes-lote-limpar').addEventListener('click', () => { artesLote = []; $('#artes-lote-progresso').style.display = 'none'; renderLoteArtes(); });
+(function () {
+    const drop = $('#artes-lote-drop');
+    ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.style.borderColor = 'var(--accent)'; }));
+    ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.style.borderColor = 'var(--border)'; }));
+    drop.addEventListener('drop', (e) => adicionarArquivosLote(e.dataTransfer.files));
+})();
+
 // ===== Aba Artes =====
 let artesPage = 1, artesTotalPages = 1;
 

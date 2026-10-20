@@ -6253,32 +6253,39 @@ def admin_listar_artes():
                     'total_pages': max(1, -(-total // per_page)), 'contagem': contagem})
 
 
-@app.route('/admin/artes/upload/<codbar>', methods=['POST'])
-@jwt_required()
-def admin_upload_arte(codbar):
-    """Envia uma arte pronta para um EAN (campo `file`; `orientacao` = horizontal|vertical).
-    A arte SEMPRE sai no tamanho fixo do terminal (1280x800 ou 1200x1920, mesma regra de
-    `_normalizar_tamanho_arte`): imagem de outra proporção é redimensionada e cortada no centro.
-    Substitui a arte existente. Arte que existe nunca é regerada sozinha, então a enviada fica."""
-    codbar = (codbar or '').strip()
-    if not re.fullmatch(r'\d{8,14}', codbar):
-        return jsonify({'message': 'EAN inválido (use de 8 a 14 dígitos).'}), 400
-    orient = (request.form.get('orientacao') or 'horizontal').strip().lower()
-    if orient not in ARTES_ORIENTACOES:
-        return jsonify({'message': 'Orientação inválida (horizontal ou vertical).'}), 400
-    arquivo = request.files.get('file')
-    if not arquivo:
-        return jsonify({'message': 'Envie o arquivo da arte no campo "file".'}), 400
-    dados = arquivo.read()
+def _nome_arte_para_ean(nome_arquivo):
+    """Lê o EAN (e, se houver, a orientação) do NOME do arquivo: `7894900011609.png`,
+    `7894900011609_vertical.jpg`, `7894900011609 horizontal.webp`. O EAN é o número de 8 a 14
+    dígitos no começo do nome; a palavra "vertical" ou "horizontal" depois dele define a
+    orientação. Devolve `(ean, orientacao_ou_None)`; `(None, None)` se o nome não começa com um EAN."""
+    base_nome = os.path.splitext(os.path.basename(nome_arquivo or ''))[0]
+    m = re.match(r'^\s*(\d{8,14})(?!\d)(.*)$', base_nome)
+    if not m:
+        return None, None
+    resto = m.group(2).lower()
+    orient = 'vertical' if 'vertical' in resto else ('horizontal' if 'horizontal' in resto else None)
+    return m.group(1), orient
+
+
+def _salvar_arte(codbar, orient, dados):
+    """Valida e grava uma arte (bytes de imagem) para um EAN. `orient` = horizontal | vertical |
+    auto (auto: imagem mais alta que larga vira vertical). Sempre normaliza pro tamanho fixo do
+    terminal (`_normalizar_tamanho_arte`). Devolve `(ok, mensagem, status_http, extras)`."""
+    if not re.fullmatch(r'\d{8,14}', codbar or ''):
+        return False, 'EAN inválido (use de 8 a 14 dígitos).', 400, {}
+    if orient not in ARTES_ORIENTACOES and orient != 'auto':
+        return False, 'Orientação inválida (horizontal, vertical ou automática).', 400, {}
     if not dados:
-        return jsonify({'message': 'Arquivo vazio.'}), 400
+        return False, 'Arquivo vazio.', 400, {}
     if len(dados) > 15 * 1024 * 1024:
-        return jsonify({'message': 'Arquivo grande demais (máximo 15 MB).'}), 413
+        return False, 'Arquivo grande demais (máximo 15 MB).', 413, {}
     try:
         img = Image.open(io.BytesIO(dados))
         img.load()
     except Exception:
-        return jsonify({'message': 'Não foi possível ler a imagem. Use PNG, JPG ou WEBP.'}), 400
+        return False, 'Não foi possível ler a imagem. Use PNG, JPG ou WEBP.', 400, {}
+    if orient == 'auto':
+        orient = 'vertical' if img.size[1] > img.size[0] else 'horizontal'
     if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
         img = img.convert('RGBA')
         fundo = Image.new('RGB', img.size, (255, 255, 255))
@@ -6287,7 +6294,7 @@ def admin_upload_arte(codbar):
     else:
         img = img.convert('RGB')
     if not _imagem_e_segura(dados):
-        return jsonify({'message': 'A imagem foi reprovada pelo filtro de conteúdo e não foi salva.'}), 422
+        return False, 'A imagem foi reprovada pelo filtro de conteúdo e não foi salva.', 422, {}
 
     largura, altura, sufixo = ARTES_ORIENTACOES[orient]
     img = _normalizar_tamanho_arte(img, largura, altura)
@@ -6298,11 +6305,52 @@ def admin_upload_arte(codbar):
     os.replace(temporario, destino)
     existe = Produto.query.filter_by(codbar=codbar).first() is not None
     logging.info(f"Arte {orient} enviada manualmente para {codbar} ({largura}x{altura})")
-    return jsonify({
-        'message': f'Arte {orient} salva para {codbar} ({largura}x{altura}).' + ('' if existe else ' Atenção: este EAN não está cadastrado no catálogo.'),
+    return True, f'Arte {orient} salva para {codbar} ({largura}x{altura}).' + ('' if existe else ' Atenção: este EAN não está cadastrado no catálogo.'), 200, {
         'codbar': codbar, 'orientacao': orient, 'cadastrado': existe,
         'url': f"/static/artes_geradas/{codbar}{sufixo}.webp?v={int(time.time())}",
-    }), 200
+    }
+
+
+@app.route('/admin/artes/upload/<codbar>', methods=['POST'])
+@jwt_required()
+def admin_upload_arte(codbar):
+    """Envia uma arte pronta para um EAN (campo `file`; `orientacao` = horizontal|vertical|auto).
+    A arte SEMPRE sai no tamanho fixo do terminal (1280x800 ou 1200x1920, mesma regra de
+    `_normalizar_tamanho_arte`): imagem de outra proporção é redimensionada e cortada no centro.
+    Substitui a arte existente. Arte que existe nunca é regerada sozinha, então a enviada fica."""
+    arquivo = request.files.get('file')
+    if not arquivo:
+        return jsonify({'message': 'Envie o arquivo da arte no campo "file".'}), 400
+    ok, msg, status, extras = _salvar_arte((codbar or '').strip(), (request.form.get('orientacao') or 'horizontal').strip().lower(), arquivo.read())
+    return jsonify({'message': msg, **extras}), status
+
+
+@app.route('/admin/artes/upload-lote', methods=['POST'])
+@jwt_required()
+def admin_upload_artes_lote():
+    """Envio em lote: vários arquivos (`files`), cada um nomeado com o EAN (`<ean>.png`,
+    `<ean>_vertical.jpg`...). A orientação vem do nome (palavra vertical/horizontal), senão de
+    `orientacao` (padrão `auto`: imagem mais alta que larga = vertical). Resposta 200 com o
+    resultado de cada arquivo — um com erro não impede os outros. O painel manda no máximo 100
+    arquivos por vez, em pedidos de poucos arquivos cada."""
+    arquivos = request.files.getlist('files')
+    if not arquivos:
+        return jsonify({'message': 'Nenhum arquivo enviado (campo "files").'}), 400
+    if len(arquivos) > 10:
+        return jsonify({'message': 'Envie no máximo 10 arquivos por requisição.'}), 400
+    padrao = (request.form.get('orientacao') or 'auto').strip().lower()
+    resultados = []
+    for f in arquivos:
+        nome = f.filename or ''
+        ean, orient_nome = _nome_arte_para_ean(nome)
+        if not ean:
+            resultados.append({'arquivo': nome, 'ok': False, 'message': 'O nome do arquivo precisa começar com o EAN (8 a 14 dígitos). Ex.: 7894900011609.png'})
+            continue
+        ok, msg, status, extras = _salvar_arte(ean, orient_nome or padrao, f.read())
+        resultados.append({'arquivo': nome, 'ok': ok, 'message': msg, 'codbar': ean, **{k: v for k, v in extras.items() if k in ('orientacao', 'cadastrado')}})
+    return jsonify({'resultados': resultados,
+                    'enviadas': sum(1 for r in resultados if r['ok']),
+                    'falhas': sum(1 for r in resultados if not r['ok'])}), 200
 
 
 @app.route('/admin/artes/<codbar>', methods=['DELETE'])
