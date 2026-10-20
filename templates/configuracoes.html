@@ -1081,6 +1081,10 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
                 Artes <span class="badge" id="artes-badge-sidebar" style="display:none;"></span>
             </button>
+            <button class="nav-tab" data-tab="acessos" data-title="Acessos" data-subtitle="Usuários do painel e log de quem entrou e o que fez">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                Acessos
+            </button>
             <button class="nav-tab" data-tab="whatsapp" data-title="WhatsApp" data-subtitle="Conecte um número via Evolution API para receber o resumo diário">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
                 WhatsApp
@@ -1451,12 +1455,8 @@
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                         Login em duas etapas (código por e-mail)
                     </h2>
-                    <p style="font-size:0.85rem; color:var(--muted); margin-bottom:0.75rem;">Com isto ligado, depois de e-mail e senha o painel pede um código de 6 dígitos enviado para <strong id="twofa-destino">support@mupa.app</strong>. O código vale 10 minutos e só pode ser usado uma vez. Os terminais de consulta de preço não são afetados.</p>
+                    <p style="font-size:0.85rem; color:var(--muted); margin-bottom:0.75rem;">Com isto ligado, depois de e-mail e senha o painel pede um código de 6 dígitos enviado para <strong>o e-mail do próprio usuário</strong>. O código vale 10 minutos e só pode ser usado uma vez. Os terminais de consulta de preço não são afetados.</p>
                     <div id="alert-2fa"></div>
-                    <div class="form-row" style="margin-bottom:0.6rem;">
-                        <label for="twofa-destino-input">E-mail que recebe o código</label>
-                        <input type="text" id="twofa-destino-input" placeholder="support@mupa.app" autocomplete="off">
-                    </div>
                     <div class="form-row" style="margin-bottom:0.6rem;">
                         <label for="twofa-remetente-input">Remetente (domínio verificado no Resend)</label>
                         <input type="text" id="twofa-remetente-input" placeholder="Mupa Brain &lt;no-reply@mupa.app&gt;" autocomplete="off">
@@ -2046,6 +2046,73 @@
                 </div><!-- /artes-view-prompt -->
             </div>
 
+            <div id="tab-acessos" class="tab-content" style="display:none;">
+                <div class="card">
+                    <h2>Usuários do painel</h2>
+                    <p style="font-size:0.82rem; color:var(--muted); margin:0 0 0.85rem;">Todos são administradores. Depois da senha, o painel pede um código de 6 dígitos enviado para o <strong>e-mail do próprio usuário</strong>. Só <strong>antunes@mupa.app</strong> gera o link para um usuário definir ou trocar a senha.</p>
+                    <div id="alert-usuarios"></div>
+                    <div style="overflow-x:auto;">
+                        <table>
+                            <thead><tr><th>Nome</th><th>E-mail</th><th>Situação</th><th>Último acesso</th><th></th></tr></thead>
+                            <tbody id="usuarios-tbody"><tr><td colspan="5" style="color:var(--muted);">Carregando...</td></tr></tbody>
+                        </table>
+                    </div>
+                    <div id="convite-box" style="display:none; margin-top:0.85rem; padding:0.8rem; border:1px solid var(--border); border-radius:8px; background:var(--hover);">
+                        <div style="font-size:0.82rem; margin-bottom:0.4rem;" id="convite-info"></div>
+                        <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+                            <input type="text" id="convite-link" readonly style="flex:1; min-width:240px; font-family:monospace; font-size:0.78rem;">
+                            <button class="btn btn-primary btn-sm" id="btn-convite-copiar">Copiar link</button>
+                        </div>
+                        <div style="font-size:0.75rem; color:var(--muted); margin-top:0.4rem;">O link aparece só agora. Envie pessoalmente a quem vai definir a senha. Vale por 48 horas e uma única vez.</div>
+                    </div>
+                </div>
+                <div class="card">
+                    <h2>Log de acessos <span class="badge" id="logs-count-badge">carregando...</span></h2>
+                    <p style="font-size:0.82rem; color:var(--muted); margin:0 0 0.85rem;">Quem entrou, quando e o que fez no painel (horário de Brasília). Senhas, códigos e valores de configuração nunca são gravados.</p>
+                    <div id="alert-logs"></div>
+                    <div class="form-row" style="flex-direction:row; gap:0.5rem; flex-wrap:wrap; align-items:flex-end; margin-bottom:0.85rem;">
+                        <div style="min-width:170px;">
+                            <label for="logs-usuario" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">Usuário</label>
+                            <select id="logs-usuario" style="width:100%;"><option value="">Todos</option></select>
+                        </div>
+                        <div style="min-width:140px;">
+                            <label for="logs-tipo" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">Tipo</label>
+                            <select id="logs-tipo" style="width:100%;">
+                                <option value="">Tudo</option>
+                                <option value="acesso">Acessos (login/saída)</option>
+                                <option value="acao">Ações no painel</option>
+                            </select>
+                        </div>
+                        <div style="flex:1; min-width:150px;">
+                            <label for="logs-q" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">Buscar no texto</label>
+                            <input type="text" id="logs-q" placeholder="Ex: arte, 7894900011609" autocomplete="off">
+                        </div>
+                        <div>
+                            <label for="logs-desde" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">De</label>
+                            <input type="date" id="logs-desde">
+                        </div>
+                        <div>
+                            <label for="logs-ate" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">Até</label>
+                            <input type="date" id="logs-ate">
+                        </div>
+                        <button class="btn btn-primary" id="btn-logs-filtrar">Filtrar</button>
+                    </div>
+                    <div style="overflow-x:auto;">
+                        <table>
+                            <thead><tr><th>Data e hora</th><th>Usuário</th><th>Tipo</th><th>O que fez</th><th>IP</th></tr></thead>
+                            <tbody id="logs-tbody"></tbody>
+                        </table>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:0.85rem; font-size:0.82rem; color:var(--muted);">
+                        <span id="logs-info">—</span>
+                        <span style="display:flex; gap:0.4rem;">
+                            <button class="btn btn-secondary btn-sm" id="btn-logs-prev">← Anterior</button>
+                            <button class="btn btn-secondary btn-sm" id="btn-logs-next">Próximo →</button>
+                        </span>
+                    </div>
+                </div>
+            </div>
+
             <div id="tab-whatsapp" class="tab-content" style="display:none;">
                 <div class="card">
                     <h2>
@@ -2490,7 +2557,6 @@ function definirCookieImagens(tok, expiraEmMs) {
 }
 
 function atualizarCard2fa(ativo, destino) {
-    if (destino) $('#twofa-destino').textContent = destino;
     const st = $('#twofa-status');
     st.textContent = ativo ? 'Ativado: o painel exige o código do e-mail.' : 'Desativado: o painel entra só com e-mail e senha.';
     st.style.color = ativo ? 'var(--success, #16a34a)' : 'var(--muted)';
@@ -2512,9 +2578,8 @@ async function acao2fa(action, extra) {
 $('#btn-2fa-salvar-cfg').addEventListener('click', async (e) => {
     const btn = e.currentTarget; btn.disabled = true;
     try {
-        const d = await acao2fa('save_2fa_config', { destino: $('#twofa-destino-input').value, remetente: $('#twofa-remetente-input').value });
+        const d = await acao2fa('save_2fa_config', { remetente: $('#twofa-remetente-input').value });
         showAlert('alert-2fa', d.message, 'success');
-        if ($('#twofa-destino-input').value.trim()) $('#twofa-destino').textContent = $('#twofa-destino-input').value.trim();
     } catch (err) { showAlert('alert-2fa', err.message, 'error'); }
     finally { btn.disabled = false; }
 });
@@ -2706,7 +2771,8 @@ $('#login-code-form').addEventListener('submit', async (e) => {
     }
 });
 
-$('#btn-logout').addEventListener('click', () => {
+$('#btn-logout').addEventListener('click', async () => {
+    try { await fetch('/logout', { method: 'POST', headers: authHeaders() }); } catch (e) {}
     limparSessao();
     mostrarTelaLogin();
 });
@@ -2748,6 +2814,7 @@ $$('.nav-tab').forEach(btn => {
         if (tab === 'quarentena') loadQuarentena(1);
         if (tab === 'auditoria') iniciarAuditoriaTab();
         if (tab === 'artes') loadArtes(1);
+        if (tab === 'acessos') { loadUsuarios(); loadLogs(1); }
         if (tab === 'whatsapp') loadWhatsapp();
 
         closeSidebarMobile();
@@ -2802,7 +2869,6 @@ async function loadConfig() {
         $('#terminal-keys').value = cfg.terminal_keys_full || '';
         setToggle('toggle-exigir-token', cfg.exigir_token_imagens);
         atualizarCard2fa(cfg.login_2fa_ativo, cfg.login_2fa_destino);
-        $('#twofa-destino-input').value = cfg.login_2fa_destino_cfg || '';
         $('#twofa-remetente-input').value = cfg.login_2fa_remetente || '';
         loadTokenTerminalStatus();
         $('#proxy-vps-url').value = cfg.proxy_imagens_vps_url || '';
@@ -4155,6 +4221,91 @@ $('#auditoria-list').addEventListener('click', async (e) => {
 $('#btn-quarentena-filtrar').addEventListener('click', () => loadQuarentena(1));
 $('#quarentena-codbar').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadQuarentena(1); });
 $('#quarentena-status').addEventListener('change', () => loadQuarentena(1));
+// ===== Aba Acessos: usuários e log =====
+const ROTULOS_EVENTO = {
+    login_ok: ['Entrou', '#16a34a'], login_falha: ['Login recusado', '#dc2626'], codigo_enviado: ['Código enviado', 'var(--muted)'],
+    codigo_falha: ['Código recusado', '#dc2626'], logout: ['Saiu', 'var(--muted)'], senha_definida: ['Definiu a senha', '#16a34a'],
+    convite_gerado: ['Gerou link de senha', '#b45309'], convite_negado: ['Link negado', '#dc2626'], acao: ['Ação', 'var(--accent)'],
+};
+const fmtBrasilia = (iso) => iso ? new Date(iso).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '—';
+
+async function loadUsuarios() {
+    const tbody = $('#usuarios-tbody');
+    try {
+        const res = await fetch('/admin/usuarios', { headers: authHeaders() });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.message || d.msg || 'Erro ao carregar usuários.');
+        tbody.innerHTML = d.usuarios.map(u => `<tr>
+            <td>${escHtml(u.nome)}${u.pode_convidar ? ' <span class="arte-tag">gera links</span>' : ''}</td>
+            <td style="font-family:monospace; font-size:0.82rem;">${escHtml(u.email)}</td>
+            <td>${u.senha_definida ? '<span style="color:#16a34a;">Ativo</span>' : '<span style="color:#b45309;">Aguardando definir a senha</span>'}</td>
+            <td>${fmtBrasilia(u.ultimo_login)}</td>
+            <td>${d.eu.pode_convidar ? `<button class="btn btn-secondary btn-sm" data-action="gerar-convite" data-id="${u.id}" data-email="${escHtml(u.email)}">${u.senha_definida ? 'Link para trocar a senha' : 'Gerar link de senha'}</button>` : ''}</td>
+        </tr>`).join('');
+    } catch (e) {
+        tbody.innerHTML = '';
+        showAlert('alert-usuarios', e.message, 'error');
+    }
+}
+
+$('#usuarios-tbody').addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-action="gerar-convite"]');
+    if (!btn) return;
+    btn.disabled = true;
+    try {
+        const res = await fetch(`/admin/usuarios/${btn.dataset.id}/convite`, { method: 'POST', headers: authHeaders() });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.message || d.msg || 'Erro ao gerar o link.');
+        $('#convite-link').value = d.link;
+        $('#convite-info').textContent = `Link de senha para ${d.usuario} (vale ${d.expira_em_horas} horas):`;
+        $('#convite-box').style.display = 'block';
+        $('#convite-link').select();
+        loadLogs(1);
+    } catch (err) {
+        showAlert('alert-usuarios', err.message, 'error');
+    } finally {
+        btn.disabled = false;
+    }
+});
+
+$('#btn-convite-copiar').addEventListener('click', async () => {
+    const campo = $('#convite-link');
+    try { await navigator.clipboard.writeText(campo.value); toast('Link copiado', 'success'); }
+    catch (e) { campo.select(); toast(document.execCommand && document.execCommand('copy') ? 'Link copiado' : 'Selecionei o link: use Ctrl+C', 'success'); }
+});
+
+let logsPage = 1, logsTotalPages = 1;
+async function loadLogs(page) {
+    const params = new URLSearchParams({ page, per_page: 50, usuario: $('#logs-usuario').value, tipo: $('#logs-tipo').value, q: $('#logs-q').value.trim(), desde: $('#logs-desde').value, ate: $('#logs-ate').value });
+    try {
+        const res = await fetch('/admin/logs-acesso?' + params, { headers: authHeaders() });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.message || d.msg || 'Erro ao carregar o log.');
+        logsPage = d.page; logsTotalPages = d.total_pages;
+        const sel = $('#logs-usuario'), atual = sel.value;
+        sel.innerHTML = '<option value="">Todos</option>' + d.usuarios.map(u => `<option value="${escHtml(u)}">${escHtml(u)}</option>`).join('');
+        sel.value = atual;
+        $('#logs-count-badge').textContent = `${d.total} registro(s)`;
+        $('#logs-info').textContent = d.total ? `Página ${d.page} de ${d.total_pages}` : '—';
+        $('#btn-logs-prev').disabled = d.page <= 1;
+        $('#btn-logs-next').disabled = d.page >= d.total_pages;
+        $('#logs-tbody').innerHTML = d.registros.length ? d.registros.map(r => {
+            const [rot, cor] = ROTULOS_EVENTO[r.evento] || [r.evento, 'var(--muted)'];
+            return `<tr><td style="white-space:nowrap;">${fmtBrasilia(r.criado_em)}</td>
+                <td style="font-family:monospace; font-size:0.8rem;">${escHtml(r.usuario)}</td>
+                <td style="color:${cor}; white-space:nowrap;">${escHtml(rot)}</td>
+                <td>${escHtml(r.descricao)}</td>
+                <td style="font-family:monospace; font-size:0.78rem;">${escHtml(r.ip || '')}</td></tr>`;
+        }).join('') : '<tr><td colspan="5" style="color:var(--muted); padding:1rem;">Nenhum registro para este filtro.</td></tr>';
+    } catch (e) {
+        showAlert('alert-logs', e.message, 'error');
+    }
+}
+$('#btn-logs-filtrar').addEventListener('click', () => loadLogs(1));
+$('#logs-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadLogs(1); });
+$('#btn-logs-prev').addEventListener('click', () => { if (logsPage > 1) loadLogs(logsPage - 1); });
+$('#btn-logs-next').addEventListener('click', () => { if (logsPage < logsTotalPages) loadLogs(logsPage + 1); });
+
 // ===== Artes: sub-abas e gerador de prompt =====
 function mostrarArtesView(view) {
     $$('.artes-subnav-btn').forEach(b => b.classList.toggle('active', b.dataset.artesView === view));

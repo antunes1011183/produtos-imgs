@@ -23,6 +23,7 @@ PUBLICAS = {
     '/': 'só redireciona para /configuracoes',
     '/sw.js': 'service worker do PWA (arquivo estático)',
     '/login': 'etapa 1 do login (senha); limitada por IP',
+    '/definir-senha': 'página do link de convite (token secreto de uso único, 48h); POST limitado por IP',
     '/login/verificar': 'etapa 2 do login (código por e-mail); limitada por IP',
     '/terminal/token': 'troca a chave do terminal por token de 3600s; limitada por IP',
     '/configuracoes': 'GET devolve só o HTML do painel (sem segredos); o resto exige JWT dentro da função',

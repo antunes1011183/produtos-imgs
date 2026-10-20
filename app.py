@@ -21,7 +21,8 @@ from io import StringIO
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, url_for, render_template, redirect, send_file, send_from_directory, Response
 from flask_sqlalchemy import SQLAlchemy
-from flask_jwt_extended import JWTManager, create_access_token, decode_token, jwt_required, verify_jwt_in_request
+from flask_jwt_extended import JWTManager, create_access_token, decode_token, get_jwt_identity, jwt_required, verify_jwt_in_request
+from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 from flasgger import Swagger, swag_from
 import openai
@@ -338,6 +339,49 @@ class HistoricoBuscaImagem(db.Model):
     notificado_em = db.Column(db.DateTime, nullable=True)
 
 
+class UsuarioPainel(db.Model):
+    """Usuário do painel admin (todos são "master"). A senha fica só como hash (scrypt) — nunca em
+    texto. `senha_hash` vazio = ainda não definiu a senha (entra pelo link de convite). O segundo
+    fator do login (código de 6 dígitos) vai SEMPRE pro `email` do próprio usuário. Só quem tem
+    `pode_convidar` gera link de definição de senha (hoje, só antunes@mupa.app)."""
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(120), nullable=False, unique=True, index=True)
+    nome = db.Column(db.String(120), nullable=False, default='')
+    senha_hash = db.Column(db.String(255), nullable=True)
+    ativo = db.Column(db.Boolean, nullable=False, default=True)
+    pode_convidar = db.Column(db.Boolean, nullable=False, default=False)
+    ultimo_login = db.Column(db.DateTime, nullable=True)
+    criado_em = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+
+class ConviteSenha(db.Model):
+    """Link de uso único pra um usuário definir (ou redefinir) a própria senha. Só o hash SHA-256
+    do token fica no banco; o link em si aparece uma vez, pra quem o gerou copiar e enviar."""
+    id = db.Column(db.Integer, primary_key=True)
+    usuario_id = db.Column(db.Integer, db.ForeignKey('usuario_painel.id'), nullable=False, index=True)
+    token_hash = db.Column(db.String(64), nullable=False, unique=True)
+    expira_em = db.Column(db.DateTime, nullable=False)
+    usado_em = db.Column(db.DateTime, nullable=True)
+    criado_por = db.Column(db.String(120), nullable=True)
+    criado_em = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+
+class LogAcessoPainel(db.Model):
+    """Log de acessos e ações no painel: quem, quando (UTC), o que fez e de onde (IP). `tipo` =
+    'acesso' (login, código, logout, senha) ou 'acao' (alteração feita no painel). Nunca guarda
+    senha, código, token nem valores de configuração — só o nome da ação."""
+    id = db.Column(db.Integer, primary_key=True)
+    criado_em = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    usuario = db.Column(db.String(120), nullable=False, index=True)
+    tipo = db.Column(db.String(10), nullable=False, default='acao', index=True)
+    evento = db.Column(db.String(40), nullable=False, default='')
+    descricao = db.Column(db.String(400), nullable=False, default='')
+    ip = db.Column(db.String(64), nullable=True)
+    metodo = db.Column(db.String(8), nullable=True)
+    caminho = db.Column(db.String(200), nullable=True)
+    status = db.Column(db.Integer, nullable=True)
+
+
 class AuditoriaImagem(db.Model):
     """Resultado da auditoria das imagens já baixadas (aba "Auditoria", ver `_executar_auditoria`)
     — uma linha por EAN que tem foto servida, guardando o resultado da última varredura.
@@ -524,12 +568,8 @@ def remove_background_upload():
 # usuário pra corrigir isso de vez: agora só existe UM jeito de conseguir um token pro painel,
 # POST /login com credenciais reais (ver CREDENCIAIS_PAINEL logo abaixo).
 
-# Credenciais de acesso ao painel — usuário pediu explicitamente a adição de support@mupa.app.
-CREDENCIAIS_PAINEL = {
-    'antunes@mupa.app': '#Mupa04051623$',
-    'support@mupa.app': '#CpvwPgu3233105$',
-}
-
+# Usuários do painel: tabela `UsuarioPainel` (senha só como hash). As senhas em texto que ficavam
+# aqui foram removidas — estavam no histórico do git. Veja `_garantir_usuarios_master`.
 
 LOGIN_CODIGO_VALIDADE_SEGUNDOS = 600
 LOGIN_CODIGO_MAX_TENTATIVAS = 5
@@ -589,14 +629,14 @@ def _emitir_token_painel(username):
     return jsonify(access_token=access_token, expires_at=int(expires_time.timestamp() * 1000)), 200
 
 
-def _enviar_codigo_por_email(codigo, finalidade):
+def _enviar_codigo_por_email(codigo, finalidade, destino=None):
     """Manda o código de 6 dígitos pro e-mail de segurança via Resend. Levanta exceção se não
     conseguir (o login NUNCA segue sem o código: sem e-mail, sem acesso)."""
     cfg = _ler_todas_config()
     api_key = (cfg.get('RESEND_API_KEY') or '').strip()
     if not api_key:
         raise ValueError('RESEND_API_KEY não configurada')
-    destino = (cfg.get('LOGIN_2FA_DESTINO') or '').strip() or LOGIN_2FA_DESTINO_PADRAO
+    destino = destino or (cfg.get('LOGIN_2FA_DESTINO') or '').strip() or LOGIN_2FA_DESTINO_PADRAO
     remetente = (cfg.get('LOGIN_2FA_REMETENTE') or '').strip()
     if not remetente:
         candidato = (cfg.get('RESEND_REMETENTE') or '').strip()
@@ -618,78 +658,111 @@ def _enviar_codigo_por_email(codigo, finalidade):
         raise ValueError(f'Resend HTTP {r.status_code}: {r.text[:200]}')
 
 
+_HASH_FALSO = generate_password_hash('senha-falsa-so-pra-gastar-o-mesmo-tempo')
+
+
+def _ip_cliente():
+    return request.remote_addr or '?'
+
+
+def _registrar_log(usuario, evento, descricao, tipo='acesso', status=None, metodo=None, caminho=None):
+    """Grava uma linha no log de acessos. Nunca derruba a requisição se o log falhar."""
+    try:
+        db.session.add(LogAcessoPainel(
+            usuario=(usuario or '?')[:120], tipo=tipo, evento=evento[:40], descricao=(descricao or '')[:400],
+            ip=_ip_cliente()[:64], metodo=(metodo or request.method)[:8], caminho=(caminho or request.path)[:200], status=status))
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        logging.error(f"Falha ao gravar log de acesso ({evento}): {e}")
+
+
+def _usuario_atual():
+    ident = get_jwt_identity()
+    return UsuarioPainel.query.filter_by(email=ident).first() if ident else None
+
+
+def _validar_senha_nova(senha, email):
+    """Regras mínimas da senha: 10+ caracteres, com letra e número, e diferente do e-mail."""
+    senha = senha or ''
+    if len(senha) < 10:
+        return 'A senha precisa ter pelo menos 10 caracteres.'
+    if not re.search(r'[A-Za-z]', senha) or not re.search(r'\d', senha):
+        return 'A senha precisa ter letras e números.'
+    local = (email or '').split('@')[0].lower()
+    if local and local in senha.lower():
+        return 'A senha não pode conter o seu e-mail.'
+    return None
+
+
+USUARIOS_MASTER = (
+    # (e-mail, nome, pode gerar link de senha)
+    ('antunes@mupa.app', 'Antunes', True),
+    ('support@mupa.app', 'Support', False),
+    ('logan.lima@mupa.app', 'Logan Lima', False),
+)
+
+
+def _garantir_usuarios_master():
+    """Cria os 3 usuários master que ainda não existem (sem senha: cada um define a sua pelo
+    link de convite, ou pelo script `scripts/definir_senha_usuario.py`). Chamado na subida."""
+    for email, nome, pode in USUARIOS_MASTER:
+        u = UsuarioPainel.query.filter_by(email=email).first()
+        if not u:
+            db.session.add(UsuarioPainel(email=email, nome=nome, pode_convidar=pode, ativo=True))
+        elif u.pode_convidar != pode:
+            u.pode_convidar = pode
+    db.session.commit()
+
+
 @app.route('/login', methods=['POST'])
-@swag_from({
-    'tags': ['Auth'],
-    'parameters': [
-        {
-            'name': 'username',
-            'in': 'formData',
-            'type': 'string',
-            'required': True
-        },
-        {
-            'name': 'password',
-            'in': 'formData',
-            'type': 'string',
-            'required': True
-        }
-    ],
-    'responses': {
-        '200': {
-            'description': 'Login bem-sucedido',
-            'examples': {
-                'application/json': {
-                    'access_token': 'string',
-                    'expires_at': 'timestamp'
-                }
-            }
-        },
-        '401': {
-            'description': 'Credenciais inválidas'
-        }
-    }
-})
 def login():
     """Etapa 1 do login: confere e-mail e senha. Com o login em duas etapas ligado
-    (`LOGIN_2FA_ATIVO`) responde `requires_code` e envia um código de 6 dígitos por e-mail
-    (veja `/login/verificar`); desligado, devolve o token direto como sempre."""
+    (`LOGIN_2FA_ATIVO`) responde `requires_code` e envia um código de 6 dígitos pro e-mail DO
+    PRÓPRIO usuário (veja `/login/verificar`); desligado, devolve o token direto."""
     dados = request.form or request.get_json(silent=True) or {}
-    username = (dados.get('username') or '').strip()
-    password = dados.get('password') or ''
+    username = (dados.get('username') or '').strip().lower()
+    password = str(dados.get('password') or '')
     bloqueio = _login_ip_bloqueado()
     if bloqueio:
         return bloqueio
-    senha_certa = CREDENCIAIS_PAINEL.get(username, '')
-    # compare_digest sempre roda (mesmo com usuário inexistente) pra não vazar quais e-mails existem
-    ok = hmac.compare_digest(str(password).encode(), (senha_certa or '\0').encode()) and username in CREDENCIAIS_PAINEL
-    if not ok:
+    usuario = UsuarioPainel.query.filter_by(email=username).first() if username else None
+    valido = bool(usuario and usuario.ativo and usuario.senha_hash)
+    # a verificação SEMPRE roda (hash falso quando o usuário não existe) pra não vazar, pelo tempo, quais e-mails existem
+    senha_ok = check_password_hash(usuario.senha_hash if valido else _HASH_FALSO, password) and valido
+    if not senha_ok:
         _login_registrar_falha()
-        logging.warning(f"/login: credenciais inválidas de {request.remote_addr}")
+        _registrar_log(username or '?', 'login_falha', 'Tentativa de login com e-mail ou senha incorretos', status=401)
+        logging.warning(f"/login: credenciais inválidas de {_ip_cliente()}")
         return jsonify({'error': 'Invalid credentials', 'message': 'E-mail ou senha inválidos.'}), 401
     if not _login_2fa_ativo():
-        return _emitir_token_painel(username)
+        usuario.ultimo_login = datetime.utcnow()
+        db.session.commit()
+        _registrar_log(usuario.email, 'login_ok', 'Entrou no painel (sem segundo fator)', status=200)
+        return _emitir_token_painel(usuario.email)
     agora = time.time()
     _login_limpar_desafios(agora)
-    envios = [t for t in _login_envios.get(username, []) if t > agora - 3600]
+    envios = [t for t in _login_envios.get(usuario.email, []) if t > agora - 3600]
     if len(envios) >= 6:
         return jsonify({'message': 'Muitos códigos solicitados. Aguarde um pouco e tente de novo.'}), 429
     codigo = f"{secrets.randbelow(10 ** 6):06d}"
     try:
-        _enviar_codigo_por_email(codigo, 'login')
+        _enviar_codigo_por_email(codigo, 'login', destino=usuario.email)
     except Exception as e:
         logging.error(f"/login: falha ao enviar código por e-mail: {e}")
+        _registrar_log(usuario.email, 'codigo_falha', 'Senha correta, mas o código não pôde ser enviado por e-mail', status=502)
         return jsonify({'message': 'Não foi possível enviar o código por e-mail. Tente novamente em instantes.'}), 502
     envios.append(agora)
-    _login_envios[username] = envios
+    _login_envios[usuario.email] = envios
     desafio = secrets.token_urlsafe(24)
     _login_desafios[desafio] = {
-        'usuario': username, 'hash': _hash_codigo(desafio, codigo),
+        'usuario': usuario.email, 'hash': _hash_codigo(desafio, codigo),
         'expira': agora + LOGIN_CODIGO_VALIDADE_SEGUNDOS, 'tentativas': 0,
     }
+    _registrar_log(usuario.email, 'codigo_enviado', f'Senha correta; código enviado para {_mascarar_email(usuario.email)}', status=200)
     return jsonify({
         'requires_code': True, 'challenge': desafio,
-        'destino': _mascarar_email(_login_2fa_destino()), 'expira_em': LOGIN_CODIGO_VALIDADE_SEGUNDOS,
+        'destino': _mascarar_email(usuario.email), 'expira_em': LOGIN_CODIGO_VALIDADE_SEGUNDOS,
     }), 200
 
 
@@ -712,13 +785,215 @@ def login_verificar():
     d['tentativas'] += 1
     if d['tentativas'] > LOGIN_CODIGO_MAX_TENTATIVAS:
         _login_desafios.pop(desafio_id, None)
+        _registrar_log(d['usuario'], 'codigo_falha', 'Código bloqueado por excesso de tentativas', status=401)
         return jsonify({'message': 'Muitas tentativas. Faça login novamente.'}), 401
     if not hmac.compare_digest(_hash_codigo(desafio_id, codigo), d['hash']):
         _login_registrar_falha()
+        _registrar_log(d['usuario'], 'codigo_falha', 'Código de verificação incorreto', status=401)
         restantes = LOGIN_CODIGO_MAX_TENTATIVAS - d['tentativas']
         return jsonify({'message': f'Código incorreto. Restam {restantes} tentativa(s).'}), 401
     _login_desafios.pop(desafio_id, None)
+    usuario = UsuarioPainel.query.filter_by(email=d['usuario']).first()
+    if usuario:
+        usuario.ultimo_login = datetime.utcnow()
+        db.session.commit()
+    _registrar_log(d['usuario'], 'login_ok', 'Entrou no painel (senha + código por e-mail)', status=200)
     return _emitir_token_painel(d['usuario'])
+
+
+@app.route('/logout', methods=['POST'])
+@jwt_required()
+def logout():
+    """Só registra a saída no log (o token vence sozinho; o painel apaga a sessão local)."""
+    _registrar_log(get_jwt_identity(), 'logout', 'Saiu do painel')
+    return jsonify({'message': 'ok'})
+
+
+# ---------------------------------------------------------------- usuários, convites e logs
+CONVITE_VALIDADE_HORAS = 48
+
+
+@app.route('/admin/usuarios', methods=['GET'])
+@jwt_required()
+def admin_listar_usuarios():
+    """Lista os usuários do painel (todos veem) e diz se quem consulta pode gerar link de senha."""
+    eu = _usuario_atual()
+    usuarios = UsuarioPainel.query.order_by(UsuarioPainel.email).all()
+    return jsonify({
+        'usuarios': [{
+            'id': u.id, 'email': u.email, 'nome': u.nome, 'ativo': u.ativo, 'senha_definida': bool(u.senha_hash),
+            'pode_convidar': u.pode_convidar,
+            'ultimo_login': (u.ultimo_login.isoformat() + 'Z') if u.ultimo_login else None,
+        } for u in usuarios],
+        'eu': {'email': eu.email if eu else get_jwt_identity(), 'pode_convidar': bool(eu and eu.pode_convidar)},
+    })
+
+
+@app.route('/admin/usuarios/<int:uid>/convite', methods=['POST'])
+@jwt_required()
+def admin_gerar_convite(uid):
+    """Gera um link de uso único (48h) pro usuário definir ou redefinir a senha. SÓ quem tem
+    `pode_convidar` (antunes@mupa.app) pode — qualquer outro usuário recebe 403."""
+    eu = _usuario_atual()
+    if not eu or not eu.pode_convidar:
+        _registrar_log(get_jwt_identity(), 'convite_negado', 'Tentou gerar link de senha sem permissão', tipo='acao', status=403)
+        return jsonify({'message': 'Só o administrador principal pode gerar links de senha.'}), 403
+    alvo = db.session.get(UsuarioPainel, uid)
+    if not alvo or not alvo.ativo:
+        return jsonify({'message': 'Usuário não encontrado.'}), 404
+    agora = datetime.utcnow()
+    for antigo in ConviteSenha.query.filter_by(usuario_id=alvo.id, usado_em=None).all():
+        antigo.usado_em = agora   # só o link mais novo vale
+    token = secrets.token_urlsafe(32)
+    db.session.add(ConviteSenha(usuario_id=alvo.id, token_hash=hashlib.sha256(token.encode()).hexdigest(),
+                                expira_em=agora + timedelta(hours=CONVITE_VALIDADE_HORAS), criado_por=eu.email))
+    db.session.commit()
+    _registrar_log(eu.email, 'convite_gerado', f'Gerou link de senha para {alvo.email}', tipo='acao', status=200)
+    return jsonify({
+        'link': request.host_url.rstrip('/') + '/definir-senha?token=' + token,
+        'usuario': alvo.email, 'expira_em_horas': CONVITE_VALIDADE_HORAS,
+    })
+
+
+def _convite_valido(token):
+    """Devolve (convite, usuario) se o token é válido (existe, não usado, não expirado), senão (None, None)."""
+    if not token or len(token) < 20:
+        return None, None
+    c = ConviteSenha.query.filter_by(token_hash=hashlib.sha256(token.encode()).hexdigest()).first()
+    if not c or c.usado_em or c.expira_em < datetime.utcnow():
+        return None, None
+    u = db.session.get(UsuarioPainel, c.usuario_id)
+    return (c, u) if u and u.ativo else (None, None)
+
+
+@app.route('/definir-senha', methods=['GET', 'POST'])
+def definir_senha():
+    """Página pública (protegida pelo token secreto do link) onde o usuário escolhe a senha.
+    O link vale 48h e uma única vez; depois de definir, o login passa a pedir também o código
+    enviado ao e-mail do usuário."""
+    if request.method == 'GET':
+        token = (request.args.get('token') or '').strip()
+        _, u = _convite_valido(token)
+        return render_template('definir_senha.html', valido=bool(u), email=u.email if u else '', nome=u.nome if u else '', token=token)
+    bloqueio = _login_ip_bloqueado()
+    if bloqueio:
+        return bloqueio
+    dados = request.get_json(silent=True) or {}
+    token = (dados.get('token') or '').strip()
+    senha = str(dados.get('senha') or '')
+    convite, u = _convite_valido(token)
+    if not convite:
+        _login_registrar_falha()
+        return jsonify({'message': 'Este link expirou ou já foi usado. Peça um novo ao administrador.'}), 400
+    erro = _validar_senha_nova(senha, u.email)
+    if erro:
+        return jsonify({'message': erro}), 400
+    u.senha_hash = generate_password_hash(senha)
+    convite.usado_em = datetime.utcnow()
+    db.session.commit()
+    _registrar_log(u.email, 'senha_definida', 'Definiu a própria senha pelo link de convite', status=200)
+    return jsonify({'message': 'Senha definida. Agora é só entrar no painel.'})
+
+
+def _descrever_acao(metodo, caminho, dados):
+    """Texto legível do que foi feito, SEM valores sensíveis (só o nome da ação, EAN e, nos
+    interruptores, se ficou ligado/desligado)."""
+    if caminho == '/configuracoes' and isinstance(dados, dict):
+        acao = str(dados.get('action') or '?')
+        if acao.startswith('toggle_'):
+            for k, v in dados.items():
+                if k != 'action' and str(v).lower() in ('true', 'false'):
+                    return f"Configurações: {acao} → {'ligou' if str(v).lower() == 'true' else 'desligou'}"
+        return f'Configurações: {acao}'
+    tabela = (
+        (r'^/admin/gerar-arte/(\w+)$', 'Gerou arte do EAN {0}'),
+        (r'^/admin/buscar-imagem/(\w+)$', 'Buscou imagem do EAN {0}'),
+        (r'^/admin/buscar-imagem-ia/(\w+)$', 'Buscou imagem por IA do EAN {0}'),
+        (r'^/admin/definir-imagem-url/(\w+)$', 'Definiu imagem por URL do EAN {0}'),
+        (r'^/upload-imagem-produto/(\w+)$', 'Enviou imagem do EAN {0}'),
+        (r'^/deletar-imagem-produto/(\w+)$', 'Excluiu imagem do EAN {0}'),
+        (r'^/admin/marcar-sem-imagem/(\w+)$', 'Marcou sem imagem o EAN {0}'),
+        (r'^/admin/cadastrar-produto-(?:cosmos|manual)/(\w+)$', 'Cadastrou o produto EAN {0}'),
+        (r'^/admin/artes/upload/(\w+)$', 'Enviou arte do EAN {0}'),
+        (r'^/admin/artes/prompt$', 'Gerou prompt de arte'),
+        (r'^/admin/artes/(\w+)$', 'Excluiu arte do EAN {0}'),
+        (r'^/admin/quarentena/(\d+)/(confirmar|liberar|tentar-novamente)$', 'Quarentena #{0}: {1}'),
+        (r'^/admin/auditoria/executar$', 'Executou a auditoria de imagens'),
+        (r'^/admin/auditoria/(?:separar-todas)$', 'Separou imagens suspeitas em lote'),
+        (r'^/admin/imagens-pendentes/zerar$', 'Zerou as imagens pendentes'),
+        (r'^/admin/enviar-resumo-diario$', 'Enviou o resumo diário de teste'),
+    )
+    for padrao, modelo in tabela:
+        m = re.match(padrao, caminho)
+        if m:
+            return modelo.format(*m.groups())
+    if caminho == '/admin/artes/upload-lote':
+        return f"Enviou {len(request.files.getlist('files'))} arte(s) em lote"
+    return f'{metodo} {caminho}'
+
+
+_LOG_IGNORAR_PREFIXOS = ('/login', '/logout', '/terminal/', '/produto-imagem/', '/definir-senha', '/static/',
+                         '/miniatura/', '/admin/usuarios/', '/sw.js')
+
+
+@app.after_request
+def _registrar_acoes_do_painel(resp):
+    """Registra no log toda ALTERAÇÃO (POST/PUT/PATCH/DELETE) feita no painel por um usuário
+    logado: quem, quando, o que e o resultado. Leituras (GET) não entram, pra não encher o log."""
+    try:
+        if request.method not in ('POST', 'PUT', 'PATCH', 'DELETE') or request.path.startswith(_LOG_IGNORAR_PREFIXOS):
+            return resp
+        verify_jwt_in_request(optional=True)
+        ident = get_jwt_identity()
+        if not ident:
+            return resp
+        dados = request.get_json(silent=True) if request.is_json else None
+        if dados is None and request.form:
+            dados = request.form.to_dict()
+        _registrar_log(ident, 'acao', _descrever_acao(request.method, request.path, dados) + (f' (falhou: HTTP {resp.status_code})' if resp.status_code >= 400 else ''),
+                       tipo='acao', status=resp.status_code)
+    except Exception:
+        pass
+    return resp
+
+
+@app.route('/admin/logs-acesso', methods=['GET'])
+@jwt_required()
+def admin_logs_acesso():
+    """Log de acessos e ações (todos os usuários do painel veem). Filtros: `usuario`, `tipo`
+    (acesso|acao), `q` (texto), `desde`/`ate` (AAAA-MM-DD, horário de Brasília), `page`."""
+    q = LogAcessoPainel.query
+    usuario = (request.args.get('usuario') or '').strip()
+    tipo = (request.args.get('tipo') or '').strip()
+    texto = (request.args.get('q') or '').strip()
+    if usuario:
+        q = q.filter(LogAcessoPainel.usuario == usuario)
+    if tipo in ('acesso', 'acao'):
+        q = q.filter(LogAcessoPainel.tipo == tipo)
+    if texto:
+        q = q.filter(LogAcessoPainel.descricao.ilike(f'%{texto}%'))
+    fuso = pytz.timezone('America/Sao_Paulo')
+    for campo, op, soma in (('desde', '>=', 0), ('ate', '<', 1)):
+        valor = (request.args.get(campo) or '').strip()
+        if valor:
+            try:
+                limite = fuso.localize(datetime.strptime(valor, '%Y-%m-%d') + timedelta(days=soma)).astimezone(pytz.utc).replace(tzinfo=None)
+                q = q.filter(LogAcessoPainel.criado_em >= limite if op == '>=' else LogAcessoPainel.criado_em < limite)
+            except ValueError:
+                pass
+    try:
+        page = max(1, int(request.args.get('page', 1)))
+        per_page = min(100, max(1, int(request.args.get('per_page', 50))))
+    except ValueError:
+        page, per_page = 1, 50
+    total = q.count()
+    linhas = q.order_by(LogAcessoPainel.criado_em.desc(), LogAcessoPainel.id.desc()).offset((page - 1) * per_page).limit(per_page).all()
+    return jsonify({
+        'registros': [{'id': l.id, 'criado_em': l.criado_em.isoformat() + 'Z', 'usuario': l.usuario, 'tipo': l.tipo,
+                       'evento': l.evento, 'descricao': l.descricao, 'ip': l.ip, 'status': l.status} for l in linhas],
+        'total': total, 'page': page, 'per_page': per_page, 'total_pages': max(1, -(-total // per_page)),
+        'usuarios': [r[0] for r in db.session.query(LogAcessoPainel.usuario).distinct().order_by(LogAcessoPainel.usuario).all()],
+    })
 
 
 @app.route('/upload-imagem-produto/<codbar>', methods=['POST'])
@@ -3399,12 +3674,12 @@ def configuracoes():
             # chega) — evita ativar o 2FA e ficar sem acesso ao painel.
             codigo = f"{secrets.randbelow(10 ** 6):06d}"
             try:
-                _enviar_codigo_por_email(codigo, 'teste')
+                _enviar_codigo_por_email(codigo, 'teste', destino=get_jwt_identity())
             except Exception as e:
                 logging.error(f"2fa_enviar_teste: {e}")
                 return jsonify({'message': f'Falha ao enviar o e-mail: {e}'}), 502
             _codigo_teste_2fa.update({'hash': _hash_codigo('teste', codigo), 'expira': time.time() + LOGIN_CODIGO_VALIDADE_SEGUNDOS, 'tentativas': 0})
-            return jsonify({'message': f'Código enviado para {_mascarar_email(_login_2fa_destino())}. Digite-o abaixo para ativar.', 'saved': True})
+            return jsonify({'message': f'Código enviado para {_mascarar_email(get_jwt_identity())}. Digite-o abaixo para ativar.', 'saved': True})
 
         elif action == '2fa_ativar':
             codigo = re.sub(r'\D', '', str(data.get('code') or ''))
@@ -7112,6 +7387,7 @@ def _iniciar_agendador_atualizacao():
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
+        _garantir_usuarios_master()
     _iniciar_agendador_resumo()
     _iniciar_agendador_status_horario()
     _iniciar_agendador_atualizacao()
