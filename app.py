@@ -3115,7 +3115,7 @@ def _proteger_documentacao_da_api():
     return resp
 
 
-_limite_fotos_estado = {'cache_em': 0.0, 'por_minuto': 120}
+_limite_fotos_estado = {'cache_em': 0.0, 'por_minuto': 120, 'por_minuto_auth': 600}
 _limite_fotos_janelas = {}
 _limite_fotos_avisados = {}
 _limite_fotos_lock = threading.Lock()
@@ -3144,34 +3144,66 @@ def _limitar_download_em_massa_de_fotos():
     conter uma rajada)."""
     if not request.path.startswith(LIMITE_FOTOS_PREFIXOS):
         return None
+    # Revalidação de cache (304) quase não custa nada e não conta pro limite
+    if request.headers.get('If-None-Match') or request.headers.get('If-Modified-Since'):
+        return None
     agora = time.time()
     estado = _limite_fotos_estado
     if agora - estado['cache_em'] > 30:
         try:
-            estado['por_minuto'] = int(_ler_todas_config().get('LIMITE_FOTOS_POR_MINUTO', '120') or 120)
+            cfg = _ler_todas_config()
+            estado['por_minuto'] = int(cfg.get('LIMITE_FOTOS_POR_MINUTO', '120') or 120)
+            estado['por_minuto_auth'] = int(cfg.get('LIMITE_FOTOS_AUTENTICADO_POR_MINUTO', '600') or 600)
         except (ValueError, TypeError):
-            estado['por_minuto'] = 120
+            estado['por_minuto'], estado['por_minuto_auth'] = 120, 600
         estado['cache_em'] = agora
-    limite = estado['por_minuto']
     ip = request.remote_addr or '?'
-    if limite <= 0 or ip in ('127.0.0.1', '::1'):
+    if ip in ('127.0.0.1', '::1'):
+        return None
+    # Quem tem sessão válida (painel ou terminal) tem cota PRÓPRIA, separada do IP: muita gente
+    # divide o mesmo IP público (escritório, loja, CGNAT) e um crawler anônimo no mesmo IP
+    # esgotava a cota e derrubava as fotos do painel de todo mundo. Sem sessão: cota por IP.
+    chave, limite = f'ip:{ip}', estado['por_minuto']
+    tok = None
+    auth = request.headers.get('Authorization', '')
+    if auth.lower().startswith('bearer '):
+        tok = auth[7:].strip()
+    tok = tok or request.args.get('token') or request.cookies.get('mupa_img')
+    if tok:
+        try:
+            dados_tok = decode_token(tok)
+            if not _sessao_admin_revogada(dados_tok):
+                chave, limite = f"{dados_tok.get('tipo', 'painel')}:{dados_tok.get('sub')}", estado['por_minuto_auth']
+        except Exception:
+            pass
+    if limite <= 0:
         return None
     with _limite_fotos_lock:
-        janela = _limite_fotos_janelas.setdefault(ip, collections.deque())
+        janela = _limite_fotos_janelas.setdefault(chave, collections.deque())
         while janela and janela[0] < agora - 60:
             janela.popleft()
         if len(janela) >= limite:
-            if agora - _limite_fotos_avisados.get(ip, 0) > 600:
-                _limite_fotos_avisados[ip] = agora
-                logging.warning(f"Download em massa de fotos barrado: {ip} passou de {limite} fotos/min ({request.path}).")
+            if agora - _limite_fotos_avisados.get(chave, 0) > 600:
+                _limite_fotos_avisados[chave] = agora
+                logging.warning(f"Download em massa de fotos barrado: {chave} (IP {ip}) passou de {limite} fotos/min ({request.path}).")
             resposta = Response('Muitas requisições de imagem — tente novamente em instantes.', status=429)
             resposta.headers['Retry-After'] = '30'
             return resposta
         janela.append(agora)
         if len(_limite_fotos_janelas) > 5000:
-            for chave in [k for k, v in _limite_fotos_janelas.items() if not v or v[-1] < agora - 60]:
-                _limite_fotos_janelas.pop(chave, None)
+            for k in [k for k, v in _limite_fotos_janelas.items() if not v or v[-1] < agora - 60]:
+                _limite_fotos_janelas.pop(k, None)
     return None
+
+
+@app.after_request
+def _cache_das_fotos(resp):
+    """Foto/arte servida com `Cache-Control` curto: o navegador reaproveita por 2 minutos sem nem
+    perguntar ao servidor (antes o Flask mandava `no-cache` e cada olhada na lista rebaixava tudo
+    de novo) e depois só revalida (304). Curto de propósito: foto trocada aparece em minutos."""
+    if resp.status_code == 200 and request.path.startswith(LIMITE_FOTOS_PREFIXOS + ('/static/artes_geradas/',)):
+        resp.headers['Cache-Control'] = 'private, max-age=120, must-revalidate'
+    return resp
 
 
 def _pode_buscar_imagem_online(codbar):
