@@ -1013,7 +1013,7 @@ O painel de detalhes (Consulta Rápida) ganhou "Enviar/Trocar imagem" (upload vi
 
 Objetivo: parar o download em massa/crawl de fotos (ver seção do rate limit por IP) sem quebrar os terminais. Cada terminal tem uma **chave fixa** (`Config['TERMINAL_API_KEYS']`, uma por linha `nome:chave`, gerada/rotacionada em Configurações → Infraestrutura → "Token dos terminais") que ele troca por um **JWT de 3600s**.
 
-- `POST /terminal/token` body JSON `{"chave": "<chave>"}` (também aceita `{"api_key": ...}`) → `200 {"access_token", "token_type":"Bearer", "expires_in":3600, "terminal":"<nome>"}`; chave inválida → 401 (com limite de tentativas por IP).
+- `POST /terminal/token` com a chave no header `X-Api-Key: <chave>` (ou JSON `{"api_key":"<chave>"}`) → `200 {"access_token","token_type":"Bearer","expires_in":3600,"expires_at":<epoch ms>}`; chave inválida → 401; 10 falhas/min por IP → 429 (`Retry-After: 60`).
 - O JWT leva a claim `tipo:'terminal'` e só vale para rotas `/produto-imagem/` — em rota administrativa (`@jwt_required`) é bloqueado (400/401).
 - Aceito em: `Authorization: Bearer <token>`, `?token=<token>` ou cookie `mupa_img` (o painel usa o cookie porque `<img>` não manda header).
 - Rotas protegidas (`before_request`): `/produto-imagem/`, `/static/processed_images/`, `/static/imgs_produtos/`, `/static/artes_geradas/`.
@@ -1021,5 +1021,24 @@ Objetivo: parar o download em massa/crawl de fotos (ver seção do rate limit po
 - Proxy srv-mupa → VPS (`PROXY_IMAGENS_VPS`) também repassa `/terminal/token`, para o token ser assinado pelo servidor que valida (VPS).
 - Manual completo para o dev do Mplayer: publicado como Artifact (link com o usuário).
 
-### Segurança: segredo JWT
-`JWT_SECRET_KEY` vem de variável de ambiente; o default público `'your-jwt-secret-key'` permite forjar tokens (inclusive de admin). Em produção DEVE estar definida (o app avisa no startup se não estiver). Trocar o segredo invalida as sessões do painel (todos precisam logar de novo).
+## Auditoria de segurança de 20/10/2026 — login em duas etapas, Swagger fechado, segredo JWT
+
+Pedido do usuário: só os terminais de preço acessam as imagens, o admin passa a exigir código por e-mail (`support@mupa.app`), endpoints só testáveis dentro do admin, e uma auditoria pra não repetir — **sem impactar os terminais**.
+
+**Achados reais (produção) e correção:**
+1. **Segredo JWT era o padrão público `'your-jwt-secret-key'`** → qualquer um forjava token de admin (burlando senha E código por e-mail). `_carregar_jwt_secret()`: usa `JWT_SECRET_KEY` do ambiente; sem ela, gera um segredo aleatório UMA vez em `instance/jwt_secret.key` (fora do git, chmod 600). Efeito único: no primeiro start com o código novo todas as sessões do painel caem (logar de novo).
+2. **Swagger aberto (`/apidocs`, `/apispec_1.json`)**: qualquer pessoa via e listava/testava todos os endpoints. `_proteger_documentacao_da_api` (before_request) só deixa passar sessão ADMIN (header Bearer ou cookie `mupa_img`); token de terminal não vale; navegador sem sessão é redirecionado a `/configuracoes`.
+3. **`/login` sem freio e com `==`**: agora `hmac.compare_digest`, 10 falhas/min por IP → 429 (`Retry-After`), e a mensagem não diz se o e-mail existe.
+4. **Chave OpenAI literal no código** (default de `OPENAI_API_KEY`) removida (o uso real lê do Config). **Ainda no código, pendentes de rotação pelo dono da conta**: chave Google Custom Search (`GOOGLE_API_KEY`) e chave Azure TTS (default de `AZURE_SUBSCRIPTION_KEY`) — estão no histórico do git; girar no provedor e mover pra Config. As senhas do painel (`CREDENCIAIS_PAINEL`) também continuam em texto no código/histórico: com o 2FA ligado a senha sozinha não entra, mas convém trocá-las.
+5. Porta 5050 aberta ao mundo em HTTP puro (Caddy já escuta 80/443 no mesmo VPS) — não alterado; idealmente fechar a 5050 e servir por HTTPS, mas isso muda a URL que os terminais usam, então só junto com o dev do Mplayer.
+
+**Login em duas etapas** (`LOGIN_2FA_ATIVO`, padrão **desligado** até alguém ativar no painel):
+- `POST /login` (e-mail+senha) → se 2FA ligado responde `{requires_code:true, challenge, destino:"su***@mupa.app", expira_em:600}` e manda o código de 6 dígitos por Resend; `POST /login/verificar` (`challenge`+`code`) devolve o token. Código vale 10 min, uso único, 5 tentativas por desafio, máx. 6 envios/hora por usuário, 10 falhas/min por IP.
+- Destino: `Config['LOGIN_2FA_DESTINO']` (padrão `support@mupa.app`) — o código vai SEMPRE pra esse e-mail, qualquer que seja o usuário que fez login. Remetente: `LOGIN_2FA_REMETENTE`, senão `RESEND_REMETENTE` se for um endereço válido, senão `onboarding@resend.dev` (que só entrega pro dono da conta Resend — configurar remetente de domínio verificado).
+- **Nunca libera sem o código**: falha no envio → 502 sem token (sem fail-open).
+- **Anti-trava**: o 2FA só liga pelo painel (Configurações → Infraestrutura → "Login em duas etapas") em dois passos: "Enviar código de teste" e digitar o código recebido (prova que o e-mail chega). Desligar é um clique, logado. Emergência sem painel: no VPS, `UPDATE config SET value='false' WHERE key='LOGIN_2FA_ATIVO'` em `instance/produtos.db` e reiniciar.
+- Terminais do Mplayer não usam `/login` do painel (confirmado no código do app): não são afetados.
+
+**Imagens só pros terminais:** o mecanismo é o token de terminal (seção anterior). Não há como distinguir terminal de crawler sem o app mandar algo, então a exigência (`EXIGIR_TOKEN_IMAGENS`) só liga depois que o Mplayer novo estiver nas lojas (painel mostra a % de requisições com token). Até lá valem o limite de 120 fotos/min por IP e a contagem por IP.
+
+**Como não repetir:** `python scripts/auditoria_seguranca_rotas.py` (estático, sem subir o app) falha se existir rota sem `@jwt_required()` fora da lista `PUBLICAS` (cada uma com motivo), se a lista ficar velha, se o segredo JWT voltar a ter default literal ou se aparecer chave de API literal nova. **Rodar antes de todo commit que crie/altere rota.**

@@ -1,4 +1,5 @@
 import os
+import secrets
 import io
 import sys
 import csv
@@ -76,10 +77,38 @@ RISSUL_SEARCH_URL = 'https://superrissul.vtexcommercestable.com.br/api/catalog_s
 IMAGEM_SEM_FOTO_URL = 'https://www.supratec.com.br/img/p/br-default-large_default.jpg'
 IMAGEM_SEM_FOTO_CACHE = 'static/sem_imagem_placeholder.jpg'
 
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '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')
-JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY', 'your-jwt-secret-key')
-if JWT_SECRET_KEY == 'your-jwt-secret-key':
-    print('[SEGURANCA] JWT_SECRET_KEY nao definida: usando segredo padrao PUBLICO — tokens podem ser forjados. Defina a variavel de ambiente.', flush=True)
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')  # a chave real fica em Config (painel), nunca no código
+def _carregar_jwt_secret():
+    """Segredo de assinatura dos JWT. Vem de `JWT_SECRET_KEY`; sem a variável, gera um segredo
+    aleatório UMA vez e guarda em `instance/jwt_secret.key` (fora do git). O antigo default
+    público permitia a qualquer um forjar token de admin (e burlar senha e código por e-mail)."""
+    valor = os.getenv('JWT_SECRET_KEY', '').strip()
+    if valor and valor != 'your-jwt-secret-key':
+        return valor
+    pasta = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'instance')
+    caminho = os.path.join(pasta, 'jwt_secret.key')
+    try:
+        with open(caminho, 'r', encoding='utf-8') as f:
+            salvo = f.read().strip()
+        if len(salvo) >= 32:
+            return salvo
+    except OSError:
+        pass
+    novo = secrets.token_hex(32)
+    try:
+        os.makedirs(pasta, exist_ok=True)
+        with open(caminho, 'w', encoding='utf-8') as f:
+            f.write(novo)
+        try:
+            os.chmod(caminho, 0o600)
+        except OSError:
+            pass
+    except OSError as e:
+        print(f'[SEGURANCA] Nao foi possivel gravar {caminho} ({e}); segredo JWT vale so ate reiniciar.', flush=True)
+    return novo
+
+
+JWT_SECRET_KEY = _carregar_jwt_secret()
 AZURE_SUBSCRIPTION_KEY = os.getenv('AZURE_SUBSCRIPTION_KEY', '9beaf866156a478a9bfac946c05cddde')
 AZURE_REGION = os.getenv('AZURE_REGION', 'brazilsouth')
 TIMEZONE = os.getenv('TIMEZONE', 'UTC')
@@ -499,6 +528,93 @@ CREDENCIAIS_PAINEL = {
 }
 
 
+LOGIN_CODIGO_VALIDADE_SEGUNDOS = 600
+LOGIN_CODIGO_MAX_TENTATIVAS = 5
+LOGIN_2FA_DESTINO_PADRAO = 'support@mupa.app'
+_login_desafios = {}      # id do desafio -> {usuario, hash, expira, tentativas}
+_login_envios = {}        # usuario -> [epoch dos envios na última hora]
+_login_falhas_ip = {}     # ip -> [epoch das falhas no último minuto]
+_codigo_teste_2fa = {}    # código de teste pendente (ativação do 2FA): {'hash', 'expira'}
+
+
+def _login_2fa_ativo():
+    return _config_cacheada('LOGIN_2FA_ATIVO', 'false', ttl=5) == 'true'
+
+
+def _login_2fa_destino():
+    return (_config_cacheada('LOGIN_2FA_DESTINO', '', ttl=5) or '').strip() or LOGIN_2FA_DESTINO_PADRAO
+
+
+def _mascarar_email(email):
+    usuario, _, dominio = email.partition('@')
+    return (usuario[:2] + '***@' + dominio) if dominio else '***'
+
+
+def _hash_codigo(desafio, codigo):
+    return hmac.new(JWT_SECRET_KEY.encode(), f'{desafio}:{codigo}'.encode(), 'sha256').hexdigest()
+
+
+def _login_limpar_desafios(agora):
+    for k in [k for k, v in _login_desafios.items() if v['expira'] < agora]:
+        _login_desafios.pop(k, None)
+
+
+def _login_ip_bloqueado():
+    """429 se o IP errou senha/código 10 vezes no último minuto (freia tentativa em massa)."""
+    ip = request.remote_addr or '?'
+    recentes = [t for t in _login_falhas_ip.get(ip, []) if t > time.time() - 60]
+    _login_falhas_ip[ip] = recentes
+    if len(recentes) >= 10:
+        resp = jsonify({'message': 'Muitas tentativas. Aguarde um minuto.'})
+        resp.status_code = 429
+        resp.headers['Retry-After'] = '60'
+        return resp
+    return None
+
+
+def _login_registrar_falha():
+    ip = request.remote_addr or '?'
+    _login_falhas_ip.setdefault(ip, []).append(time.time())
+    if len(_login_falhas_ip) > 2000:
+        _login_falhas_ip.clear()
+
+
+def _emitir_token_painel(username):
+    expires = timedelta(hours=1)
+    access_token = create_access_token(identity=username, expires_delta=expires)
+    expires_time = datetime.now(pytz.timezone(TIMEZONE)) + expires
+    return jsonify(access_token=access_token, expires_at=int(expires_time.timestamp() * 1000)), 200
+
+
+def _enviar_codigo_por_email(codigo, finalidade):
+    """Manda o código de 6 dígitos pro e-mail de segurança via Resend. Levanta exceção se não
+    conseguir (o login NUNCA segue sem o código: sem e-mail, sem acesso)."""
+    cfg = _ler_todas_config()
+    api_key = (cfg.get('RESEND_API_KEY') or '').strip()
+    if not api_key:
+        raise ValueError('RESEND_API_KEY não configurada')
+    destino = (cfg.get('LOGIN_2FA_DESTINO') or '').strip() or LOGIN_2FA_DESTINO_PADRAO
+    remetente = (cfg.get('LOGIN_2FA_REMETENTE') or '').strip()
+    if not remetente:
+        candidato = (cfg.get('RESEND_REMETENTE') or '').strip()
+        # Resend exige um endereço de e-mail no remetente ("Nome <a@b.com>" ou "a@b.com")
+        remetente = candidato if re.search(r'[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+', candidato) else 'Mupa Brain <onboarding@resend.dev>'
+    titulo = 'Código de acesso ao painel' if finalidade == 'login' else 'Código de teste do login em duas etapas'
+    validade = LOGIN_CODIGO_VALIDADE_SEGUNDOS // 60
+    texto = (f"{titulo} Mupa Brain: {codigo}\n\nVale por {validade} minutos. "
+             "Se não foi você, ignore este e-mail e troque a senha do painel.")
+    html = (f"<div style='font-family:sans-serif;font-size:15px'><p>{titulo} <strong>Mupa Brain</strong>:</p>"
+            f"<p style='font-size:30px;letter-spacing:6px;font-weight:bold'>{codigo}</p>"
+            f"<p style='color:#666'>Vale por {validade} minutos. "
+            "Se não foi você, ignore este e-mail e troque a senha do painel.</p></div>")
+    r = requests.post('https://api.resend.com/emails',
+                      headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                      json={'from': remetente, 'to': [destino], 'subject': f'{codigo} é seu código Mupa Brain',
+                            'html': html, 'text': texto}, timeout=15)
+    if r.status_code >= 400:
+        raise ValueError(f'Resend HTTP {r.status_code}: {r.text[:200]}')
+
+
 @app.route('/login', methods=['POST'])
 @swag_from({
     'tags': ['Auth'],
@@ -532,17 +648,75 @@ CREDENCIAIS_PAINEL = {
     }
 })
 def login():
-    """Realiza login"""
-    username = request.form.get('username')
-    password = request.form.get('password')
-    if username in CREDENCIAIS_PAINEL and password == CREDENCIAIS_PAINEL[username]:
-        expires = timedelta(hours=1)
-        access_token = create_access_token(identity=username, expires_delta=expires)
-        expires_time = datetime.now(pytz.timezone(TIMEZONE)) + expires
-        expires_timestamp = int(expires_time.timestamp() * 1000)
-        return jsonify(access_token=access_token, expires_at=expires_timestamp), 200
-    else:
-        return jsonify({'error': 'Invalid credentials'}), 401
+    """Etapa 1 do login: confere e-mail e senha. Com o login em duas etapas ligado
+    (`LOGIN_2FA_ATIVO`) responde `requires_code` e envia um código de 6 dígitos por e-mail
+    (veja `/login/verificar`); desligado, devolve o token direto como sempre."""
+    dados = request.form or request.get_json(silent=True) or {}
+    username = (dados.get('username') or '').strip()
+    password = dados.get('password') or ''
+    bloqueio = _login_ip_bloqueado()
+    if bloqueio:
+        return bloqueio
+    senha_certa = CREDENCIAIS_PAINEL.get(username, '')
+    # compare_digest sempre roda (mesmo com usuário inexistente) pra não vazar quais e-mails existem
+    ok = hmac.compare_digest(str(password).encode(), (senha_certa or '\0').encode()) and username in CREDENCIAIS_PAINEL
+    if not ok:
+        _login_registrar_falha()
+        logging.warning(f"/login: credenciais inválidas de {request.remote_addr}")
+        return jsonify({'error': 'Invalid credentials', 'message': 'E-mail ou senha inválidos.'}), 401
+    if not _login_2fa_ativo():
+        return _emitir_token_painel(username)
+    agora = time.time()
+    _login_limpar_desafios(agora)
+    envios = [t for t in _login_envios.get(username, []) if t > agora - 3600]
+    if len(envios) >= 6:
+        return jsonify({'message': 'Muitos códigos solicitados. Aguarde um pouco e tente de novo.'}), 429
+    codigo = f"{secrets.randbelow(10 ** 6):06d}"
+    try:
+        _enviar_codigo_por_email(codigo, 'login')
+    except Exception as e:
+        logging.error(f"/login: falha ao enviar código por e-mail: {e}")
+        return jsonify({'message': 'Não foi possível enviar o código por e-mail. Tente novamente em instantes.'}), 502
+    envios.append(agora)
+    _login_envios[username] = envios
+    desafio = secrets.token_urlsafe(24)
+    _login_desafios[desafio] = {
+        'usuario': username, 'hash': _hash_codigo(desafio, codigo),
+        'expira': agora + LOGIN_CODIGO_VALIDADE_SEGUNDOS, 'tentativas': 0,
+    }
+    return jsonify({
+        'requires_code': True, 'challenge': desafio,
+        'destino': _mascarar_email(_login_2fa_destino()), 'expira_em': LOGIN_CODIGO_VALIDADE_SEGUNDOS,
+    }), 200
+
+
+@app.route('/login/verificar', methods=['POST'])
+def login_verificar():
+    """Etapa 2: confere o código de 6 dígitos recebido por e-mail e emite o token. O código vale
+    10 minutos, uma única vez, com no máximo 5 tentativas por desafio."""
+    dados = request.form or request.get_json(silent=True) or {}
+    desafio_id = (dados.get('challenge') or '').strip()
+    codigo = re.sub(r'\D', '', str(dados.get('code') or ''))
+    bloqueio = _login_ip_bloqueado()
+    if bloqueio:
+        return bloqueio
+    agora = time.time()
+    _login_limpar_desafios(agora)
+    d = _login_desafios.get(desafio_id)
+    if not d:
+        _login_registrar_falha()
+        return jsonify({'message': 'Código expirado ou inválido. Faça login novamente.'}), 401
+    d['tentativas'] += 1
+    if d['tentativas'] > LOGIN_CODIGO_MAX_TENTATIVAS:
+        _login_desafios.pop(desafio_id, None)
+        return jsonify({'message': 'Muitas tentativas. Faça login novamente.'}), 401
+    if not hmac.compare_digest(_hash_codigo(desafio_id, codigo), d['hash']):
+        _login_registrar_falha()
+        restantes = LOGIN_CODIGO_MAX_TENTATIVAS - d['tentativas']
+        return jsonify({'message': f'Código incorreto. Restam {restantes} tentativa(s).'}), 401
+    _login_desafios.pop(desafio_id, None)
+    return _emitir_token_painel(d['usuario'])
+
 
 @app.route('/upload-imagem-produto/<codbar>', methods=['POST'])
 @jwt_required()
@@ -2898,6 +3072,31 @@ def _exigir_token_nas_imagens():
     return None
 
 
+DOCUMENTACAO_PREFIXOS = ('/apidocs', '/apispec', '/flasgger_static', '/swagger')
+
+
+@app.before_request
+def _proteger_documentacao_da_api():
+    """O Swagger (`/apidocs`, `/apispec_1.json`) deixava qualquer pessoa na internet ver e testar
+    todos os endpoints. Agora só abre com sessão ADMIN válida (header `Authorization: Bearer` ou o
+    cookie `mupa_img` que o painel grava no login). Token de terminal não vale aqui."""
+    if not request.path.startswith(DOCUMENTACAO_PREFIXOS):
+        return None
+    auth = request.headers.get('Authorization', '')
+    tok = auth[7:].strip() if auth.lower().startswith('bearer ') else request.cookies.get('mupa_img')
+    if tok:
+        try:
+            if decode_token(tok).get('tipo') != 'terminal':
+                return None
+        except Exception:
+            pass
+    if 'text/html' in request.headers.get('Accept', ''):
+        return redirect('/configuracoes')
+    resp = jsonify({'message': 'Faça login no painel (/configuracoes) para acessar a documentação da API'})
+    resp.status_code = 401
+    return resp
+
+
 _limite_fotos_estado = {'cache_em': 0.0, 'por_minuto': 120}
 _limite_fotos_janelas = {}
 _limite_fotos_avisados = {}
@@ -3080,6 +3279,40 @@ def configuracoes():
             set_config('TERMINAL_API_KEYS', texto)
             return jsonify({'message': 'Chaves dos terminais salvas', 'saved': True})
 
+        elif action == '2fa_enviar_teste':
+            # Passo 1 de ligar o login em duas etapas: manda um código de teste pro e-mail de
+            # segurança. Só liga depois de a pessoa digitar o código recebido (prova que o e-mail
+            # chega) — evita ativar o 2FA e ficar sem acesso ao painel.
+            codigo = f"{secrets.randbelow(10 ** 6):06d}"
+            try:
+                _enviar_codigo_por_email(codigo, 'teste')
+            except Exception as e:
+                logging.error(f"2fa_enviar_teste: {e}")
+                return jsonify({'message': f'Falha ao enviar o e-mail: {e}'}), 502
+            _codigo_teste_2fa.update({'hash': _hash_codigo('teste', codigo), 'expira': time.time() + LOGIN_CODIGO_VALIDADE_SEGUNDOS, 'tentativas': 0})
+            return jsonify({'message': f'Código enviado para {_mascarar_email(_login_2fa_destino())}. Digite-o abaixo para ativar.', 'saved': True})
+
+        elif action == '2fa_ativar':
+            codigo = re.sub(r'\D', '', str(data.get('code') or ''))
+            pend = _codigo_teste_2fa
+            if not pend or pend.get('expira', 0) < time.time():
+                return jsonify({'message': 'Nenhum código de teste válido. Envie um novo.'}), 400
+            pend['tentativas'] = pend.get('tentativas', 0) + 1
+            if pend['tentativas'] > LOGIN_CODIGO_MAX_TENTATIVAS:
+                pend.clear()
+                return jsonify({'message': 'Muitas tentativas. Envie um novo código.'}), 400
+            if not hmac.compare_digest(_hash_codigo('teste', codigo), pend['hash']):
+                return jsonify({'message': 'Código incorreto.'}), 400
+            pend.clear()
+            set_config('LOGIN_2FA_ATIVO', 'true')
+            _config_cache.clear()
+            return jsonify({'message': 'Login em duas etapas ativado.', 'saved': True})
+
+        elif action == '2fa_desativar':
+            set_config('LOGIN_2FA_ATIVO', 'false')
+            _config_cache.clear()
+            return jsonify({'message': 'Login em duas etapas desativado.', 'saved': True})
+
         elif action == 'toggle_exigir_token_imagens':
             val = data.get('EXIGIR_TOKEN_IMAGENS')
             ativa = (val == 'true' or val is True)
@@ -3231,6 +3464,8 @@ def configuracoes():
         'serper_key_full': serper_key_full,
         'terminal_keys_full': cfg.get('TERMINAL_API_KEYS', '') or '',
         'exigir_token_imagens': cfg.get('EXIGIR_TOKEN_IMAGENS', 'false') == 'true',
+        'login_2fa_ativo': cfg.get('LOGIN_2FA_ATIVO', 'false') == 'true',
+        'login_2fa_destino': _mascarar_email((cfg.get('LOGIN_2FA_DESTINO') or '').strip() or LOGIN_2FA_DESTINO_PADRAO),
         'cosmos_tokens_full': '\n'.join(_lista_tokens_cosmos()),
         'cosmos_status': cosmos_status,
         'notificacoes': {chave: cfg.get(chave, '') for chave in NOTIFICACAO_CONFIG_KEYS},
@@ -3265,6 +3500,8 @@ def api_config():
         'serper_key_full': serper_key_full,
         'terminal_keys_full': cfg.get('TERMINAL_API_KEYS', '') or '',
         'exigir_token_imagens': cfg.get('EXIGIR_TOKEN_IMAGENS', 'false') == 'true',
+        'login_2fa_ativo': cfg.get('LOGIN_2FA_ATIVO', 'false') == 'true',
+        'login_2fa_destino': _mascarar_email((cfg.get('LOGIN_2FA_DESTINO') or '').strip() or LOGIN_2FA_DESTINO_PADRAO),
         'use_openai': cfg.get('USE_OPENAI_SUGESTIONS', 'true') == 'true',
         'rembg_enabled': cfg.get('REMBG_ENABLED', 'false') == 'true',
         'busca_imagem_online_ativa': cfg.get('BUSCA_IMAGEM_ONLINE_ATIVA', 'true') == 'true',

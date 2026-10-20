@@ -1003,6 +1003,14 @@
                 </div>
                 <button type="submit" class="btn btn-primary" id="btn-login" style="width:100%; justify-content:center; padding:0.7rem 1rem; margin-top:0.4rem;">Entrar</button>
             </form>
+            <form id="login-code-form" style="display:none;">
+                <div class="form-row">
+                    <label for="login-code">Código de 6 dígitos</label>
+                    <input type="text" id="login-code" inputmode="numeric" maxlength="6" autocomplete="one-time-code" required placeholder="000000" style="letter-spacing:0.3em; font-size:1.2rem; text-align:center;">
+                </div>
+                <button type="submit" class="btn btn-primary" id="btn-login-code" style="width:100%; justify-content:center; padding:0.7rem 1rem; margin-top:0.4rem;">Verificar</button>
+                <button type="button" class="btn btn-secondary" id="btn-login-voltar" style="width:100%; justify-content:center; padding:0.6rem 1rem; margin-top:0.5rem;">Voltar</button>
+            </form>
         </div>
     </div>
 </div>
@@ -1413,6 +1421,26 @@
                     </div>
                     <div id="terminal-token-status" style="margin-top:0.6rem; font-size:0.82rem; color:var(--muted);">—</div>
                     <button class="btn btn-secondary btn-sm" id="btn-terminal-status" style="margin-top:0.4rem;">Atualizar contagem</button>
+                </div>
+                <div class="card" id="card-2fa">
+                    <h2>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                        Login em duas etapas (código por e-mail)
+                    </h2>
+                    <p style="font-size:0.85rem; color:var(--muted); margin-bottom:0.75rem;">Com isto ligado, depois de e-mail e senha o painel pede um código de 6 dígitos enviado para <strong id="twofa-destino">support@mupa.app</strong>. O código vale 10 minutos e só pode ser usado uma vez. Os terminais de consulta de preço não são afetados.</p>
+                    <div id="alert-2fa"></div>
+                    <div id="twofa-status" style="font-size:0.9rem; font-weight:600; margin-bottom:0.75rem;">—</div>
+                    <div id="twofa-ativar-box">
+                        <button class="btn btn-primary btn-sm" id="btn-2fa-enviar">Enviar código de teste</button>
+                        <div id="twofa-confirmar" style="display:none; margin-top:0.75rem;">
+                            <label for="twofa-codigo" style="font-size:0.82rem; color:var(--muted);">Digite o código que chegou no e-mail para ativar</label>
+                            <div style="display:flex; gap:0.5rem; margin-top:0.3rem; flex-wrap:wrap;">
+                                <input type="text" id="twofa-codigo" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="000000" style="max-width:9rem; letter-spacing:0.25em;">
+                                <button class="btn btn-success btn-sm" id="btn-2fa-ativar">Ativar</button>
+                            </div>
+                        </div>
+                    </div>
+                    <button class="btn btn-danger btn-sm" id="btn-2fa-desativar" style="display:none;">Desativar login em duas etapas</button>
                 </div>
                 </div><!-- /config-section: infra -->
 
@@ -2263,6 +2291,57 @@ function definirCookieImagens(tok, expiraEmMs) {
     document.cookie = `mupa_img=${tok}; path=/; SameSite=Strict; Max-Age=${seg}`;
 }
 
+function atualizarCard2fa(ativo, destino) {
+    if (destino) $('#twofa-destino').textContent = destino;
+    const st = $('#twofa-status');
+    st.textContent = ativo ? 'Ativado: o painel exige o código do e-mail.' : 'Desativado: o painel entra só com e-mail e senha.';
+    st.style.color = ativo ? 'var(--success, #16a34a)' : 'var(--muted)';
+    $('#twofa-ativar-box').style.display = ativo ? 'none' : 'block';
+    $('#btn-2fa-desativar').style.display = ativo ? 'inline-flex' : 'none';
+}
+
+async function acao2fa(action, extra) {
+    const res = await fetch('/configuracoes', {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, ...(extra || {}) }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || 'Erro ao processar.');
+    return data;
+}
+
+$('#btn-2fa-enviar').addEventListener('click', async (e) => {
+    const btn = e.currentTarget; btn.disabled = true;
+    try {
+        const d = await acao2fa('2fa_enviar_teste');
+        showAlert('alert-2fa', d.message, 'success');
+        $('#twofa-confirmar').style.display = 'block';
+        $('#twofa-codigo').focus();
+    } catch (err) { showAlert('alert-2fa', err.message, 'error'); }
+    finally { btn.disabled = false; }
+});
+
+$('#btn-2fa-ativar').addEventListener('click', async (e) => {
+    const btn = e.currentTarget; btn.disabled = true;
+    try {
+        const d = await acao2fa('2fa_ativar', { code: $('#twofa-codigo').value });
+        showAlert('alert-2fa', d.message, 'success');
+        $('#twofa-codigo').value = ''; $('#twofa-confirmar').style.display = 'none';
+        atualizarCard2fa(true);
+    } catch (err) { showAlert('alert-2fa', err.message, 'error'); }
+    finally { btn.disabled = false; }
+});
+
+$('#btn-2fa-desativar').addEventListener('click', async () => {
+    if (!window.confirm('Desativar o login em duas etapas? O painel volta a entrar só com e-mail e senha.')) return;
+    try {
+        const d = await acao2fa('2fa_desativar');
+        showAlert('alert-2fa', d.message, 'success');
+        atualizarCard2fa(false);
+    } catch (err) { showAlert('alert-2fa', err.message, 'error'); }
+});
+
 function salvarSessao(tok, expiraEmMs) {
     token = tok;
     definirCookieImagens(tok, expiraEmMs);
@@ -2338,6 +2417,16 @@ $('#login-form').addEventListener('submit', async (e) => {
         if (!res.ok) {
             throw new Error(data.message || data.error || 'Credenciais inválidas.');
         }
+        if (data.requires_code) {
+            desafioLogin = data.challenge;
+            $('#login-form').style.display = 'none';
+            $('#login-code-form').style.display = 'block';
+            $('.login-form-subtitle').textContent = 'Enviamos um código de 6 dígitos para ' + (data.destino || 'o e-mail de segurança') + '.';
+            $('#alert-login').innerHTML = '';
+            $('#login-code').value = '';
+            $('#login-code').focus();
+            return;
+        }
         salvarSessao(data.access_token, data.expires_at);
         await iniciarPainelAutenticado();
     } catch (e2) {
@@ -2345,6 +2434,46 @@ $('#login-form').addEventListener('submit', async (e) => {
     } finally {
         btn.disabled = false;
         btn.textContent = 'Entrar';
+    }
+});
+
+let desafioLogin = null;
+
+function voltarParaSenha() {
+    desafioLogin = null;
+    $('#login-code-form').style.display = 'none';
+    $('#login-form').style.display = 'block';
+    $('.login-form-subtitle').textContent = 'Entre com sua conta pra acessar o painel.';
+    $('#login-senha').value = '';
+}
+
+$('#btn-login-voltar').addEventListener('click', voltarParaSenha);
+
+$('#login-code-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = $('#btn-login-code');
+    btn.disabled = true;
+    btn.textContent = 'Verificando…';
+    try {
+        const res = await fetch('/login/verificar', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ challenge: desafioLogin || '', code: $('#login-code').value }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            const msg = data.message || 'Código inválido.';
+            if (res.status === 401 && /expirad|Muitas tentativas/.test(msg)) voltarParaSenha();
+            throw new Error(msg);
+        }
+        voltarParaSenha();
+        salvarSessao(data.access_token, data.expires_at);
+        await iniciarPainelAutenticado();
+    } catch (e2) {
+        showAlert('alert-login', e2.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Verificar';
     }
 });
 
@@ -2442,6 +2571,7 @@ async function loadConfig() {
         $('#serper-key').value = cfg.serper_key_full || '';
         $('#terminal-keys').value = cfg.terminal_keys_full || '';
         setToggle('toggle-exigir-token', cfg.exigir_token_imagens);
+        atualizarCard2fa(cfg.login_2fa_ativo, cfg.login_2fa_destino);
         loadTokenTerminalStatus();
         $('#proxy-vps-url').value = cfg.proxy_imagens_vps_url || '';
         $('#proxy-vps-ativo').checked = !!cfg.proxy_imagens_vps_ativo;
