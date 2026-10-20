@@ -26,6 +26,7 @@ PUBLICAS = {
     '/login/verificar': 'etapa 2 do login (código por e-mail); limitada por IP',
     '/terminal/token': 'troca a chave do terminal por token de 3600s; limitada por IP',
     '/configuracoes': 'GET devolve só o HTML do painel (sem segredos); o resto exige JWT dentro da função',
+    '/miniatura/<pasta>/<arquivo>': 'miniatura de foto/arte pro painel; protegida por token/cookie via before_request, igual às fotos',
     '/produto-imagem/<codbar>': 'consulta dos terminais; protegida por token via before_request (EXIGIR_TOKEN_IMAGENS)',
     '/produto-imagem/<string:codbar>/gerar-arte': 'upload dos terminais; protegida por token via before_request',
 }

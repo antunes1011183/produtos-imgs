@@ -2424,6 +2424,12 @@ function showAlert(id, msg, type) {
     setTimeout(() => { el.innerHTML = ''; }, 5000);
 }
 
+// Miniatura leve (WebP ~20 KB) no lugar da foto/arte inteira (~500 KB) nas listas e grades.
+function miniUrl(url, w) {
+    const m = /\/static\/(processed_images|imgs_produtos|artes_geradas)\/([^?#]+)/.exec(url || '');
+    return m ? `/miniatura/${m[1]}/${m[2]}?w=${w || 300}` : url;
+}
+
 function escHtml(s) {
     if (!s) return '';
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -4063,7 +4069,7 @@ async function loadAuditoria(page = 1) {
                    <button class="btn btn-danger btn-sm" data-action="auditoria-separar" data-id="${r.id}">Separar</button>`
                 : `<span class="quarentena-card-badge ${r.decisao === 'ok' ? 'liberada' : 'confirmada'}">${r.decisao === 'ok' ? 'Correta' : 'Separada'}</span>`;
             return `<div class="produto-card">
-                <div class="auditoria-img" data-action="auditoria-zoom">${r.imagem_url ? `<img src="${escHtml(r.imagem_url)}" alt="Foto do produto" loading="lazy">` : `<span style="color:var(--muted); font-size:0.75rem; padding:1rem; display:block;">Sem arquivo</span>`}</div>
+                <div class="auditoria-img" data-action="auditoria-zoom">${r.imagem_url ? `<img src="${escHtml(miniUrl(r.imagem_url, 300))}" alt="Foto do produto" loading="lazy" decoding="async">` : `<span style="color:var(--muted); font-size:0.75rem; padding:1rem; display:block;">Sem arquivo</span>`}</div>
                 <div class="produto-card-body">
                     <span class="produto-card-ean">${escHtml(r.codbar)}</span>
                     <div class="produto-card-desc">${escHtml(r.descricao || 'Descrição não disponível')}</div>
@@ -4368,7 +4374,7 @@ async function loadArtes(page) {
         lista.innerHTML = '<div class="artes-grid">' + data.registros.map(r => `
             <div class="arte-card">
                 <div class="arte-card-img" data-action="arte-zoom" data-url="${escHtml(r.url)}" title="Clique para ampliar">
-                    <img src="${escHtml(r.url)}" alt="Arte ${escHtml(r.codbar)}" loading="lazy">
+                    <img src="${escHtml(miniUrl(r.url, 400))}" alt="Arte ${escHtml(r.codbar)}" loading="lazy" decoding="async">
                 </div>
                 <div class="arte-card-body">
                     <div style="display:flex; justify-content:space-between; gap:0.4rem; align-items:center;">
@@ -5188,7 +5194,7 @@ function renderConsultaTableHtml(produtos) {
             <td style="color:var(--muted);">${escHtml(p.marca || '—')}</td>
             <td style="color:var(--success); font-weight:600;">${p.preco_medio && p.preco_medio > 0 ? 'R$ ' + p.preco_medio.toFixed(2) : '—'}</td>
             <td>${p.foto_png
-                ? `<img src="${p.foto_png}" class="foto-thumb" alt="foto">`
+                ? `<img src="${miniUrl(p.foto_png, 120)}" class="foto-thumb" alt="foto" loading="lazy" decoding="async">`
                 : `<span class="foto-thumb-placeholder">${CAMERA_ICON}</span>`}</td>
             <td>${renderArteCell(p)}</td>
             <td>${cadastrarBtn}<button class="btn btn-secondary btn-sm" data-action="detalhes" data-codbar="${escHtml(p.ean)}">Detalhes</button></td>
@@ -5208,7 +5214,7 @@ function renderConsultaGrid(produtos) {
         return `
         <div class="produto-card"${p.orfao ? ' style="background:var(--hover);"' : ''}>
             <div class="produto-card-img">${p.foto_png
-                ? `<img src="${p.foto_png}" alt="foto">`
+                ? `<img src="${miniUrl(p.foto_png, 300)}" alt="foto" loading="lazy" decoding="async">`
                 : `<span class="foto-thumb-placeholder">${CAMERA_ICON}</span>`}</div>
             <div class="produto-card-body">
                 <span class="produto-card-ean">${escHtml(p.ean)}</span>
@@ -5393,7 +5399,7 @@ function renderArteCell(p) {
     if (p.arte_url) {
         return `
         <div class="arte-cell">
-            <img src="${escHtml(p.arte_url)}?t=${Date.now()}" class="arte-thumb" alt="Arte gerada" data-action="ver-arte" data-url="${escHtml(p.arte_url)}">
+            <img src="${escHtml(miniUrl(p.arte_url, 200))}" class="arte-thumb" alt="Arte gerada" loading="lazy" decoding="async" data-action="ver-arte" data-url="${escHtml(p.arte_url)}">
             <button class="btn btn-secondary btn-sm" data-action="gerar-arte" data-codbar="${escHtml(p.ean)}">Regenerar</button>
         </div>`;
     }

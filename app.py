@@ -2960,7 +2960,7 @@ def _proxy_imagens_para_vps():
 # então exigir. Nunca valida pelo IP (vários terminais saem pelo mesmo IP/CGNAT).
 TERMINAL_TOKEN_TTL_SEGUNDOS = 3600
 TERMINAL_CAMINHOS_PERMITIDOS = ('/produto-imagem/',)
-IMAGENS_PROTEGIDAS_PREFIXOS = ('/produto-imagem/', '/static/processed_images/', '/static/imgs_produtos/', '/static/artes_geradas/')
+IMAGENS_PROTEGIDAS_PREFIXOS = ('/produto-imagem/', '/static/processed_images/', '/static/imgs_produtos/', '/static/artes_geradas/', '/miniatura/')
 _token_imagens_stats = {'com_token': 0, 'sem_token': 0, 'ips_sem_token': collections.Counter(), 'desde': time.time()}
 _config_cache = {}
 _terminal_token_falhas = {}
@@ -3119,7 +3119,7 @@ _limite_fotos_estado = {'cache_em': 0.0, 'por_minuto': 120, 'por_minuto_auth': 6
 _limite_fotos_janelas = {}
 _limite_fotos_avisados = {}
 _limite_fotos_lock = threading.Lock()
-LIMITE_FOTOS_PREFIXOS = ('/static/processed_images/', '/static/imgs_produtos/')
+LIMITE_FOTOS_PREFIXOS = ('/static/processed_images/', '/static/imgs_produtos/', '/miniatura/')
 
 
 @app.before_request
@@ -3204,6 +3204,49 @@ def _cache_das_fotos(resp):
     if resp.status_code == 200 and request.path.startswith(LIMITE_FOTOS_PREFIXOS + ('/static/artes_geradas/',)):
         resp.headers['Cache-Control'] = 'private, max-age=120, must-revalidate'
     return resp
+
+
+MINIATURAS_FOLDER = os.path.join('instance', 'miniaturas')   # fora de static/: só sai pela rota abaixo
+_MINIATURAS_ORIGENS = {'processed_images': PROCESSED_IMAGES_FOLDER, 'imgs_produtos': IMAGES_FOLDER, 'artes_geradas': ARTES_FOLDER}
+_miniatura_lock = threading.Lock()
+
+
+@app.route('/miniatura/<pasta>/<arquivo>', methods=['GET'])
+def miniatura(pasta, arquivo):
+    """Versão LEVE (WebP ~10-30 KB) de uma foto/arte pra listas e grades do painel. A foto
+    original pesa ~500 KB em média (e alguns PNGs passam de 30 MB), e uma página do catálogo
+    carrega 15-45 delas — era isso que deixava as imagens lentas. `?w=` define a largura (100-800).
+    Gerada na primeira vez e guardada em `instance/miniaturas/` (refeita se o original mudar).
+    Mesma proteção das fotos (token/cookie via `before_request` + limite por sessão/IP). Se não der
+    pra gerar a miniatura, cai pro arquivo original em vez de quebrar a imagem."""
+    origem_dir = _MINIATURAS_ORIGENS.get(pasta)
+    nome = os.path.basename(arquivo or '')
+    if not origem_dir or not re.fullmatch(r'[\w.\-]+\.(?:png|jpe?g|webp|gif)', nome, flags=re.IGNORECASE):
+        return jsonify({'message': 'Imagem não encontrada.'}), 404
+    origem = os.path.abspath(os.path.join(origem_dir, nome))
+    if not os.path.isfile(origem):
+        return jsonify({'message': 'Imagem não encontrada.'}), 404
+    try:
+        largura = min(800, max(100, int(request.args.get('w', 300))))
+    except ValueError:
+        largura = 300
+    destino = os.path.abspath(os.path.join(MINIATURAS_FOLDER, pasta, str(largura), os.path.splitext(nome)[0] + '.webp'))
+    try:
+        if not os.path.exists(destino) or os.path.getmtime(destino) < os.path.getmtime(origem):
+            with _miniatura_lock:
+                if not os.path.exists(destino) or os.path.getmtime(destino) < os.path.getmtime(origem):
+                    os.makedirs(os.path.dirname(destino), exist_ok=True)
+                    with Image.open(origem) as img:
+                        img.load()
+                        img = img.convert('RGBA') if img.mode in ('RGBA', 'LA', 'P') else img.convert('RGB')
+                        img.thumbnail((largura, largura * 2), Image.LANCZOS)
+                        temporario = destino + '.tmp'
+                        img.save(temporario, format='WEBP', quality=80, method=4)
+                    os.replace(temporario, destino)
+        return send_file(destino, mimetype='image/webp', conditional=True, max_age=120)
+    except Exception as e:
+        logging.warning(f"Miniatura de {pasta}/{nome} falhou ({e}); servindo o original.")
+        return send_file(origem, conditional=True, max_age=120)
 
 
 def _pode_buscar_imagem_online(codbar):
