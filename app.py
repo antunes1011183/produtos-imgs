@@ -2,6 +2,7 @@ import os
 import io
 import sys
 import csv
+import collections
 import hashlib
 import sqlite3
 import base64
@@ -2763,6 +2764,65 @@ def _proxy_imagens_para_vps():
     except requests.RequestException as e:
         logging.error(f"Erro ao encaminhar {request.path} pra VPS ({destino}): {e}")
         return jsonify({'message': 'Erro ao encaminhar requisição para a VPS'}), 502
+
+
+_limite_fotos_estado = {'cache_em': 0.0, 'por_minuto': 120}
+_limite_fotos_janelas = {}
+_limite_fotos_avisados = {}
+_limite_fotos_lock = threading.Lock()
+LIMITE_FOTOS_PREFIXOS = ('/static/processed_images/', '/static/imgs_produtos/')
+
+
+@app.before_request
+def _limitar_download_em_massa_de_fotos():
+    """Barra download em massa das fotos (`/static/processed_images/`, `/static/imgs_produtos/`) —
+    limite por IP numa janela deslizante de 60s; acima disso responde 429 + `Retry-After`.
+
+    Motivo (levantamento nos logs de produção, 22/09–20/10): ~18 episódios em que UM cliente
+    baixava o acervo inteiro (8–9,5 mil arquivos DISTINTOS, ~uma vez cada, não um loop na mesma
+    URL) em minutos, a até ~24 req/s — sempre IPs que também usam o painel admin (principalmente
+    200.108.189.66), com metade das respostas 304 (cliente com cache). Cada PNG pesa ~500 KB
+    (`processed_images` tem 9,7 GB), então cada episódio move vários GB e ocupa o servidor. Uso
+    legítimo é muito menor: terminais pedem 1 foto por consulta (pico observado por IP: ~5/min)
+    e o painel carrega 15–45 miniaturas por página — 120/min dá folga larga pros dois.
+
+    Só vale pros arquivos de foto: `/produto-imagem/` NÃO entra de propósito, porque na migração
+    o proxy do srv-mupa encaminha essas chamadas pra cá e o IP de origem passaria a ser sempre o
+    dele (um limite por IP derrubaria todos os terminais de uma vez); já as fotos são baixadas
+    direto pelo IP de cada terminal (a `imagem_url` aponta pra este servidor). O limite fica em
+    `Config['LIMITE_FOTOS_POR_MINUTO']` (padrão 120, `0` desliga), lido com cache de 30s pra não
+    ir ao banco a cada foto. Estado em memória do processo (zera no restart; suficiente pra
+    conter uma rajada)."""
+    if not request.path.startswith(LIMITE_FOTOS_PREFIXOS):
+        return None
+    agora = time.time()
+    estado = _limite_fotos_estado
+    if agora - estado['cache_em'] > 30:
+        try:
+            estado['por_minuto'] = int(_ler_todas_config().get('LIMITE_FOTOS_POR_MINUTO', '120') or 120)
+        except (ValueError, TypeError):
+            estado['por_minuto'] = 120
+        estado['cache_em'] = agora
+    limite = estado['por_minuto']
+    ip = request.remote_addr or '?'
+    if limite <= 0 or ip in ('127.0.0.1', '::1'):
+        return None
+    with _limite_fotos_lock:
+        janela = _limite_fotos_janelas.setdefault(ip, collections.deque())
+        while janela and janela[0] < agora - 60:
+            janela.popleft()
+        if len(janela) >= limite:
+            if agora - _limite_fotos_avisados.get(ip, 0) > 600:
+                _limite_fotos_avisados[ip] = agora
+                logging.warning(f"Download em massa de fotos barrado: {ip} passou de {limite} fotos/min ({request.path}).")
+            resposta = Response('Muitas requisições de imagem — tente novamente em instantes.', status=429)
+            resposta.headers['Retry-After'] = '30'
+            return resposta
+        janela.append(agora)
+        if len(_limite_fotos_janelas) > 5000:
+            for chave in [k for k, v in _limite_fotos_janelas.items() if not v or v[-1] < agora - 60]:
+                _limite_fotos_janelas.pop(chave, None)
+    return None
 
 
 def _pode_buscar_imagem_online(codbar):
