@@ -6865,10 +6865,16 @@ def admin_listar_artes():
     registros = []
     for a in pagina:
         prod = produtos.get(a['codbar'])
+        foto = (find_existing_image(a['codbar'], PROCESSED_IMAGES_FOLDER, ALLOWED_EXTENSIONS)
+                or find_existing_image(a['codbar'], IMAGES_FOLDER, ALLOWED_EXTENSIONS))
         registros.append({
             'codbar': a['codbar'], 'orientacao': a['orientacao'],
             'descricao': prod.description if prod else None, 'marca': prod.marca if prod else None,
             'cadastrado': prod is not None,
+            'categoria': (prod.categoriaText or None) if prod else None,
+            'embalagem': (prod.embalagem or None) if prod else None,
+            'preco_medio': prod.preco_medio if prod else None,
+            'foto_url': (f"/static/{os.path.basename(os.path.dirname(foto))}/{os.path.basename(foto)}?v={int(os.path.getmtime(foto))}") if foto else None,
             'url': f"/static/artes_geradas/{a['arquivo']}?v={int(a['mtime'])}",
             'atualizado_em': datetime.utcfromtimestamp(a['mtime']).isoformat() + 'Z',
             'tamanho': a['tamanho'],
