@@ -937,6 +937,7 @@ def _descrever_acao(metodo, caminho, dados):
         (r'^/admin/cadastrar-produto-(?:cosmos|manual)/(\w+)$', 'Cadastrou o produto EAN {0}'),
         (r'^/admin/artes/upload/(\w+)$', 'Enviou arte do EAN {0}'),
         (r'^/admin/artes/prompt$', 'Gerou prompt de arte'),
+        (r'^/admin/artes/produto/(\w+)$', 'Corrigiu o nome do produto EAN {0}'),
         (r'^/admin/artes/(\w+)$', 'Excluiu arte do EAN {0}'),
         (r'^/admin/quarentena/(\d+)/(confirmar|liberar|tentar-novamente)$', 'Quarentena #{0}: {1}'),
         (r'^/admin/auditoria/executar$', 'Executou a auditoria de imagens'),
@@ -7110,6 +7111,33 @@ def admin_artes_produto(codbar):
         'foto_url': _static_url(foto) if foto else None,
         'tem_arte': {o: os.path.exists(os.path.join(ARTES_FOLDER, f'{codbar}{v[2]}.webp')) for o, v in ARTES_ORIENTACOES.items()},
     })
+
+
+@app.route('/admin/artes/produto/<codbar>', methods=['PUT'])
+@jwt_required()
+def admin_artes_corrigir_nome(codbar):
+    """Corrige o nome/descrição de um produto direto da janela da arte (campo de uma linha). Só
+    troca `Produto.description` — a arte já existente NÃO é refeita (o resto fica igual); pra a
+    arte sair com o nome novo, excluir a arte e deixar o terminal gerar outra. Mudar a descrição
+    também faz a conferência foto×EAN (`VerificacaoArte`) ser refeita na próxima geração."""
+    codbar = (codbar or '').strip()
+    if not re.fullmatch(r'\d{8,14}', codbar):
+        return jsonify({'message': 'EAN inválido (use de 8 a 14 dígitos).'}), 400
+    produto = Produto.query.filter_by(codbar=codbar).first()
+    if not produto:
+        return jsonify({'message': 'Produto não cadastrado — cadastre o produto antes de corrigir o nome.'}), 404
+    texto = reparar_mojibake(re.sub(r'\s+', ' ', str((request.get_json(silent=True) or {}).get('description') or '')).strip())
+    if len(texto) < 3:
+        return jsonify({'message': 'Informe o nome do produto (mínimo 3 caracteres).'}), 400
+    if len(texto) > 255:
+        return jsonify({'message': 'Nome grande demais (máximo 255 caracteres).'}), 400
+    if _texto_corrompido(texto):
+        return jsonify({'message': 'O texto tem caracteres inválidos (�). Digite o nome de novo.'}), 400
+    anterior = produto.description
+    produto.description = texto
+    db.session.commit()
+    logging.info(f"Nome do produto {codbar} corrigido no painel: {anterior!r} -> {texto!r}")
+    return jsonify({'message': 'Nome atualizado.', 'description': texto})
 
 
 @app.route('/admin/artes/prompt', methods=['POST'])

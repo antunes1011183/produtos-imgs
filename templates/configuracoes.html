@@ -2402,6 +2402,45 @@
     </button>
 </div>
 
+<div class="quarentena-detail-backdrop" id="arte-detalhe-backdrop">
+    <button class="quarentena-nav-btn quarentena-nav-prev" id="arte-detalhe-prev" aria-label="Arte anterior" title="Anterior (←)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <div class="card modal-panel quarentena-detail-modal" id="arte-detalhe-panel">
+        <button class="detail-modal-close" id="arte-detalhe-close" aria-label="Fechar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+        <div class="quarentena-detail-image-wrap" id="arte-detalhe-img-wrap" style="cursor:zoom-in;">
+            <div class="detail-modal-image"><img id="arte-detalhe-img" src="" alt="Arte" style="max-width:100%; max-height:100%; object-fit:contain;"></div>
+        </div>
+        <div class="detail-modal-body">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem; margin:0 0 0.75rem;">
+                <h2 style="margin:0;">Arte <span class="arte-tag" id="arte-detalhe-orient">—</span></h2>
+                <span id="arte-detalhe-posicao" style="flex-shrink:0; font-size:0.72rem; color:var(--muted); white-space:nowrap;">—</span>
+            </div>
+            <div class="detail-field"><span class="label">EAN</span><span class="value" id="arte-detalhe-ean">—</span></div>
+            <div class="detail-field"><span class="label">Atualizada em</span><span class="value" id="arte-detalhe-data">—</span></div>
+
+            <div style="margin-top:1rem;">
+                <label for="arte-detalhe-nome" style="display:block; margin-bottom:0.3rem; font-size:0.78rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.03em;">Nome / descrição do produto</label>
+                <div style="display:flex; gap:0.5rem;">
+                    <input type="text" id="arte-detalhe-nome" maxlength="255" autocomplete="off" style="flex:1; min-width:0;" placeholder="Ex.: LOÇÃO HIDRATANTE PAIXÃO 400ML">
+                    <button class="btn btn-primary btn-sm" id="btn-arte-detalhe-salvar-nome">Salvar nome</button>
+                </div>
+                <p id="arte-detalhe-nome-aviso" style="margin:0.35rem 0 0; font-size:0.74rem; color:var(--muted);"></p>
+                <div id="alert-arte-detalhe" style="margin-top:0.5rem;"></div>
+            </div>
+
+            <div style="margin-top:1.1rem;">
+                <button class="btn btn-secondary btn-sm" id="btn-arte-detalhe-trocar">Trocar arte (escolher arquivo)</button>
+            </div>
+        </div>
+    </div>
+    <button class="quarentena-nav-btn quarentena-nav-next" id="arte-detalhe-next" aria-label="Próxima arte" title="Próxima (→)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+    </button>
+</div>
+
 <div class="lightbox" id="lightbox">
     <button class="lightbox-close" id="lightbox-close" aria-label="Fechar">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -4511,7 +4550,8 @@ $('#btn-artes-lote-limpar').addEventListener('click', () => { artesLote = []; $(
 })();
 
 // ===== Aba Artes =====
-let artesPage = 1, artesTotalPages = 1;
+let artesPage = 1, artesTotalPages = 1, artesTotal = 0, artesRegistros = [], arteDetalheIdx = -1, arteDetalheBusy = false;
+const ARTES_POR_PAGINA = 24;
 
 async function loadArtes(page) {
     const lista = $('#artes-list');
@@ -4521,7 +4561,7 @@ async function loadArtes(page) {
         const res = await fetch('/admin/artes?' + params, { headers: authHeaders() });
         const data = await res.json();
         if (!res.ok) throw new Error(data.message || data.msg || 'Erro ao carregar as artes.');
-        artesPage = data.page; artesTotalPages = data.total_pages;
+        artesPage = data.page; artesTotalPages = data.total_pages; artesTotal = data.total; artesRegistros = data.registros;
         $('#artes-count-badge').textContent = `${data.contagem.horizontal} horizontais · ${data.contagem.vertical} verticais`;
         $('#artes-info').textContent = data.total ? `${data.total} arte(s) · página ${data.page} de ${data.total_pages}` : '—';
         $('#btn-artes-prev').disabled = data.page <= 1;
@@ -4613,11 +4653,8 @@ $('#artes-list').addEventListener('click', async (e) => {
     const acao = el.dataset.action;
     if (acao === 'arte-zoom') { openLightbox(el.dataset.url); return; }
     if (acao === 'arte-trocar') {
-        const input = $('#artes-trocar-file');
-        input.dataset.codbar = el.dataset.codbar;
-        input.dataset.orient = el.dataset.orient;
-        input.value = '';
-        input.click();
+        const i = artesRegistros.findIndex(r => r.codbar === el.dataset.codbar && r.orientacao === el.dataset.orient);
+        if (i >= 0) abrirArteDetalhe(i);
         return;
     }
     if (acao === 'arte-excluir') {
@@ -4641,10 +4678,117 @@ $('#artes-trocar-file').addEventListener('change', async (e) => {
     if (!arquivo) return;
     try {
         await enviarArte(input.dataset.codbar, input.dataset.orient, arquivo, 'alert-artes');
-        loadArtes(artesPage);
+        await loadArtes(artesPage);
+        refrescarArteDetalhe();
     } catch (err) {
         showAlert('alert-artes', err.message, 'error');
     }
+});
+
+
+// ===== Janela da arte: percorrer entre as artes + corrigir o nome =====
+function arteDetalheAberta() { return $('#arte-detalhe-backdrop').classList.contains('show'); }
+
+function abrirArteDetalhe(i) {
+    const r = artesRegistros[i];
+    if (!r) return;
+    arteDetalheIdx = i;
+    const painel = $('#arte-detalhe-panel');
+    painel.dataset.codbar = r.codbar; painel.dataset.orient = r.orientacao;
+    $('#arte-detalhe-img').src = r.url;
+    $('#arte-detalhe-ean').textContent = r.codbar;
+    $('#arte-detalhe-orient').textContent = r.orientacao === 'vertical' ? 'Vertical' : 'Horizontal';
+    $('#arte-detalhe-data').textContent = new Date(r.atualizado_em).toLocaleString('pt-BR');
+    const pos = (artesPage - 1) * ARTES_POR_PAGINA + i + 1;
+    $('#arte-detalhe-posicao').textContent = `${pos} de ${artesTotal}`;
+    $('#arte-detalhe-prev').disabled = pos <= 1;
+    $('#arte-detalhe-next').disabled = pos >= artesTotal;
+    const nome = $('#arte-detalhe-nome');
+    nome.value = r.descricao || '';
+    nome.dataset.original = nome.value;
+    nome.disabled = !r.cadastrado;
+    $('#btn-arte-detalhe-salvar-nome').disabled = !r.cadastrado;
+    $('#arte-detalhe-nome-aviso').textContent = r.cadastrado ? '' : 'Produto não cadastrado no catálogo — não há nome para corrigir.';
+    $('#alert-arte-detalhe').innerHTML = '';
+    const caixa = $('#arte-detalhe-img').parentElement;
+    caixa.style.aspectRatio = r.orientacao === 'vertical' ? '1 / 1' : '16 / 10';
+    $('#arte-detalhe-backdrop').classList.add('show');
+}
+
+function fecharArteDetalhe() { $('#arte-detalhe-backdrop').classList.remove('show'); }
+
+function refrescarArteDetalhe() {
+    if (!arteDetalheAberta()) return;
+    const p = $('#arte-detalhe-panel');
+    const i = artesRegistros.findIndex(r => r.codbar === p.dataset.codbar && r.orientacao === p.dataset.orient);
+    if (i >= 0) abrirArteDetalhe(i); else fecharArteDetalhe();
+}
+
+async function arteDetalheNavegar(delta) {
+    if (arteDetalheBusy) return;
+    const nome = $('#arte-detalhe-nome');
+    if (!nome.disabled && nome.value.trim() !== nome.dataset.original && !confirm('Você alterou o nome e não salvou. Descartar a alteração e mudar de arte?')) return;
+    const j = arteDetalheIdx + delta;
+    if (j >= 0 && j < artesRegistros.length) { abrirArteDetalhe(j); return; }
+    const alvo = artesPage + delta;                       // borda da página: busca a vizinha
+    if (alvo < 1 || alvo > artesTotalPages) return;
+    arteDetalheBusy = true;
+    $('#arte-detalhe-prev').disabled = true; $('#arte-detalhe-next').disabled = true;
+    try {
+        await loadArtes(alvo);
+        if (artesPage !== alvo || !artesRegistros.length) throw new Error('Não foi possível carregar a outra página.');
+        abrirArteDetalhe(delta > 0 ? 0 : artesRegistros.length - 1);
+    } catch (e) {
+        toast(e.message, 'error');
+        refrescarArteDetalhe();
+    } finally {
+        arteDetalheBusy = false;
+    }
+}
+
+async function salvarNomeArte() {
+    const painel = $('#arte-detalhe-panel'), codbar = painel.dataset.codbar, orient = painel.dataset.orient;
+    const nome = $('#arte-detalhe-nome'), btn = $('#btn-arte-detalhe-salvar-nome');
+    const texto = nome.value.replace(/\s+/g, ' ').trim();
+    if (texto.length < 3) { showAlert('alert-arte-detalhe', 'Informe o nome do produto (mínimo 3 caracteres).', 'error'); return; }
+    if (texto === nome.dataset.original) { showAlert('alert-arte-detalhe', 'O nome não foi alterado.', 'error'); return; }
+    btn.disabled = true; btn.textContent = 'Salvando…';
+    try {
+        const res = await fetch('/admin/artes/produto/' + encodeURIComponent(codbar), {
+            method: 'PUT', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ description: texto }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.message || data.msg || 'Erro ao salvar o nome.');
+        toast('Nome atualizado', 'success');
+        await loadArtes(artesPage);
+        const i = artesRegistros.findIndex(r => r.codbar === codbar && r.orientacao === orient);
+        if (i >= 0) abrirArteDetalhe(i);
+        showAlert('alert-arte-detalhe', 'Nome atualizado. A arte atual não foi refeita (continua igual).', 'success');
+    } catch (err) {
+        showAlert('alert-arte-detalhe', err.message, 'error');
+    } finally {
+        btn.disabled = false; btn.textContent = 'Salvar nome';
+    }
+}
+
+$('#arte-detalhe-prev').addEventListener('click', () => arteDetalheNavegar(-1));
+$('#arte-detalhe-next').addEventListener('click', () => arteDetalheNavegar(1));
+$('#arte-detalhe-close').addEventListener('click', fecharArteDetalhe);
+$('#arte-detalhe-backdrop').addEventListener('click', (e) => { if (e.target.id === 'arte-detalhe-backdrop') fecharArteDetalhe(); });
+$('#arte-detalhe-img-wrap').addEventListener('click', () => openLightbox($('#arte-detalhe-img').src));
+$('#btn-arte-detalhe-salvar-nome').addEventListener('click', salvarNomeArte);
+$('#arte-detalhe-nome').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); salvarNomeArte(); } });
+$('#btn-arte-detalhe-trocar').addEventListener('click', () => {
+    const p = $('#arte-detalhe-panel'), input = $('#artes-trocar-file');
+    input.dataset.codbar = p.dataset.codbar; input.dataset.orient = p.dataset.orient;
+    input.value = ''; input.click();
+});
+document.addEventListener('keydown', (e) => {
+    if (!arteDetalheAberta()) return;
+    if (e.key === 'Escape') { fecharArteDetalhe(); return; }
+    if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;   // digitando: setas não navegam
+    if (e.key === 'ArrowLeft') arteDetalheNavegar(-1);
+    else if (e.key === 'ArrowRight') arteDetalheNavegar(1);
 });
 
 $('#btn-quarentena-prev').addEventListener('click', () => { if (quarentenaPage > 1) loadQuarentena(quarentenaPage - 1); });
