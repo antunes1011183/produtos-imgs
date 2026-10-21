@@ -1694,16 +1694,11 @@ def _consultar_ia_conferencia_ean(dados, ean, descricao, marca):
         'Responda SOMENTE um JSON, sem texto fora dele:\n'
         '{"veredito": "CONFIRMADO" | "DUVIDA" | "DIFERENTE", "motivo": "<uma frase>", "texto_lido": "<texto principal que você leu na embalagem>"}\n\n'
         'Regras:\n'
-        '- CONFIRMADO: SOMENTE se a marca E o tipo de produto batem com o cadastro e, quando '
-        'legíveis na embalagem, variante e tamanho também batem, SEM nenhuma contradição.\n'
-        '- DIFERENTE: há contradição clara (outra marca, outro tipo de produto, outra '
-        'variante/fragrância/sabor ou outro tamanho).\n'
-        '- DUVIDA: embalagem ilegível, cortada, de costas, genérica/sem marca visível, vários '
-        'produtos diferentes na foto, imagem que não é de produto, dígitos do código de barras '
-        'diferentes do EAN (o cadastro às vezes tem EAN impreciso: isso é dúvida, não "diferente"), '
-        'ou qualquer falta de evidência para afirmar com certeza.\n'
-        '- Na dúvida entre CONFIRMADO e DUVIDA, responda DUVIDA. Nunca confirme por suposição.\n'
-        '- Abreviações do cadastro (ex.: "HID", "CORP", "LOC") são normais; avalie o significado.'
+        '- CONFIRMADO: o NOME/LINHA do produto e a variante (sabor, fragrância, tipo) estão LEGÍVEIS na embalagem e batem inequivocamente com o cadastro, sem nenhuma contradição. A marca do cadastro pode ser o fabricante e a embalagem mostrar a linha/submarca do mesmo produto (ex.: cadastro \'Coty Paixão\' e embalagem \'Paixão\') — isso BATE. Tamanho/volume/quantidade que NÃO aparece na foto NÃO é motivo de dúvida (a foto pode ser só da frente); só um tamanho VISÍVEL e DIFERENTE do cadastro é contradição. Código de barras não visível também NÃO é motivo de dúvida.\n'
+        '- DIFERENTE: há contradição clara e visível (outra marca/linha, outro tipo de produto, outra variante/fragrância/sabor, ou outro tamanho legível na embalagem).\n'
+        '- DUVIDA: embalagem ilegível, cortada ou de costas; sem nome/marca visível; vários produtos diferentes na foto; imagem que não é de produto; dígitos de código de barras legíveis e diferentes do EAN (o cadastro às vezes tem EAN impreciso: dúvida, não \'diferente\'); ou quando só dá para dizer que \'parece\' o produto, sem ler o nome/variante que o identifica.\n'
+        '- Nunca confirme por suposição: precisa ter LIDO na embalagem o que identifica o produto. Mas a ausência de um dado secundário (tamanho, código de barras) sozinha não é dúvida.\n'
+        '- Abreviações do cadastro (ex.: \'HID\', \'CORP\', \'LOC\') são normais; avalie o significado.'
     )
     try:
         client = genai.Client(vertexai=True, api_key=api_key)
