@@ -42,6 +42,7 @@ from flask_migrate import Migrate  # Adicionado
 import re
 import json
 from io import BytesIO
+from texto_utils import reparar_mojibake
 
 # Quando compilado com PyInstaller (`sys.frozen`), __file__ e o cwd herdado do processo que
 # lançou o .exe (ex.: o NSSM, ou um duplo-clique) não são confiáveis como base pra caminhos
@@ -409,6 +410,26 @@ class AuditoriaImagem(db.Model):
     criado_em = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     atualizado_em = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     revisado_em = db.Column(db.DateTime, nullable=True)
+
+
+class VerificacaoArte(db.Model):
+    """Resultado da conferência "esta foto é mesmo do EAN?" feita ANTES de gerar a arte publicitária
+    (ver `_garantir_imagem_confere_com_ean`). Uma linha por EAN. O veredito só vale pra ESTA foto
+    (`hash_imagem`, SHA-1 do arquivo servido) e pra ESTA descrição do cadastro
+    (`descricao_cadastro`): trocou a foto ou editou o cadastro, confere de novo. Evita pagar uma
+    chamada à IA a cada consulta de terminal.
+
+    `veredito`: 'confirmado' (a arte pode ser gerada), 'duvida' (não deu pra afirmar com certeza —
+    sem arte, vai pra revisão humana na aba Auditoria) ou 'diferente' (a foto é de outro produto —
+    a foto é tirada de circulação e vai pra Quarentena)."""
+    codbar = db.Column(db.String(64), primary_key=True)
+    hash_imagem = db.Column(db.String(40), nullable=False)
+    descricao_cadastro = db.Column(db.String(400), nullable=False, default='')
+    descricao_usada = db.Column(db.String(400), nullable=False, default='')
+    veredito = db.Column(db.String(12), nullable=False)
+    motivo = db.Column(db.String(500), nullable=True)
+    texto_lido = db.Column(db.String(500), nullable=True)
+    verificado_em = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
 
 class ImagemQuarentena(db.Model):
@@ -1360,9 +1381,10 @@ class _JobArte:
     `orientacao` ('horizontal'/'vertical') decide qual pipeline o worker chama — mesma fila
     única pras duas orientações (continua garantindo no máximo uma chamada ao Gemini por vez,
     não importa se é arte horizontal ou vertical que está sendo gerada)."""
-    __slots__ = ('codbar', 'img_path', 'evento', 'erro', 'orientacao')
+    __slots__ = ('codbar', 'img_path', 'evento', 'erro', 'orientacao', 'forcar')
 
-    def __init__(self, codbar, img_path, aguardar, orientacao='horizontal'):
+    def __init__(self, codbar, img_path, aguardar, orientacao='horizontal', forcar=False):
+        self.forcar = forcar
         self.codbar = codbar
         self.img_path = img_path
         self.evento = threading.Event() if aguardar else None
@@ -1402,11 +1424,16 @@ def _enfileirar_geracao_arte(codbar, img_path, aguardar=False, forcar=False, ori
         return None
     if not _ler_todas_config().get('GEMINI_API_KEY', '').strip() or not _gemini_ativo():
         return None
-    if not Produto.query.filter_by(codbar=codbar).first():
+    produto = Produto.query.filter_by(codbar=codbar).first()
+    if not produto:
+        return None
+    if not forcar and _verificacao_arte_ja_negada(produto, img_path):
+        # essa mesma foto já foi vista e NÃO foi confirmada como do EAN: não enfileira de novo
+        # (evita fila e log a cada consulta de terminal; a revisão humana na aba Auditoria libera)
         return None
 
     _gerando_arte_em_andamento.add(chave)
-    job = _JobArte(codbar, img_path, aguardar, orientacao)
+    job = _JobArte(codbar, img_path, aguardar, orientacao, forcar)
     _fila_arte.put(job)
     return job
 
@@ -1427,11 +1454,16 @@ def _worker_fila_arte():
                     raise FileNotFoundError(f'Fonte da arte ausente no servidor ({FONT_PATH})')
                 produto = Produto.query.filter_by(codbar=job.codbar).first()
                 if produto:
+                    # NUNCA gera arte (nem gasta o Gemini de imagem) sem ter certeza de que a foto é do EAN
+                    _garantir_imagem_confere_com_ean(produto, job.img_path, forcar=job.forcar)
                     if job.orientacao == 'vertical':
                         gerar_arte_publicitaria_vertical(produto, job.img_path)
                     else:
                         gerar_arte_publicitaria(produto, job.img_path)
                     logging.info(f"Arte publicitária ({job.orientacao}) gerada (fila) para {job.codbar}")
+        except ArteNaoAutorizada as e:
+            job.erro = str(e)
+            logging.warning(f"Arte NÃO gerada para {job.codbar}: {e}")
         except Exception as e:
             job.erro = str(e)
             logging.error(f"Erro ao gerar arte ({job.orientacao}) da fila para {job.codbar}: {e}")
@@ -1621,6 +1653,190 @@ def _imagem_corresponde_descricao(image_data, descricao, marca=None, estrito=Fal
     except Exception as e:
         logging.warning(f"Erro ao verificar correspondência imagem/descrição (permitindo por padrão): {e}")
         return falha
+
+
+class ArteNaoAutorizada(Exception):
+    """A foto não foi confirmada como sendo do EAN: a arte NÃO deve ser gerada."""
+
+
+class _VerificacaoIndisponivel(Exception):
+    """A IA não conseguiu conferir agora (cota, rede, resposta ilegível). Nada é gravado, tenta de novo depois."""
+
+
+def _imagem_para_conferencia(dados):
+    """Foto -> JPEG até 1024px sobre fundo branco (a foto servida costuma ser PNG sem fundo)."""
+    img = Image.open(io.BytesIO(dados))
+    img = img.convert('RGBA')
+    img.thumbnail((1024, 1024))
+    fundo = Image.new('RGB', img.size, (255, 255, 255))
+    fundo.paste(img, mask=img.getchannel('A'))
+    buf = io.BytesIO()
+    fundo.save(buf, format='JPEG', quality=90)
+    return buf.getvalue()
+
+
+def _consultar_ia_conferencia_ean(dados, ean, descricao, marca):
+    """Pergunta ao Gemini (modelo completo, não o lite — precisa ler texto de embalagem com
+    precisão) se a foto é MESMO do produto cadastrado. Devolve (veredito, motivo, texto_lido) com
+    veredito em 'confirmado' | 'duvida' | 'diferente'. Levanta _VerificacaoIndisponivel se não
+    houve resposta utilizável — nunca devolve 'confirmado' por falha."""
+    api_key = _ler_todas_config().get('GEMINI_API_KEY', '').strip()
+    if not api_key or not _gemini_ativo():
+        raise _VerificacaoIndisponivel('Gemini desligado ou sem chave')
+    produto_ref = f'Descrição: "{descricao}"' + (f'\nMarca: {marca}' if marca else '') + f'\nCódigo de barras (EAN): {ean}'
+    instrucao = (
+        'Você é um auditor RIGOROSO de catálogo de supermercado. Esta foto será usada para criar a '
+        'arte publicitária do produto abaixo, e uma foto errada seria publicada em lojas.\n\n'
+        f'{produto_ref}\n\n'
+        'Examine a imagem: leia TODO o texto impresso na embalagem (marca, nome do produto, '
+        'variante/sabor/fragrância, tamanho/quantidade) e, se um código de barras estiver visível e '
+        'legível, leia os dígitos. Compare com o cadastro.\n\n'
+        'Responda SOMENTE um JSON, sem texto fora dele:\n'
+        '{"veredito": "CONFIRMADO" | "DUVIDA" | "DIFERENTE", "motivo": "<uma frase>", "texto_lido": "<texto principal que você leu na embalagem>"}\n\n'
+        'Regras:\n'
+        '- CONFIRMADO: SOMENTE se a marca E o tipo de produto batem com o cadastro e, quando '
+        'legíveis na embalagem, variante e tamanho também batem, SEM nenhuma contradição.\n'
+        '- DIFERENTE: há contradição clara (outra marca, outro tipo de produto, outra '
+        'variante/fragrância/sabor ou outro tamanho).\n'
+        '- DUVIDA: embalagem ilegível, cortada, de costas, genérica/sem marca visível, vários '
+        'produtos diferentes na foto, imagem que não é de produto, dígitos do código de barras '
+        'diferentes do EAN (o cadastro às vezes tem EAN impreciso: isso é dúvida, não "diferente"), '
+        'ou qualquer falta de evidência para afirmar com certeza.\n'
+        '- Na dúvida entre CONFIRMADO e DUVIDA, responda DUVIDA. Nunca confirme por suposição.\n'
+        '- Abreviações do cadastro (ex.: "HID", "CORP", "LOC") são normais; avalie o significado.'
+    )
+    try:
+        client = genai.Client(vertexai=True, api_key=api_key)
+        resposta = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[genai_types.Part.from_bytes(data=_imagem_para_conferencia(dados), mime_type='image/jpeg'), instrucao],
+        )
+        _registrar_uso_gemini('texto', sucesso=True)
+    except Exception as e:
+        _registrar_uso_gemini('texto', sucesso=False, rate_limited='429' in str(e) or 'RESOURCE_EXHAUSTED' in str(e))
+        raise _VerificacaoIndisponivel(str(e))
+    m = re.search(r'\{.*\}', resposta.text or '', re.DOTALL)
+    if not m:
+        raise _VerificacaoIndisponivel('resposta da IA sem JSON')
+    try:
+        dados_json = json.loads(m.group(0))
+    except ValueError:
+        raise _VerificacaoIndisponivel('JSON da IA inválido')
+    bruto = str(dados_json.get('veredito', '')).strip().upper()
+    veredito = {'CONFIRMADO': 'confirmado', 'DIFERENTE': 'diferente'}.get(bruto, 'duvida')
+    return veredito, str(dados_json.get('motivo', '')).strip()[:480], str(dados_json.get('texto_lido', '')).strip()[:480]
+
+
+def _verificacao_arte_ja_negada(produto, img_path):
+    """True se ESTA foto (mesmo arquivo) com ESTA descrição já foi vista e não foi confirmada, e um
+    humano não a liberou — não adianta enfileirar a arte de novo."""
+    try:
+        with open(img_path, 'rb') as f:
+            h = hashlib.sha1(f.read()).hexdigest()
+    except OSError:
+        return False
+    aud = AuditoriaImagem.query.filter_by(codbar=produto.codbar).first()
+    if aud and aud.decisao == 'ok' and aud.hash_imagem == h:
+        return False
+    v = db.session.get(VerificacaoArte, produto.codbar)
+    return bool(v and v.hash_imagem == h and v.veredito != 'confirmado'
+                and v.descricao_cadastro == reparar_mojibake((produto.description or '').strip())[:400])
+
+
+def _descricao_integra_para_verificacao(produto):
+    """(descricao, marca) íntegras pra comparar com a foto: a do cadastro (já com mojibake
+    reparado) ou, se vazia/corrompida, a de fontes externas pelo EAN. Descrição vazia = não dá pra
+    conferir (e então a arte não é gerada)."""
+    desc = reparar_mojibake((produto.description or '').strip())
+    marca = _marca_valida(reparar_mojibake(produto.marca))
+    if desc and not _texto_corrompido(desc):
+        return desc, marca
+    for buscar in (fetch_product_from_cosmos, fetch_product_from_openfoodfacts, fetch_product_from_zaffari,
+                   fetch_product_from_google, fetch_product_from_precomelhor, fetch_product_from_rissul):
+        try:
+            dados = buscar(produto.codbar)
+        except Exception:
+            continue
+        externa = reparar_mojibake(((dados or {}).get('description') or '').strip())
+        if externa and not _texto_corrompido(externa):
+            m = dados.get('brand', {}).get('name', '') if isinstance(dados.get('brand'), dict) else (dados.get('marca') or '')
+            return externa, _marca_valida(m) or marca
+    return '', marca
+
+
+def _registrar_duvida_na_auditoria(codbar, h, veredito, motivo, texto_lido):
+    """Deixa a foto pendente na aba Auditoria (motivo 'verificacao_arte'), pra um humano decidir:
+    "Está correta" libera a arte; "Separar" manda pra Quarentena. Devolve a linha."""
+    row = AuditoriaImagem.query.filter_by(codbar=codbar).first()
+    agora = datetime.utcnow()
+    if row is None:
+        row = AuditoriaImagem(codbar=codbar, criado_em=agora, motivos='')
+        db.session.add(row)
+    if row.hash_imagem != h:
+        row.decisao, row.ia_hash, row.revisado_em = None, None, None
+        row.hash_imagem = h
+    lista = [x for x in (row.motivos or '').split(',') if x and x != 'verificacao_arte'] + ['verificacao_arte']
+    detalhes = json.loads(row.detalhes or '{}')
+    rotulo = 'A IA viu uma foto de OUTRO produto' if veredito == 'diferente' else 'A IA não conseguiu confirmar que a foto é deste produto'
+    detalhes['verificacao_arte'] = f'{rotulo}: {motivo or "sem detalhe"}' + (f' (leu na embalagem: "{texto_lido}")' if texto_lido else '')
+    if row.decisao == 'ok':
+        row.decisao = None
+    row.motivos, row.detalhes, row.atualizado_em = ','.join(lista), json.dumps(detalhes, ensure_ascii=False), agora
+    db.session.commit()
+    return row
+
+
+def _garantir_imagem_confere_com_ean(produto, img_path, forcar=False):
+    """PORTÃO ANTES DA ARTE: só deixa gerar a arte publicitária se a foto for, sem dúvida, do
+    produto desse EAN (pedido do usuário: "não podemos ter dúvidas"). Confirmação vem de (1) um
+    humano ("Está correta" na aba Auditoria, vale enquanto o arquivo for o mesmo) ou (2) a IA
+    lendo a embalagem e confirmando. Qualquer outra coisa — dúvida, foto de outro produto, sem
+    descrição pra comparar — levanta ArteNaoAutorizada e NENHUMA arte é gerada:
+      - 'diferente': a foto é tirada de circulação e vai pra Quarentena (reversível: "Liberar");
+      - 'duvida'/sem descrição: a foto fica servida, mas pendente na aba Auditoria.
+    O veredito fica em cache (`VerificacaoArte`) por foto+descrição; `forcar` (botão "Regenerar"
+    do painel) refaz a conferência de um veredito negativo. Se a IA estiver indisponível no momento
+    levanta ArteNaoAutorizada sem gravar nada (a próxima consulta tenta de novo)."""
+    with open(img_path, 'rb') as f:
+        dados = f.read()
+    h = hashlib.sha1(dados).hexdigest()
+
+    aud = AuditoriaImagem.query.filter_by(codbar=produto.codbar).first()
+    if aud and aud.decisao == 'ok' and aud.hash_imagem == h:
+        return  # um humano já confirmou ESTA foto
+
+    desc_cadastro = reparar_mojibake((produto.description or '').strip())[:400]
+    v = db.session.get(VerificacaoArte, produto.codbar)
+    if v and v.hash_imagem == h and v.descricao_cadastro == desc_cadastro:
+        if v.veredito == 'confirmado':
+            return
+        if not forcar:
+            raise ArteNaoAutorizada(f'a foto não foi confirmada como deste produto ({v.motivo or v.veredito}) — revise na aba Auditoria')
+
+    descricao, marca = _descricao_integra_para_verificacao(produto)
+    if not descricao:
+        veredito, motivo, lido = 'duvida', 'sem descrição íntegra do produto para comparar com a foto', ''
+    else:
+        try:
+            veredito, motivo, lido = _consultar_ia_conferencia_ean(dados, produto.codbar, descricao, marca)
+        except _VerificacaoIndisponivel as e:
+            raise ArteNaoAutorizada(f'não foi possível conferir a foto agora ({e}) — a arte não foi gerada; tente de novo mais tarde')
+
+    if v is None:
+        v = VerificacaoArte(codbar=produto.codbar)
+        db.session.add(v)
+    v.hash_imagem, v.descricao_cadastro, v.descricao_usada = h, desc_cadastro, descricao[:400]
+    v.veredito, v.motivo, v.texto_lido, v.verificado_em = veredito, motivo, lido, datetime.utcnow()
+    db.session.commit()
+    if veredito == 'confirmado':
+        logging.info(f"Foto de {produto.codbar} confirmada como do produto (IA leu: {lido!r})")
+        return
+
+    row = _registrar_duvida_na_auditoria(produto.codbar, h, veredito, motivo, lido)
+    if veredito == 'diferente':
+        ok_sep, msg_sep = _separar_imagem_auditada(row)
+        raise ArteNaoAutorizada(f'a foto é de OUTRO produto ({motivo}); {msg_sep}')
+    raise ArteNaoAutorizada(f'a foto não foi confirmada como deste produto ({motivo}) — revise na aba Auditoria')
 
 
 def _quarentenar_imagem(image_data, codbar, origem=None, motivo=None, url_origem=None):
@@ -4133,8 +4349,8 @@ def gerar_textos_arte_ia(produto):
     quando o nome gerado não já incluir esse dado (ou None), marca é a marca resolvida (produto
     ou fonte externa) já em Title Case, usada pra destacar tipograficamente o nome da marca
     separado do resto da descrição — ou None se não houver marca conhecida."""
-    descricao_fonte = produto.description or ''
-    marca_fonte = _marca_valida(produto.marca)
+    descricao_fonte = reparar_mojibake(produto.description or '')
+    marca_fonte = _marca_valida(reparar_mojibake(produto.marca))
     fallback_nome = (descricao_fonte or 'Produto').title()
     fonte_confiavel = False
 
@@ -5875,10 +6091,13 @@ def _executar_auditoria(usar_ia, limite_ia):
                 if mudou:
                     row.decisao, row.ia_hash, row.revisado_em = None, None, None
                     row.hash_imagem = hashes[cb]
-                elif 'incompativel_ia' in (row.motivos or '').split(','):
+                else:
                     anteriores = json.loads(row.detalhes or '{}')
-                    motivos.append('incompativel_ia')
-                    detalhes['incompativel_ia'] = anteriores.get('incompativel_ia', 'A IA achou que a foto não corresponde à descrição')
+                    for retido, padrao in (('incompativel_ia', 'A IA achou que a foto não corresponde à descrição'),
+                                           ('verificacao_arte', 'A IA não conseguiu confirmar que a foto é deste produto')):
+                        if retido in (row.motivos or '').split(','):
+                            motivos.append(retido)
+                            detalhes[retido] = anteriores.get(retido, padrao)
                 row.motivos = ','.join(motivos)
                 row.detalhes = json.dumps(detalhes, ensure_ascii=False)
                 row.atualizado_em = agora
