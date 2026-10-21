@@ -757,21 +757,36 @@
         .quarentena-nav-btn svg { width: 22px; height: 22px; }
         .quarentena-nav-prev { left: clamp(0.6rem, 3vw, 2.5rem); }
         .quarentena-nav-next { right: clamp(0.6rem, 3vw, 2.5rem); }
-        /* Janela da arte (aba Artes): arte de um lado, informações do produto + foto do EAN na lateral.
-           Seletor com ID pra vencer `.quarentena-detail-modal.modal-panel` (560px) sem !important. */
-        #arte-detalhe-panel.quarentena-detail-modal.modal-panel { max-width: 1040px; }
-        .arte-detalhe-grid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 0; }
-        .arte-detalhe-col-arte { padding: 1.25rem 1.25rem 1.25rem 1.5rem; }
-        .arte-detalhe-col-info { padding: 1.25rem 1.5rem 1.25rem 1.25rem; border-left: 1px solid var(--border); min-width: 0; }
-        .arte-detalhe-foto { width: 100%; aspect-ratio: 4 / 3; max-height: 230px; background: #f1f5f9; border-radius: var(--radius-sm, 8px);
+        /* Visualizador de arte (aba Artes): arte grande com setas ao lado e, à direita, as informações
+           do produto + foto do EAN + campo pra corrigir o nome. Abre ao clicar na imagem da arte. */
+        .arte-viewer { display: none; position: fixed; inset: 0; z-index: 1499; background: rgba(8,12,24,0.93); }
+        .arte-viewer.show { display: flex; }
+        .arte-viewer-stage { flex: 1; min-width: 0; position: relative; display: flex; align-items: center; justify-content: center; padding: 1.25rem 4.5rem; }
+        .arte-viewer-img-wrap { display: flex; max-width: 100%; max-height: 100%; cursor: zoom-in; }
+        .arte-viewer-img-wrap img { max-width: 100%; max-height: calc(100vh - 2.5rem); object-fit: contain; border-radius: 10px; box-shadow: 0 20px 60px rgba(0,0,0,0.55); }
+        .arte-viewer-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 52px; height: 52px; border-radius: 50%;
+            background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.3); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background 0.15s ease; }
+        .arte-viewer-nav:hover { background: rgba(255,255,255,0.28); }
+        .arte-viewer-nav:disabled { opacity: 0.25; cursor: default; pointer-events: none; }
+        .arte-viewer-nav svg { width: 24px; height: 24px; }
+        .arte-viewer-nav.prev { left: 0.9rem; }
+        .arte-viewer-nav.next { right: 0.9rem; }
+        .arte-viewer-contador { position: absolute; top: 0.9rem; left: 50%; transform: translateX(-50%); padding: 0.25rem 0.8rem; border-radius: 999px;
+            background: rgba(255,255,255,0.14); color: #fff; font-size: 0.8rem; white-space: nowrap; }
+        .arte-viewer-side { width: 390px; max-width: 42vw; flex-shrink: 0; background: var(--card); border-left: 1px solid var(--border);
+            overflow-y: auto; padding: 1.25rem 1.25rem 1.5rem; position: relative; }
+        .arte-viewer-foto { width: 100%; aspect-ratio: 1 / 1; max-height: 250px; background: #f1f5f9; border-radius: 8px;
             display: flex; align-items: center; justify-content: center; overflow: hidden; cursor: zoom-in; }
-        .arte-detalhe-foto img { max-width: 100%; max-height: 100%; object-fit: contain; }
-        .arte-detalhe-foto.vazia { cursor: default; color: #64748b; font-size: 0.8rem; text-align: center; padding: 1rem; }
+        .arte-viewer-foto img { max-width: 100%; max-height: 100%; object-fit: contain; }
+        .arte-viewer-foto.vazia { cursor: default; color: #64748b; font-size: 0.8rem; text-align: center; padding: 1rem; }
         .arte-detalhe-rotulo { margin: 1rem 0 0.35rem; font-size: 0.74rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
         @media (max-width: 820px) {
-            .arte-detalhe-grid { grid-template-columns: minmax(0, 1fr); }
-            .arte-detalhe-col-info { border-left: none; border-top: 1px solid var(--border); padding-top: 1rem; }
-            .arte-detalhe-col-arte { padding: 1rem; }
+            .arte-viewer { flex-direction: column; }
+            .arte-viewer-stage { flex: 0 0 auto; height: 40vh; padding: 0.75rem 3.2rem; }
+            .arte-viewer-img-wrap img { max-height: calc(40vh - 1.5rem); }
+            .arte-viewer-nav { width: 40px; height: 40px; }
+            .arte-viewer-nav.prev { left: 0.4rem; } .arte-viewer-nav.next { right: 0.4rem; }
+            .arte-viewer-side { width: 100%; max-width: none; flex: 1; border-left: none; border-top: 1px solid var(--border); }
         }
         @media (max-width: 640px) {
             .quarentena-nav-btn { width: 38px; height: 38px; }
@@ -2418,53 +2433,48 @@
     </button>
 </div>
 
-<div class="quarentena-detail-backdrop" id="arte-detalhe-backdrop">
-    <button class="quarentena-nav-btn quarentena-nav-prev" id="arte-detalhe-prev" aria-label="Arte anterior" title="Anterior (←)">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-    </button>
-    <div class="card modal-panel quarentena-detail-modal" id="arte-detalhe-panel">
-        <button class="detail-modal-close" id="arte-detalhe-close" aria-label="Fechar">
+<div class="arte-viewer" id="arte-detalhe-backdrop">
+    <div class="arte-viewer-stage" id="arte-detalhe-stage">
+        <span class="arte-viewer-contador"><span id="arte-detalhe-posicao">—</span></span>
+        <button class="arte-viewer-nav prev" id="arte-detalhe-prev" aria-label="Arte anterior" title="Anterior (←)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <div class="arte-viewer-img-wrap" id="arte-detalhe-img-wrap" title="Clique para ampliar ainda mais">
+            <img id="arte-detalhe-img" src="" alt="Arte">
+        </div>
+        <button class="arte-viewer-nav next" id="arte-detalhe-next" aria-label="Próxima arte" title="Próxima (→)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+    </div>
+
+    <aside class="arte-viewer-side" id="arte-detalhe-panel">
+        <button class="detail-modal-close" id="arte-detalhe-close" aria-label="Fechar" style="top:0.75rem; right:0.75rem;">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
-        <div class="arte-detalhe-grid">
-            <div class="arte-detalhe-col-arte">
-                <div style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem; margin:0 0 0.6rem; padding-right:2rem;">
-                    <h2 style="margin:0;">Arte <span class="arte-tag" id="arte-detalhe-orient">—</span></h2>
-                    <span id="arte-detalhe-posicao" style="flex-shrink:0; font-size:0.78rem; color:var(--muted); white-space:nowrap;">—</span>
-                </div>
-                <div class="quarentena-detail-image-wrap" id="arte-detalhe-img-wrap" style="cursor:zoom-in; border-radius:var(--radius-sm, 8px); overflow:hidden;">
-                    <div class="detail-modal-image"><img id="arte-detalhe-img" src="" alt="Arte" style="max-width:100%; max-height:100%; object-fit:contain;"></div>
-                </div>
-                <p style="margin:0.5rem 0 0; font-size:0.76rem; color:var(--muted);">Atualizada em <span id="arte-detalhe-data">—</span> · clique na imagem para ampliar</p>
-                <div style="margin-top:0.9rem;">
-                    <button class="btn btn-secondary btn-sm" id="btn-arte-detalhe-trocar">Trocar arte (escolher arquivo)</button>
-                </div>
-            </div>
+        <p style="margin:0 0 0.35rem; font-size:0.74rem; color:var(--muted);">Arte <span class="arte-tag" id="arte-detalhe-orient">—</span> · <span id="arte-detalhe-data">—</span></p>
+        <h2 id="arte-detalhe-titulo" style="margin:0 0 0.15rem; padding-right:2.2rem; line-height:1.25; font-size:1.05rem;">—</h2>
+        <p id="arte-detalhe-marca" style="margin:0 0 0.8rem; color:var(--muted); font-size:0.85rem;">—</p>
+        <div class="detail-field"><span class="label">EAN</span><span class="value" id="arte-detalhe-ean">—</span></div>
+        <div class="detail-field"><span class="label">Categoria</span><span class="value" id="arte-detalhe-categoria">—</span></div>
+        <div class="detail-field"><span class="label">Embalagem</span><span class="value" id="arte-detalhe-embalagem">—</span></div>
+        <div class="detail-field"><span class="label">Preço médio</span><span class="value" id="arte-detalhe-preco">—</span></div>
 
-            <aside class="arte-detalhe-col-info">
-                <h2 id="arte-detalhe-titulo" style="margin:0 0 0.15rem; padding-right:2rem; line-height:1.25;">—</h2>
-                <p id="arte-detalhe-marca" style="margin:0 0 0.8rem; color:var(--muted); font-size:0.85rem;">—</p>
-                <div class="detail-field"><span class="label">EAN</span><span class="value" id="arte-detalhe-ean">—</span></div>
-                <div class="detail-field"><span class="label">Categoria</span><span class="value" id="arte-detalhe-categoria">—</span></div>
-                <div class="detail-field"><span class="label">Embalagem</span><span class="value" id="arte-detalhe-embalagem">—</span></div>
-                <div class="detail-field"><span class="label">Preço médio</span><span class="value" id="arte-detalhe-preco">—</span></div>
+        <p class="arte-detalhe-rotulo">Foto do produto (EAN)</p>
+        <div class="arte-viewer-foto" id="arte-detalhe-foto-wrap"><img id="arte-detalhe-foto" src="" alt="Foto do produto" style="display:none;"><span id="arte-detalhe-foto-vazia"></span></div>
 
-                <p class="arte-detalhe-rotulo">Foto do produto (EAN)</p>
-                <div class="arte-detalhe-foto" id="arte-detalhe-foto-wrap"><img id="arte-detalhe-foto" src="" alt="Foto do produto" style="display:none;"><span id="arte-detalhe-foto-vazia"></span></div>
-
-                <p class="arte-detalhe-rotulo">Nome / descrição do produto</p>
-                <div style="display:flex; gap:0.5rem;">
-                    <input type="text" id="arte-detalhe-nome" maxlength="255" autocomplete="off" style="flex:1; min-width:0;" placeholder="Ex.: LOÇÃO HIDRATANTE PAIXÃO 400ML">
-                    <button class="btn btn-primary btn-sm" id="btn-arte-detalhe-salvar-nome">Salvar nome</button>
-                </div>
-                <p id="arte-detalhe-nome-aviso" style="margin:0.35rem 0 0; font-size:0.74rem; color:var(--muted);"></p>
-                <div id="alert-arte-detalhe" style="margin-top:0.5rem;"></div>
-            </aside>
+        <p class="arte-detalhe-rotulo">Nome / descrição do produto</p>
+        <div style="display:flex; gap:0.5rem;">
+            <input type="text" id="arte-detalhe-nome" maxlength="255" autocomplete="off" style="flex:1; min-width:0;" placeholder="Ex.: LOÇÃO HIDRATANTE PAIXÃO 400ML">
+            <button class="btn btn-primary btn-sm" id="btn-arte-detalhe-salvar-nome">Salvar nome</button>
         </div>
-    </div>
-    <button class="quarentena-nav-btn quarentena-nav-next" id="arte-detalhe-next" aria-label="Próxima arte" title="Próxima (→)">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-    </button>
+        <p id="arte-detalhe-nome-aviso" style="margin:0.35rem 0 0; font-size:0.74rem; color:var(--muted);"></p>
+        <div id="alert-arte-detalhe" style="margin-top:0.5rem;"></div>
+
+        <div style="margin-top:1.1rem; display:flex; flex-wrap:wrap; gap:0.5rem; align-items:center;">
+            <button class="btn btn-secondary btn-sm" id="btn-arte-detalhe-trocar">Trocar arte (escolher arquivo)</button>
+        </div>
+        <p style="margin:0.9rem 0 0; font-size:0.72rem; color:var(--muted);">← → trocam de arte · Esc fecha</p>
+    </aside>
 </div>
 
 <div class="lightbox" id="lightbox">
@@ -4598,7 +4608,7 @@ async function loadArtes(page) {
         }
         lista.innerHTML = '<div class="artes-grid">' + data.registros.map(r => `
             <div class="arte-card">
-                <div class="arte-card-img" data-action="arte-zoom" data-url="${escHtml(r.url)}" title="Clique para ampliar">
+                <div class="arte-card-img" data-action="arte-zoom" data-url="${escHtml(r.url)}" data-codbar="${escHtml(r.codbar)}" data-orient="${r.orientacao}" title="Clique para ampliar">
                     <img src="${escHtml(miniUrl(r.url, 400))}" alt="Arte ${escHtml(r.codbar)}" loading="lazy" decoding="async">
                 </div>
                 <div class="arte-card-body">
@@ -4677,7 +4687,11 @@ $('#artes-list').addEventListener('click', async (e) => {
     const el = e.target.closest('[data-action]');
     if (!el) return;
     const acao = el.dataset.action;
-    if (acao === 'arte-zoom') { openLightbox(el.dataset.url); return; }
+    if (acao === 'arte-zoom') {
+        const i = artesRegistros.findIndex(r => r.codbar === el.dataset.codbar && r.orientacao === el.dataset.orient);
+        if (i >= 0) abrirArteDetalhe(i); else openLightbox(el.dataset.url);
+        return;
+    }
     if (acao === 'arte-trocar') {
         const i = artesRegistros.findIndex(r => r.codbar === el.dataset.codbar && r.orientacao === el.dataset.orient);
         if (i >= 0) abrirArteDetalhe(i);
@@ -4749,8 +4763,6 @@ function abrirArteDetalhe(i) {
     $('#btn-arte-detalhe-salvar-nome').disabled = !r.cadastrado;
     $('#arte-detalhe-nome-aviso').textContent = r.cadastrado ? '' : 'Produto não cadastrado no catálogo — não há nome para corrigir.';
     $('#alert-arte-detalhe').innerHTML = '';
-    const caixa = $('#arte-detalhe-img').parentElement;
-    caixa.style.aspectRatio = r.orientacao === 'vertical' ? '4 / 5' : '16 / 10';
     $('#arte-detalhe-backdrop').classList.add('show');
 }
 
@@ -4813,7 +4825,7 @@ async function salvarNomeArte() {
 $('#arte-detalhe-prev').addEventListener('click', () => arteDetalheNavegar(-1));
 $('#arte-detalhe-next').addEventListener('click', () => arteDetalheNavegar(1));
 $('#arte-detalhe-close').addEventListener('click', fecharArteDetalhe);
-$('#arte-detalhe-backdrop').addEventListener('click', (e) => { if (e.target.id === 'arte-detalhe-backdrop') fecharArteDetalhe(); });
+$('#arte-detalhe-stage').addEventListener('click', (e) => { if (e.target.id === 'arte-detalhe-stage') fecharArteDetalhe(); });
 $('#arte-detalhe-img-wrap').addEventListener('click', () => openLightbox($('#arte-detalhe-img').src));
 $('#arte-detalhe-foto-wrap').addEventListener('click', () => { const f = $('#arte-detalhe-foto'); if (f.dataset.full) openLightbox(f.dataset.full); });
 $('#btn-arte-detalhe-salvar-nome').addEventListener('click', salvarNomeArte);
