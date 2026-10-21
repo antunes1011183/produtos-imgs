@@ -778,6 +778,8 @@
         .arte-viewer-foto { width: 100%; aspect-ratio: 1 / 1; max-height: 250px; background: #f1f5f9; border-radius: 8px;
             display: flex; align-items: center; justify-content: center; overflow: hidden; cursor: zoom-in; }
         .arte-viewer-foto img { max-width: 100%; max-height: 100%; object-fit: contain; }
+        .arte-viewer-barras { background: #fff; border-radius: 8px; padding: 0.5rem; }
+        .arte-viewer-barras canvas { display: block; width: 100%; height: auto; }
         .arte-viewer-foto.vazia { cursor: default; color: #64748b; font-size: 0.8rem; text-align: center; padding: 1rem; }
         .arte-detalhe-rotulo { margin: 1rem 0 0.35rem; font-size: 0.74rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
         @media (max-width: 820px) {
@@ -2461,6 +2463,14 @@
 
         <p class="arte-detalhe-rotulo">Foto do produto (EAN)</p>
         <div class="arte-viewer-foto" id="arte-detalhe-foto-wrap"><img id="arte-detalhe-foto" src="" alt="Foto do produto" style="display:none;"><span id="arte-detalhe-foto-vazia"></span></div>
+
+        <p class="arte-detalhe-rotulo">Imagem do EAN (código de barras)</p>
+        <div class="arte-viewer-barras"><canvas id="arte-detalhe-barras"></canvas></div>
+        <div style="display:flex; gap:0.5rem; margin-top:0.5rem; flex-wrap:wrap;">
+            <button class="btn btn-secondary btn-sm" id="btn-arte-detalhe-copiar-barras">Copiar imagem</button>
+            <button class="btn btn-secondary btn-sm" id="btn-arte-detalhe-baixar-barras">Baixar PNG</button>
+        </div>
+        <p id="arte-detalhe-barras-tipo" style="margin:0.3rem 0 0; font-size:0.72rem; color:var(--muted);"></p>
 
         <p class="arte-detalhe-rotulo">Nome / descrição do produto</p>
         <div style="display:flex; gap:0.5rem;">
@@ -4726,6 +4736,91 @@ $('#artes-trocar-file').addEventListener('change', async (e) => {
 });
 
 
+
+// ===== Código de barras do EAN (desenhado no navegador, sem biblioteca) =====
+const _EAN_L = ['0001101','0011001','0010011','0111101','0100011','0110001','0101111','0111011','0110111','0001011'];
+const _EAN_G = ['0100111','0110011','0011011','0100001','0011101','0111001','0000101','0010001','0001001','0010111'];
+const _EAN_R = ['1110010','1100110','1101100','1000010','1011100','1001110','1010000','1000100','1001000','1110100'];
+const _EAN_PAR = ['LLLLLL','LLGLGG','LLGGLG','LLGGGL','LGLLGG','LGGLLG','LGGGLL','LGLGLG','LGLGGL','LGGLGL'];
+const _C39 = { '0':'nnnwwnwnn','1':'wnnwnnnnw','2':'nnwwnnnnw','3':'wnwwnnnnn','4':'nnnwwnnnw','5':'wnnwwnnnn','6':'nnwwwnnnn','7':'nnnwnnwnw','8':'wnnwnnwnn','9':'nnwwnnwnn','*':'nwnnwnwnn' };
+const _ITF = ['nnwwn','wnnnw','nwnnw','wwnnn','nnwnw','wnwnn','nwwnn','nnnww','wnnwn','nwnwn'];
+
+function _runsParaBits(runs) { let bits = '', barra = true; runs.forEach(w => { bits += (barra ? '1' : '0').repeat(w); barra = !barra; }); return bits; }
+
+// devolve { tipo, bits, texto } — EAN-13/EAN-8/UPC-A (varejo) ou ITF-14 / Code 39 pros demais tamanhos
+function codificarBarras(ean) {
+    const d = String(ean || '').replace(/\D/g, '');
+    if (d.length === 8) {
+        const n = [...d].map(Number);
+        return { tipo: 'EAN-8', texto: d, bits: '101' + n.slice(0, 4).map(x => _EAN_L[x]).join('') + '01010' + n.slice(4).map(x => _EAN_R[x]).join('') + '101' };
+    }
+    if (d.length === 12 || d.length === 13) {
+        const d13 = d.length === 12 ? '0' + d : d, n = [...d13].map(Number), par = _EAN_PAR[n[0]];
+        const esq = n.slice(1, 7).map((x, i) => (par[i] === 'L' ? _EAN_L : _EAN_G)[x]).join('');
+        return { tipo: d.length === 12 ? 'UPC-A' : 'EAN-13', texto: d, bits: '101' + esq + '01010' + n.slice(7).map(x => _EAN_R[x]).join('') + '101' };
+    }
+    if (d.length === 14) {   // GTIN-14 (caixa): ITF-14
+        const runs = [1, 1, 1, 1];
+        for (let i = 0; i < 14; i += 2) {
+            const a = _ITF[+d[i]], b = _ITF[+d[i + 1]];
+            for (let k = 0; k < 5; k++) { runs.push(a[k] === 'w' ? 3 : 1); runs.push(b[k] === 'w' ? 3 : 1); }
+        }
+        runs.push(3, 1, 1);
+        return { tipo: 'ITF-14', texto: d, bits: _runsParaBits(runs) };
+    }
+    const runs = [];   // outros tamanhos (códigos internos): Code 39
+    ('*' + d + '*').split('').forEach((c, idx, arr) => {
+        _C39[c].split('').forEach(e => runs.push(e === 'w' ? 3 : 1));
+        if (idx < arr.length - 1) runs.push(1);   // espaço entre caracteres
+    });
+    return { tipo: 'Code 39', texto: d, bits: _runsParaBits(runs) };
+}
+
+function desenharBarras(ean) {
+    const canvas = $('#arte-detalhe-barras');
+    const { tipo, bits, texto } = codificarBarras(ean);
+    const mw = 3, quiet = 12, altBarras = 150, altTexto = 38;
+    canvas.width = (bits.length + quiet * 2) * mw; canvas.height = altBarras + altTexto + 14;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#000';
+    for (let i = 0; i < bits.length; i++) if (bits[i] === '1') ctx.fillRect((quiet + i) * mw, 6, mw, altBarras);
+    ctx.font = 'bold 30px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+    ctx.fillText(texto.split('').join(' '), canvas.width / 2, altBarras + altTexto - 2, canvas.width - 20);
+    $('#arte-detalhe-barras-tipo').textContent = `Padrão ${tipo}` + (tipo === 'Code 39' ? ' (código fora dos tamanhos de varejo)' : '');
+    canvas.dataset.ean = texto;
+}
+
+function baixarImagemBarras() {
+    const canvas = $('#arte-detalhe-barras'), a = document.createElement('a');
+    a.href = canvas.toDataURL('image/png'); a.download = `ean-${canvas.dataset.ean || 'codigo'}.png`;
+    document.body.appendChild(a); a.click(); a.remove();
+}
+
+async function copiarImagemBarras() {
+    const canvas = $('#arte-detalhe-barras');
+    const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+    try {   // caminho moderno (só em https ou localhost)
+        if (navigator.clipboard && window.ClipboardItem) {
+            await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+            toast('Imagem do código de barras copiada', 'success'); return;
+        }
+    } catch (e) { /* cai pro próximo */ }
+    try {   // painel acessado por IP em http: copia a imagem selecionada num contêiner editável
+        const box = document.createElement('div'), im = new Image();
+        box.contentEditable = 'true'; box.style.cssText = 'position:fixed; left:-9999px; top:0;';
+        im.src = canvas.toDataURL('image/png'); box.appendChild(im); document.body.appendChild(box);
+        await (im.decode ? im.decode() : Promise.resolve());
+        const sel = window.getSelection(), range = document.createRange();
+        range.selectNode(im); sel.removeAllRanges(); sel.addRange(range);
+        const ok = document.execCommand('copy');
+        sel.removeAllRanges(); box.remove();
+        if (ok) { toast('Imagem copiada (cole em Word, Docs ou e-mail). Para outros programas, use "Baixar PNG".', 'success'); return; }
+    } catch (e) { /* cai pro download */ }
+    baixarImagemBarras();
+    toast('Este navegador não deixou copiar a imagem aqui — baixei o PNG', 'error');
+}
+
 // ===== Janela da arte: percorrer entre as artes + corrigir o nome =====
 function arteDetalheAberta() { return $('#arte-detalhe-backdrop').classList.contains('show'); }
 
@@ -4740,6 +4835,7 @@ function abrirArteDetalhe(i) {
     $('#arte-detalhe-orient').textContent = r.orientacao === 'vertical' ? 'Vertical' : 'Horizontal';
     $('#arte-detalhe-data').textContent = new Date(r.atualizado_em).toLocaleString('pt-BR');
     $('#arte-detalhe-titulo').textContent = r.descricao || 'Produto não cadastrado';
+    desenharBarras(r.codbar);
     $('#arte-detalhe-marca').textContent = r.marca || 'Sem marca informada';
     $('#arte-detalhe-categoria').textContent = r.categoria || '—';
     $('#arte-detalhe-embalagem').textContent = r.embalagem || '—';
@@ -4829,6 +4925,8 @@ $('#arte-detalhe-stage').addEventListener('click', (e) => { if (e.target.id === 
 $('#arte-detalhe-img-wrap').addEventListener('click', () => openLightbox($('#arte-detalhe-img').src));
 $('#arte-detalhe-foto-wrap').addEventListener('click', () => { const f = $('#arte-detalhe-foto'); if (f.dataset.full) openLightbox(f.dataset.full); });
 $('#btn-arte-detalhe-salvar-nome').addEventListener('click', salvarNomeArte);
+$('#btn-arte-detalhe-copiar-barras').addEventListener('click', copiarImagemBarras);
+$('#btn-arte-detalhe-baixar-barras').addEventListener('click', baixarImagemBarras);
 $('#arte-detalhe-nome').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); salvarNomeArte(); } });
 $('#btn-arte-detalhe-trocar').addEventListener('click', () => {
     const p = $('#arte-detalhe-panel'), input = $('#artes-trocar-file');
