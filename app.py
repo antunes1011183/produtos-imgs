@@ -3278,6 +3278,7 @@ def _consulta_ean_web(ean):
         if sem_zeros not in f'{titulo} {trecho} {link}':
             continue
         nome = re.sub(r'\s+', ' ', re.sub(r'(?<!\d)0*' + re.escape(sem_zeros) + r'(?!\d)', '', titulo)).strip(' -–|:·')
+        nome = re.sub(r'\s*(\.{3}|…)\s*$', '', nome)   # título cortado pelo Google
         if len(nome) < 4 or nome.startswith('http'):
             continue
         achados.append({'fonte': 'web', 'rotulo': _ROTULOS_CONSULTA_EAN['web'], 'tipo': 'web', 'nome': reparar_mojibake(nome),
@@ -3315,6 +3316,8 @@ def admin_consultar_ean(codbar):
                 return chave, None, str(e)
 
     def rodar_web():
+        if not _ean_checksum_ok(ean):   # número sem dígito verificador válido só traz páginas aleatórias que o citam
+            return [], 'Busca na web ignorada: o dígito verificador do EAN não confere.'
         with app.app_context():
             return _consulta_ean_web(ean)
 
