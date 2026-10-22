@@ -1636,6 +1636,23 @@
                                     <button class="btn btn-primary" id="btn-consulta">Buscar</button>
                                     <button class="btn btn-secondary" id="btn-consulta-limpar">Limpar</button>
                                     <button class="btn btn-secondary" id="btn-abrir-cadastro">+ Cadastrar produto</button>
+                                    <button class="btn btn-secondary" id="btn-abrir-descobrir" title="Descobre que produto é um EAN consultando todas as fontes (não grava nada)">Descobrir produto</button>
+                                </div>
+                            </div>
+
+                            <div class="modal-overlay" id="descobrir-modal-overlay">
+                                <div class="card modal-panel" id="descobrir-panel" style="max-width:660px;">
+                                    <h2 style="font-size:0.9rem;">Descobrir produto pelo EAN</h2>
+                                    <div id="alert-descobrir"></div>
+                                    <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+                                        <input type="text" id="descobrir-ean" placeholder="Ex: 7894900011609" autocomplete="off" style="flex:1; min-width:160px;">
+                                        <button class="btn btn-primary" id="btn-descobrir-pesquisar">Pesquisar</button>
+                                        <button class="btn btn-secondary" id="btn-descobrir-fechar">Fechar</button>
+                                    </div>
+                                    <p style="font-size:0.76rem; color:var(--muted); margin:0.5rem 0 0;">
+                                        Consulta só leitura: não grava nada até você escolher "Usar como descrição". Junta Cosmos, Open Food Facts, PreçoMelhor, varejistas online e a busca na web (só resultados que citam o EAN).
+                                    </p>
+                                    <div id="descobrir-resultado" style="margin-top:0.9rem;"></div>
                                 </div>
                             </div>
 
@@ -5878,6 +5895,129 @@ $('#cadastro-modal-overlay').addEventListener('click', (e) => {
 });
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && $('#cadastro-modal-overlay').classList.contains('show')) fecharModalCadastro();
+});
+
+// ===== Popup central: Descobrir produto pelo EAN (consulta só leitura em todas as fontes) =====
+let descobrirUltimo = null;
+
+function abrirModalDescobrir() {
+    $('#descobrir-modal-overlay').classList.add('show');
+    const q = ($('#consulta-q').value || '').replace(/\D/g, '');
+    $('#descobrir-ean').value = /^\d{8,14}$/.test(q) ? q : $('#descobrir-ean').value;
+    $('#alert-descobrir').innerHTML = '';
+    $('#descobrir-ean').focus();
+    if (/^\d{8,14}$/.test($('#descobrir-ean').value) && !descobrirUltimo) descobrirProduto();
+}
+function fecharModalDescobrir() { $('#descobrir-modal-overlay').classList.remove('show'); }
+
+async function descobrirProduto() {
+    const ean = $('#descobrir-ean').value.replace(/\D/g, '');
+    if (!/^\d{8,14}$/.test(ean)) { showAlert('alert-descobrir', 'Informe um EAN com 8 a 14 dígitos.', 'error'); return; }
+    const btn = $('#btn-descobrir-pesquisar'), box = $('#descobrir-resultado');
+    btn.disabled = true; btn.textContent = 'Pesquisando…';
+    box.innerHTML = '<div class="empty-state">Consultando as fontes…</div>';
+    try {
+        const res = await fetch('/admin/consultar-ean/' + encodeURIComponent(ean), { headers: authHeaders() });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(d.message || 'Erro ao consultar.');
+        descobrirUltimo = d;
+        renderDescobrir(d);
+    } catch (e) {
+        box.innerHTML = '';
+        showAlert('alert-descobrir', e.message, 'error');
+    } finally {
+        btn.disabled = false; btn.textContent = 'Pesquisar';
+    }
+}
+
+function renderDescobrir(d) {
+    const cab = [`<span class="ean">${escHtml(d.ean)}</span>`];
+    if (d.prefixo_pais) cab.push(`<span class="badge" style="background:#e2e8f0; color:#475569;">prefixo GS1: ${escHtml(d.prefixo_pais)}</span>`);
+    if (!d.checksum_ok) cab.push('<span class="badge" style="background:#fee2e2; color:#991b1b;">dígito verificador inválido</span>');
+    const cat = d.no_catalogo
+        ? `No catálogo: <strong>${escHtml(d.no_catalogo.descricao || '(sem descrição)')}</strong>${d.no_catalogo.marca ? ' · ' + escHtml(d.no_catalogo.marca) : ''}`
+        : 'Não cadastrado no catálogo.';
+    let html = `<div style="display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center; margin-bottom:0.4rem;">${cab.join('')}</div>
+        <p style="margin:0 0 0.75rem; font-size:0.85rem;">${cat}</p>`;
+    if (!d.resultados.length) {
+        html += '<div class="empty-state">Nenhuma fonte identificou este EAN.</div>';
+    }
+    d.resultados.forEach((r, i) => {
+        const melhor = i === d.melhor;
+        const meta = [r.marca && `Marca: ${escHtml(r.marca)}`, r.categoria && `Categoria: ${escHtml(r.categoria)}`, r.ncm && `NCM: ${escHtml(r.ncm)}`].filter(Boolean).join(' · ');
+        const concorda = r.concorda > 0 ? `<span class="badge" style="background:#dcfce7; color:#166534;">bate com ${r.concorda} outra${r.concorda > 1 ? 's' : ''} fonte${r.concorda > 1 ? 's' : ''}</span>` : '';
+        const link = /^https?:\/\//.test(r.link || '') ? `<a href="${escHtml(r.link)}" target="_blank" rel="noopener noreferrer" style="font-size:0.78rem;">abrir página</a>` : '';
+        const acaoTxt = d.no_catalogo ? 'Usar como descrição' : 'Cadastrar com este nome';
+        html += `<div class="card" style="margin:0 0 0.6rem; padding:0.7rem; ${melhor ? 'border-color:var(--accent);' : ''}" data-idx="${i}">
+            <div style="display:flex; gap:0.7rem; align-items:flex-start;">
+                ${r.imagem ? `<img src="${escHtml(r.imagem)}" alt="" style="width:56px; height:56px; object-fit:contain; border-radius:6px; background:#fff;" onerror="this.remove()">` : ''}
+                <div style="flex:1; min-width:0;">
+                    <div style="display:flex; gap:0.35rem; flex-wrap:wrap; align-items:center; margin-bottom:0.25rem;">
+                        <span class="badge" style="background:#e0e7ff; color:#3730a3;">${escHtml(r.rotulo)}</span>
+                        ${melhor ? '<span class="badge" style="background:#fef3c7; color:#92400e;">melhor palpite</span>' : ''}${concorda}
+                    </div>
+                    <div style="font-weight:600; font-size:0.9rem; word-break:break-word;">${escHtml(r.nome)}</div>
+                    ${meta ? `<div style="font-size:0.78rem; color:var(--muted);">${meta}</div>` : ''}
+                    ${r.trecho ? `<div style="font-size:0.76rem; color:var(--muted); margin-top:0.2rem;">${escHtml(r.trecho)}</div>` : ''}
+                    <div style="display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center; margin-top:0.45rem;">
+                        <button class="btn btn-secondary btn-sm" data-act="copiar">Copiar nome</button>
+                        <button class="btn btn-primary btn-sm" data-act="usar">${acaoTxt}</button>${link}
+                    </div>
+                </div>
+            </div>
+        </div>`;
+    });
+    if (d.avisos.length) html += `<p style="font-size:0.76rem; color:var(--muted);">${d.avisos.map(escHtml).join(' ')}</p>`;
+    $('#descobrir-resultado').innerHTML = html;
+}
+
+async function usarResultadoDescobrir(idx, btn) {
+    const d = descobrirUltimo, r = d?.resultados[idx];
+    if (!r) return;
+    const original = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Salvando…';
+    try {
+        let res;
+        if (d.no_catalogo) {
+            if (!confirm(`Trocar a descrição de ${d.ean} por:\n\n${r.nome}`)) return;
+            res = await fetch('/admin/artes/produto/' + encodeURIComponent(d.ean), {
+                method: 'PUT', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ description: r.nome }),
+            });
+        } else {
+            const fd = new FormData(); fd.append('description', r.nome);
+            res = await fetch('/admin/cadastrar-produto-manual/' + encodeURIComponent(d.ean), { method: 'POST', headers: authHeaders(), body: fd });
+        }
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.message || 'Erro ao salvar.');
+        toast(d.no_catalogo ? 'Descrição atualizada' : 'Produto cadastrado', 'success');
+        loadConsulta(consultaPage);
+        await descobrirProduto();
+    } catch (e) {
+        toast(e.message, 'error');
+    } finally {
+        if (btn.isConnected) { btn.disabled = false; btn.textContent = original; }
+    }
+}
+
+$('#btn-abrir-descobrir').addEventListener('click', abrirModalDescobrir);
+$('#btn-descobrir-fechar').addEventListener('click', fecharModalDescobrir);
+$('#btn-descobrir-pesquisar').addEventListener('click', descobrirProduto);
+$('#descobrir-ean').addEventListener('keydown', (e) => { if (e.key === 'Enter') descobrirProduto(); });
+$('#descobrir-modal-overlay').addEventListener('click', (e) => { if (e.target.id === 'descobrir-modal-overlay') fecharModalDescobrir(); });
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && $('#descobrir-modal-overlay').classList.contains('show')) fecharModalDescobrir();
+});
+$('#descobrir-resultado').addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-act]');
+    const card = e.target.closest('[data-idx]');
+    if (!b || !card) return;
+    const idx = +card.dataset.idx;
+    if (b.dataset.act === 'copiar') {
+        const ok = await copiarTexto(descobrirUltimo.resultados[idx].nome);
+        toast(ok ? 'Nome copiado' : 'Não foi possível copiar', ok ? 'success' : 'error');
+    } else if (b.dataset.act === 'usar') {
+        usarResultadoDescobrir(idx, b);
+    }
 });
 
 async function cadastrarProdutoViaCosmos() {

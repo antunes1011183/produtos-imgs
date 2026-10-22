@@ -10,6 +10,7 @@ import sqlite3
 import base64
 import threading
 import concurrent.futures
+import unicodedata
 import time
 import queue
 import subprocess
@@ -3207,6 +3208,144 @@ def fetch_product_from_precomelhor(ean):
     except requests.RequestException as e:
         logging.error(f"Erro ao buscar produto no PreçoMelhor: {e}")
         return None
+
+
+# ===== Descobrir produto pelo EAN (consulta somente leitura, junta todas as fontes) =====
+# Prefixo GS1 = país da entidade que ALOCOU a faixa (não necessariamente onde foi fabricado).
+_PREFIXOS_GS1 = [
+    (0, 139, 'EUA/Canadá'), (300, 379, 'França'), (400, 440, 'Alemanha'), (450, 459, 'Japão'),
+    (490, 499, 'Japão'), (500, 509, 'Reino Unido'), (540, 549, 'Bélgica/Luxemburgo'),
+    (690, 699, 'China'), (730, 739, 'Suécia'), (750, 750, 'México'), (773, 773, 'Uruguai'),
+    (779, 779, 'Argentina'), (780, 780, 'Chile'), (784, 784, 'Paraguai'), (789, 790, 'Brasil'),
+    (800, 839, 'Itália'), (840, 849, 'Espanha'), (870, 879, 'Holanda'), (890, 890, 'Índia'),
+    (930, 939, 'Austrália'),
+]
+# Os varejistas online ficam sem nome no painel (mesma regra de `rotuloFonte`).
+_ROTULOS_CONSULTA_EAN = {
+    'cosmos': 'Cosmos', 'openfoodfacts': 'Open Food Facts', 'precomelhor': 'PreçoMelhor',
+    'varejo1': 'Varejista online', 'varejo2': 'Varejista online', 'web': 'Busca na web',
+}
+
+
+def _pais_prefixo_gs1(ean):
+    if not ean.isdigit():
+        return None
+    p = int(ean.zfill(13)[:3])
+    return next((pais for ini, fim, pais in _PREFIXOS_GS1 if ini <= p <= fim), None)
+
+
+def _tokens_nome(texto):
+    base = unicodedata.normalize('NFKD', texto or '').encode('ascii', 'ignore').decode().lower()
+    return {t for t in re.findall(r'[a-z0-9]+', base) if len(t) >= 3}
+
+
+def _resumo_fonte_estruturada(chave, dados):
+    if not dados:
+        return None
+    nome = reparar_mojibake(str(dados.get('description') or '').strip())
+    if not nome or _texto_corrompido(nome):
+        return None
+    marca = _marca_valida(((dados.get('brand') or {}).get('name') or '').strip())
+    thumb = dados.get('thumbnail') or ''
+    ncm = dados.get('ncm') or {}
+    categoria = ((dados.get('category') or {}).get('name') or '').strip()
+    return {
+        'fonte': chave, 'rotulo': _ROTULOS_CONSULTA_EAN[chave], 'tipo': 'estruturada', 'nome': nome,
+        'marca': reparar_mojibake(marca) if marca else '',
+        'imagem': thumb if str(thumb).startswith('http') else '',
+        'categoria': '' if categoria in ('', 'Não disponível') else reparar_mojibake(categoria),
+        'ncm': str(ncm.get('code') or '') if isinstance(ncm, dict) else '', 'link': '',
+    }
+
+
+def _consulta_ean_web(ean):
+    """Busca o EAN na web (Serper, 1 crédito) e só aceita resultado em que o PRÓPRIO número aparece
+    no título, no trecho ou no link — sem isso a busca devolve produtos aleatórios parecidos."""
+    api_key = _ler_todas_config().get('SERPER_API_KEY', '').strip()
+    if not api_key:
+        return [], 'Token Serper não configurado.'
+    try:
+        r = requests.post('https://google.serper.dev/search', headers={'X-API-KEY': api_key, 'Content-Type': 'application/json'},
+                          json={'q': ean, 'gl': 'br', 'hl': 'pt-br', 'num': 10}, timeout=20)
+        r.raise_for_status()
+        organicos = r.json().get('organic') or []
+    except Exception as e:
+        return [], f'Busca na web indisponível ({type(e).__name__}).'
+    sem_zeros = ean.lstrip('0') or ean
+    achados = []
+    for o in organicos:
+        titulo, trecho, link = o.get('title') or '', o.get('snippet') or '', o.get('link') or ''
+        if sem_zeros not in f'{titulo} {trecho} {link}':
+            continue
+        nome = re.sub(r'\s+', ' ', re.sub(r'(?<!\d)0*' + re.escape(sem_zeros) + r'(?!\d)', '', titulo)).strip(' -–|:·')
+        if len(nome) < 4 or nome.startswith('http'):
+            continue
+        achados.append({'fonte': 'web', 'rotulo': _ROTULOS_CONSULTA_EAN['web'], 'tipo': 'web', 'nome': reparar_mojibake(nome),
+                        'marca': '', 'imagem': '', 'categoria': '', 'ncm': '', 'link': link, 'trecho': trecho[:200]})
+    return achados[:4], None
+
+
+@app.route('/admin/consultar-ean/<string:codbar>', methods=['GET'])
+@jwt_required()
+def admin_consultar_ean(codbar):
+    """Descobre que produto é um EAN, sem gravar nada: consulta em paralelo o catálogo local, Cosmos,
+    Open Food Facts, PreçoMelhor, dois varejistas online e a busca na web (só resultados que citam o
+    EAN). Devolve os candidatos, quantas outras fontes concordam com cada nome e o melhor palpite."""
+    ean = re.sub(r'\D', '', codbar or '')
+    if not 8 <= len(ean) <= 14:
+        return jsonify({'message': 'Informe um EAN com 8 a 14 dígitos.'}), 400
+
+    produto = Produto.query.filter_by(codbar=ean).first()
+    local = None
+    if produto:
+        local = {'descricao': produto.description or '', 'marca': _marca_valida(produto.marca or ''), 'tem_foto': bool(produto.tem_foto)}
+
+    tarefas = {
+        'cosmos': fetch_product_from_cosmos, 'openfoodfacts': fetch_product_from_openfoodfacts,
+        'precomelhor': fetch_product_from_precomelhor, 'varejo1': fetch_product_from_zaffari,
+        'varejo2': fetch_product_from_rissul,
+    }
+
+    def rodar(chave):
+        with app.app_context():
+            try:
+                return chave, _resumo_fonte_estruturada(chave, tarefas[chave](ean)), None
+            except Exception as e:
+                logging.warning(f"consultar-ean {ean}: fonte {chave} falhou: {e}")
+                return chave, None, str(e)
+
+    def rodar_web():
+        with app.app_context():
+            return _consulta_ean_web(ean)
+
+    resultados, avisos = [], []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+        futuros = [pool.submit(rodar, k) for k in tarefas]
+        futuro_web = pool.submit(rodar_web)
+        for f in futuros:
+            chave, item, erro = f.result()
+            if item:
+                resultados.append(item)
+            elif erro:
+                avisos.append(f'{_ROTULOS_CONSULTA_EAN[chave]}: falhou.')
+        web, aviso_web = futuro_web.result()
+        resultados.extend(web)
+        if aviso_web:
+            avisos.append(aviso_web)
+
+    tokens = [_tokens_nome(r['nome']) for r in resultados]
+    for i, r in enumerate(resultados):
+        r['concorda'] = sum(
+            1 for j, t in enumerate(tokens)
+            if j != i and tokens[i] and t and len(tokens[i] & t) / len(tokens[i] | t) >= 0.5
+        )
+    melhor = None
+    if resultados:   # mais concordância primeiro; empate fica com a ordem das fontes (estruturadas antes da web)
+        melhor = max(range(len(resultados)), key=lambda i: (resultados[i]['concorda'], resultados[i]['tipo'] == 'estruturada', -i))
+    return jsonify({
+        'ean': ean, 'checksum_ok': _ean_checksum_ok(ean), 'prefixo_pais': _pais_prefixo_gs1(ean),
+        'no_catalogo': local, 'resultados': resultados, 'melhor': melhor, 'avisos': avisos,
+    })
 
 
 @app.route('/produto/<string:codbar>', methods=['GET'])
