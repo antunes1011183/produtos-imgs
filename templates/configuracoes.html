@@ -3653,6 +3653,30 @@ async function handleAcoesRapidasImagem(e, removerLinha, origemLista) {
     const uploadBtn = e.target.closest('[data-action="hist-upload"]');
     if (uploadBtn) {
         e.currentTarget.querySelector(`input[data-upload-input="${CSS.escape(uploadBtn.dataset.codbar)}"]`)?.click();
+        return;
+    }
+
+    const uploadArteBtn = e.target.closest('[data-action="hist-upload-arte"]');
+    if (uploadArteBtn) {
+        e.currentTarget.querySelector(`input[data-arte-input="${CSS.escape(uploadArteBtn.dataset.codbar)}"]`)?.click();
+    }
+}
+
+// Arte pronta enviada direto da linha (Imagens Pendentes). Orientação automática (imagem mais alta
+// que larga vira vertical). A linha continua na lista: subir a arte não resolve a falta da foto.
+async function handleUploadArteRapida(e) {
+    const input = e.target.closest('input[data-arte-input]');
+    if (!input || !input.files.length) return;
+    const codbar = input.dataset.arteInput, arquivo = input.files[0];
+    const btn = input.parentElement.querySelector('[data-action="hist-upload-arte"]');
+    if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
+    try {
+        await enviarArte(codbar, 'auto', arquivo, 'alert-pendentes');
+    } catch (err) {
+        toast(err.message || 'Erro ao enviar a arte', 'error');
+    } finally {
+        input.value = '';
+        if (btn) { btn.disabled = false; btn.textContent = 'Enviar arte'; }
     }
 }
 
@@ -3684,6 +3708,7 @@ $('#historico-list').addEventListener('click', (e) => handleAcoesRapidasImagem(e
 $('#historico-list').addEventListener('change', (e) => handleUploadRapidoImagem(e, removerLinhaHistorico));
 $('#pendentes-list').addEventListener('click', (e) => handleAcoesRapidasImagem(e, removerLinhaPendente, 'pendentes'));
 $('#pendentes-list').addEventListener('change', (e) => handleUploadRapidoImagem(e, removerLinhaPendente));
+$('#pendentes-list').addEventListener('change', handleUploadArteRapida);
 
 $('#btn-historico-filtrar').addEventListener('click', () => loadHistorico(1));
 $('#historico-codbar').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadHistorico(1); });
@@ -3760,6 +3785,8 @@ async function loadImagensPendentes(page = 1) {
                         <button class="btn btn-secondary btn-sm" data-action="hist-copy-ean" data-codbar="${escHtml(r.codbar)}" title="Copiar só o EAN">Copiar EAN</button>
                         <button class="btn btn-secondary btn-sm" data-action="hist-upload" data-codbar="${escHtml(r.codbar)}">Enviar imagem</button>
                         <input type="file" accept="image/*" data-upload-input="${escHtml(r.codbar)}" style="display:none;">
+                        <button class="btn btn-secondary btn-sm" data-action="hist-upload-arte" data-codbar="${escHtml(r.codbar)}" title="Subir a arte pronta deste produto (a foto continua pendente)">Enviar arte</button>
+                        <input type="file" accept="image/png,image/jpeg,image/webp" data-arte-input="${escHtml(r.codbar)}" style="display:none;">
                     </div>
                 </td>
             </tr>`;
