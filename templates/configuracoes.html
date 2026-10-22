@@ -1971,10 +1971,41 @@
             <!-- ===== TAB: WHATSAPP (Evolution API) ===== -->
             <div id="tab-artes" class="tab-content" style="display:none;">
                 <div class="artes-subnav">
-                    <button type="button" class="artes-subnav-btn active" data-artes-view="galeria">Galeria e envio</button>
+                    <button type="button" class="artes-subnav-btn active" data-artes-view="galeria">Galeria</button>
                     <button type="button" class="artes-subnav-btn" data-artes-view="prompt">Gerar prompt para IA</button>
+                    <button type="button" class="artes-subnav-btn" data-artes-view="envio">Enviar artes</button>
                 </div>
                 <div id="artes-view-galeria">
+                <div class="card">
+                    <h2>Artes criadas <span class="badge" id="artes-count-badge">carregando...</span></h2>
+                    <div id="alert-artes"></div>
+                    <div class="form-row" style="flex-direction:row; gap:0.5rem; flex-wrap:wrap; align-items:flex-end; margin-bottom:0.85rem;">
+                        <div style="flex:1; min-width:180px;">
+                            <label for="artes-q" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">Buscar por EAN, nome ou marca</label>
+                            <input type="text" id="artes-q" placeholder="Ex: 7894900011609 ou coca" autocomplete="off">
+                        </div>
+                        <div style="min-width:160px;">
+                            <label for="artes-orient" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">Orientação</label>
+                            <select id="artes-orient" style="width:100%;">
+                                <option value="todas">Todas</option>
+                                <option value="horizontal">Horizontais</option>
+                                <option value="vertical">Verticais</option>
+                            </select>
+                        </div>
+                        <button class="btn btn-primary" id="btn-artes-filtrar">Filtrar</button>
+                    </div>
+                    <div id="artes-list"></div>
+                    <div id="artes-pagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:0.85rem; font-size:0.82rem; color:var(--muted);">
+                        <span id="artes-info">—</span>
+                        <span style="display:flex; gap:0.4rem;">
+                            <button class="btn btn-secondary btn-sm" id="btn-artes-prev">← Anterior</button>
+                            <button class="btn btn-secondary btn-sm" id="btn-artes-next">Próximo →</button>
+                        </span>
+                    </div>
+                    <input type="file" id="artes-trocar-file" accept="image/*" style="display:none;">
+                </div>
+                </div><!-- /artes-view-galeria -->
+                <div id="artes-view-envio" style="display:none;">
                 <div class="card">
                     <h2>Enviar arte por EAN</h2>
                     <p style="font-size:0.82rem; color:var(--muted); margin:0 0 0.85rem;">Envie uma arte pronta para um produto. Ela é ajustada ao tamanho do terminal (horizontal 1280×800, vertical 1200×1920; outra proporção é cortada no centro) e passa a ser a arte exibida. Uma arte que já existe não é gerada de novo pela IA.</p>
@@ -2024,35 +2055,7 @@
                     </div>
                     <div id="artes-lote-lista" style="max-height:320px; overflow:auto; font-size:0.82rem;"></div>
                 </div>
-                <div class="card">
-                    <h2>Artes criadas <span class="badge" id="artes-count-badge">carregando...</span></h2>
-                    <div id="alert-artes"></div>
-                    <div class="form-row" style="flex-direction:row; gap:0.5rem; flex-wrap:wrap; align-items:flex-end; margin-bottom:0.85rem;">
-                        <div style="flex:1; min-width:180px;">
-                            <label for="artes-q" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">Buscar por EAN, nome ou marca</label>
-                            <input type="text" id="artes-q" placeholder="Ex: 7894900011609 ou coca" autocomplete="off">
-                        </div>
-                        <div style="min-width:160px;">
-                            <label for="artes-orient" style="display:block; font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">Orientação</label>
-                            <select id="artes-orient" style="width:100%;">
-                                <option value="todas">Todas</option>
-                                <option value="horizontal">Horizontais</option>
-                                <option value="vertical">Verticais</option>
-                            </select>
-                        </div>
-                        <button class="btn btn-primary" id="btn-artes-filtrar">Filtrar</button>
-                    </div>
-                    <div id="artes-list"></div>
-                    <div id="artes-pagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:0.85rem; font-size:0.82rem; color:var(--muted);">
-                        <span id="artes-info">—</span>
-                        <span style="display:flex; gap:0.4rem;">
-                            <button class="btn btn-secondary btn-sm" id="btn-artes-prev">← Anterior</button>
-                            <button class="btn btn-secondary btn-sm" id="btn-artes-next">Próximo →</button>
-                        </span>
-                    </div>
-                    <input type="file" id="artes-trocar-file" accept="image/*" style="display:none;">
-                </div>
-                </div><!-- /artes-view-galeria -->
+                </div><!-- /artes-view-envio -->
                 <div id="artes-view-prompt" style="display:none;">
                     <div class="card">
                         <h2>Gerar prompt para fazer a arte numa IA</h2>
@@ -2113,7 +2116,7 @@
                             <li>Copie o prompt abaixo.</li>
                             <li>No Gemini (ou outra IA de imagem), cole o prompt e <strong>anexe a foto do produto</strong>.</li>
                             <li>Gere a imagem, confira os textos e salve o arquivo com o nome do EAN (<code id="prompt-nome-arquivo">EAN.png</code>).</li>
-                            <li>Envie na aba <strong>Galeria e envio</strong>: o botão abaixo já leva o EAN.</li>
+                            <li>Envie na aba <strong>Enviar artes</strong>: o botão abaixo já leva o EAN.</li>
                         </ol>
                         <div id="prompt-foto-box" style="display:none; margin-bottom:0.8rem; gap:0.8rem; align-items:center; flex-wrap:wrap;">
                             <img id="prompt-foto" alt="Foto do produto" style="max-height:110px; max-width:160px; border-radius:8px; border:1px solid var(--border); background:var(--bg);">
@@ -4446,6 +4449,7 @@ function mostrarArtesView(view) {
     $$('.artes-subnav-btn').forEach(b => b.classList.toggle('active', b.dataset.artesView === view));
     $('#artes-view-galeria').style.display = view === 'galeria' ? 'block' : 'none';
     $('#artes-view-prompt').style.display = view === 'prompt' ? 'block' : 'none';
+    $('#artes-view-envio').style.display = view === 'envio' ? 'block' : 'none';
 }
 $$('.artes-subnav-btn').forEach(b => b.addEventListener('click', () => mostrarArtesView(b.dataset.artesView)));
 
@@ -4534,7 +4538,7 @@ $('#btn-prompt-copiar').addEventListener('click', async () => {
 $('#btn-prompt-ir-envio').addEventListener('click', () => {
     $('#artes-up-ean').value = $('#prompt-ean').value.replace(/\D/g, '');
     $('#artes-up-orient').value = $('#prompt-orient').value;
-    mostrarArtesView('galeria');
+    mostrarArtesView('envio');
     $('#artes-up-ean').scrollIntoView({ behavior: 'smooth', block: 'center' });
     $('#artes-up-file').focus();
 });
