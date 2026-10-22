@@ -2400,6 +2400,8 @@
                     <button class="btn btn-secondary btn-sm" id="detail-btn-ver-arte" style="display:none;">Ver arte em tela cheia</button>
                     <button class="btn btn-secondary btn-sm" id="detail-btn-trocar-imagem">Enviar/Trocar imagem</button>
                     <input type="file" id="detail-input-imagem" accept="image/png,image/jpeg,image/webp" style="display:none;">
+                    <button class="btn btn-secondary btn-sm" id="detail-btn-enviar-arte" title="Subir a arte pronta deste produto (orientação automática)">Enviar arte</button>
+                    <input type="file" id="detail-input-arte" accept="image/png,image/jpeg,image/webp" style="display:none;">
                     <button class="btn btn-secondary btn-sm" id="detail-btn-marcar-sem-imagem">Marcar como sem imagem</button>
                     <button class="btn btn-danger btn-sm" id="detail-btn-excluir-imagem">Excluir imagem</button>
                 </div>
@@ -2468,6 +2470,8 @@
                     <button class="btn btn-secondary btn-sm" id="hist-detail-btn-ver-arte" style="display:none;">Ver arte em tela cheia</button>
                     <button class="btn btn-secondary btn-sm" id="hist-detail-btn-trocar-imagem">Enviar/Trocar imagem</button>
                     <input type="file" id="hist-detail-input-imagem" accept="image/png,image/jpeg,image/webp" style="display:none;">
+                    <button class="btn btn-secondary btn-sm" id="hist-detail-btn-enviar-arte" title="Subir a arte pronta deste produto (orientação automática)">Enviar arte</button>
+                    <input type="file" id="hist-detail-input-arte" accept="image/png,image/jpeg,image/webp" style="display:none;">
                     <button class="btn btn-secondary btn-sm" id="hist-detail-btn-marcar-sem-imagem">Marcar como sem imagem</button>
                 </div>
 
@@ -3662,6 +3666,31 @@ async function handleAcoesRapidasImagem(e, removerLinha, origemLista) {
     }
 }
 
+// Botão "Enviar arte" dos popups de detalhes (Consulta Rápida e Histórico/Pendentes): mesma rota e
+// mesma orientação automática do envio pela linha. Não mexe na foto nem na lista — só grava a arte.
+function ligarEnviarArtePopup(btnSel, inputSel, ean) {
+    const btn = $(btnSel), input = $(inputSel);
+    btn.disabled = false;
+    btn.onclick = () => input.click();
+    input.value = '';
+    input.onchange = async () => {
+        const arquivo = input.files[0];
+        if (!arquivo) return;
+        const original = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Enviando...';
+        try {
+            await enviarArte(ean, 'auto', arquivo, 'alert-sem-alvo');
+        } catch (err) {
+            toast(err.message || 'Erro ao enviar a arte', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = original;
+            input.value = '';
+        }
+    };
+}
+
 // Arte pronta enviada direto da linha (Imagens Pendentes). Orientação automática (imagem mais alta
 // que larga vira vertical). A linha continua na lista: subir a arte não resolve a falta da foto.
 async function handleUploadArteRapida(e) {
@@ -4018,6 +4047,8 @@ async function openHistDetailPanel(ean, origemLista) {
             inputImagem.value = '';
         }
     };
+
+    ligarEnviarArtePopup('#hist-detail-btn-enviar-arte', '#hist-detail-input-arte', ean);
 
     const semImagemBtn = $('#hist-detail-btn-marcar-sem-imagem');
     semImagemBtn.onclick = async () => {
@@ -6273,6 +6304,8 @@ async function openDetailModal(ean) {
             inputImagem.value = '';
         }
     };
+
+    ligarEnviarArtePopup('#detail-btn-enviar-arte', '#detail-input-arte', ean);
 
     const semImagemBtn = $('#detail-btn-marcar-sem-imagem');
     semImagemBtn.onclick = async () => {
