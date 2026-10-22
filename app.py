@@ -4770,11 +4770,13 @@ def compor_texto_na_arte(image_bytes, nome_produto, headline, cor_acento=(45, 48
     # (~40px, peso ExtraLight) — metade do tamanho da marca, é a hierarquia "marca chama a
     # atenção, o resto é só complemento". Quando não há marca identificável, cai pro estilo
     # antigo (nome inteiro grande e em negrito) — mais seguro que não destacar nada.
-    font_marca = ImageFont.truetype(FONT_PATH, int(height * 0.095))
+    # 22/10/2026 (pedido do usuário): título maior (marca / nome) 50% menor e o texto menor 25% menor;
+    # a headline (3º texto) mantém o tamanho. Valores anteriores: marca 0.095, nome 0.09, resto 0.048.
+    font_marca = ImageFont.truetype(FONT_PATH, max(10, int(height * 0.095 * 0.5)))
     font_marca.set_variation_by_name('Regular')
-    font_resto = ImageFont.truetype(FONT_PATH, max(10, int(height * 0.048)))
+    font_resto = ImageFont.truetype(FONT_PATH, max(10, int(height * 0.048 * 0.75)))
     font_resto.set_variation_by_name('ExtraLight')
-    font_nome = ImageFont.truetype(FONT_PATH, int(height * 0.09))
+    font_nome = ImageFont.truetype(FONT_PATH, max(10, int(height * 0.09 * 0.5)))
     font_nome.set_variation_by_name('Bold')
     # Fonte da headline 40% menor que antes (pedido do usuário) — o painel ficou mais discreto
     # abaixo do nome, dando mais destaque relativo ao título e sobrando espaço pro preço.
@@ -4786,9 +4788,9 @@ def compor_texto_na_arte(image_bytes, nome_produto, headline, cor_acento=(45, 48
     text_color = (255, 255, 255, 255)
     muted_color = (255, 255, 255, 215)
     resto_color = (255, 255, 255, 225)
-    line_height_nome = int(height * 0.095)
-    line_height_marca = int(height * 0.1)
-    line_height_resto = int(height * 0.052)
+    line_height_nome = int(height * 0.095 * 0.5)
+    line_height_marca = int(height * 0.1 * 0.5)
+    line_height_resto = int(height * 0.052 * 0.75)
     line_height_headline = int(height * 0.026)
     accent_height = max(4, int(height * 0.01))
 
