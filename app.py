@@ -216,7 +216,11 @@ def save_image_with_background_removal(image, file_path):
     # Melhoria de qualidade ANTES de tirar o fundo (ver `fundo_produto`): foto pequena é ampliada, sem
     # ruído de JPEG e com nitidez leve. Qualquer falha cai pra imagem original, nunca derruba o upload.
     try:
-        if _ler_todas_config().get('MELHORAR_IMAGEM_ATIVA', 'true') != 'false':
+        try:
+            melhorar = _ler_todas_config().get('MELHORAR_IMAGEM_ATIVA', 'true') != 'false'
+        except Exception:        # sem contexto do Flask / banco indisponível: mantém ligado
+            melhorar = True
+        if melhorar:
             base = image
             if image.getchannel('A').getextrema()[0] < 250:      # PNG com transparência: assenta sobre branco
                 base = Image.new('RGBA', image.size, (255, 255, 255, 255))
