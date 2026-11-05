@@ -430,6 +430,17 @@ class AuditoriaImagem(db.Model):
     revisado_em = db.Column(db.DateTime, nullable=True)
 
 
+class OrigemImagem(db.Model):
+    """De que URL veio a foto ATUAL de cada EAN (e de qual fonte). Só a foto processada fica em disco —
+    a original nunca é guardada —, então é por aqui que o botão "Reprocessar imagem" baixa a original
+    de novo (`admin_reprocessar_imagem`). Uma linha por EAN; some quando a foto passa a vir de upload
+    manual, é excluída ou vira "sem imagem" (não há mais original pra baixar)."""
+    codbar = db.Column(db.String(64), primary_key=True)
+    url = db.Column(db.String(1000), nullable=False)
+    fonte = db.Column(db.String(40), nullable=True)
+    atualizado_em = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+
 class VerificacaoArte(db.Model):
     """Resultado da conferência "esta foto é mesmo do EAN?" feita ANTES de gerar a arte publicitária
     (ver `_garantir_imagem_confere_com_ean`). Uma linha por EAN. O veredito só vale pra ESTA foto
@@ -1091,6 +1102,7 @@ def upload_imagem_produto(codbar):
         try:
             _marcar_tem_foto(codbar, True)
             _eliminar_duplicatas_pendentes(codbar)  # ver comentário equivalente em save_image_from_response
+            _registrar_origem_imagem(codbar, None)  # upload manual: não há URL de origem pra baixar de novo
             db.session.commit()
         except Exception as e:
             db.session.rollback()
@@ -1286,6 +1298,7 @@ def deletar_imagem_produto(codbar):
             try:
                 if image_found:
                     _marcar_tem_foto(codbar, False)
+                    _registrar_origem_imagem(codbar, None)
                 if bloquear:
                     produto = Produto.query.filter_by(codbar=codbar).first()
                     if not produto:
@@ -2003,6 +2016,7 @@ def save_image_from_response(image_data, codbar, origem=None, url_origem=None):
             # virou ruído; pedido do usuário, mesmo raciocínio já aplicado em
             # `admin_quarentena_liberar` (ver `_eliminar_duplicatas_pendentes`).
             _eliminar_duplicatas_pendentes(codbar)
+            _registrar_origem_imagem(codbar, url_origem, origem)
             db.session.commit()
         except Exception as e:
             db.session.rollback()
@@ -5417,6 +5431,90 @@ def admin_buscar_imagem(codbar):
     return jsonify({'message': 'Nenhuma imagem encontrada em nenhuma das fontes (Google, PrecoMelhor, Sonda, Unidasul, Serper)'}), 404
 
 
+def _registrar_origem_imagem(codbar, url, fonte=None):
+    """Grava (ou apaga, com `url` vazia/não-http) a origem da foto atual do EAN. NÃO faz commit: o
+    chamador já commita junto com o resto da operação."""
+    linha = OrigemImagem.query.filter_by(codbar=codbar).first()
+    if not url or not str(url).startswith('http'):
+        if linha:
+            db.session.delete(linha)
+        return
+    if linha:
+        linha.url, linha.fonte, linha.atualizado_em = str(url)[:1000], fonte, datetime.utcnow()
+    else:
+        db.session.add(OrigemImagem(codbar=codbar, url=str(url)[:1000], fonte=fonte))
+
+
+@app.route('/admin/reprocessar-imagem/<string:codbar>', methods=['POST'])
+@jwt_required()
+def admin_reprocessar_imagem(codbar):
+    """Reprocessa a foto do produto a partir da ORIGINAL (melhoria de qualidade + remoção de fundo
+    novas, ver `fundo_produto`). A original não é guardada em disco, então:
+    1. se a origem da foto está registrada (`OrigemImagem`), baixa a URL de novo e reprocessa;
+    2. se não está (foto de antes do registro) ou a URL não responde mais, busca de novo nas fontes
+       e a foto passa a ser a que elas devolverem — pode ser outra imagem;
+    3. foto de upload manual não tem original: responde 404 e pede pra enviar de novo.
+    A foto atual só é trocada quando o resultado novo está pronto. Produto com busca bloqueada
+    (incidente de imagem imprópria) não é reprocessado."""
+    codbar = (codbar or '').strip()
+    if not re.fullmatch(r'\d{8,14}', codbar):
+        return jsonify({'message': 'EAN inválido (use de 8 a 14 dígitos).'}), 400
+    produto = Produto.query.filter_by(codbar=codbar).first()
+    if produto and produto.busca_imagem_bloqueada:
+        return jsonify({'message': 'A busca de imagem deste EAN está bloqueada; não dá pra reprocessar.'}), 409
+
+    caminho = os.path.join(PROCESSED_IMAGES_FOLDER, f'{codbar}.png')
+    origem = OrigemImagem.query.filter_by(codbar=codbar).first()
+    if origem:
+        try:
+            resp = requests.get(origem.url, timeout=25, headers={'User-Agent': 'Mozilla/5.0'})
+            resp.raise_for_status()
+            if 'image' not in resp.headers.get('Content-Type', '').lower():
+                raise ValueError('a URL não devolveu uma imagem')
+            dados = resp.content
+            if not _imagem_e_segura(dados):
+                _quarentenar_imagem(dados, codbar, origem.fonte, motivo='impropria', url_origem=origem.url)
+                return jsonify({'message': 'A original agora é reprovada pelo filtro de conteúdo e foi pra quarentena; a foto atual foi mantida.'}), 422
+            anterior = None
+            if os.path.exists(caminho):
+                with open(caminho, 'rb') as f:
+                    anterior = f.read()
+            try:
+                save_image_with_background_removal(Image.open(io.BytesIO(dados)), caminho)
+            except Exception:
+                if anterior is not None:        # nunca deixa o produto sem foto por causa de uma falha aqui
+                    with open(caminho, 'wb') as f:
+                        f.write(anterior)
+                raise
+            _marcar_tem_foto(codbar, True)
+            _registrar_origem_imagem(codbar, origem.url, origem.fonte)
+            db.session.commit()
+            logging.info(f"Foto de {codbar} reprocessada a partir da original ({origem.url}).")
+            return jsonify({'message': 'Imagem reprocessada a partir da original.', 'imagem_url': _static_url(caminho),
+                            'fonte': origem.fonte, 'metodo': 'original'}), 200
+        except Exception as e:
+            db.session.rollback()
+            logging.warning(f"Reprocessar {codbar}: não deu pra usar a origem registrada ({origem.url}): {e}")
+
+    if not _busca_imagem_online_ativa():
+        return jsonify({'message': 'Não há original guardada pra este EAN e a busca de imagem online está desativada.'}), 404
+    cfg_fontes = _ler_todas_config()
+    for fonte, buscar in (
+        ('google', buscar_e_salvar_imagem_google), ('zaffari', buscar_e_salvar_imagem_zaffari),
+        ('precomelhor', buscar_e_salvar_imagem_precomelhor), ('rissul', buscar_e_salvar_imagem_rissul),
+        ('sonda', buscar_e_salvar_imagem_sonda), ('unidasul', buscar_e_salvar_imagem_unidasul),
+        ('serper', buscar_e_salvar_imagem_serper),
+    ):
+        if not _fonte_imagem_ativa(fonte, cfg_fontes):
+            continue
+        resultado = buscar(codbar)
+        if resultado[1] == 200:
+            _registrar_busca_imagem(codbar, True, origem=fonte, via='admin')
+            return jsonify({'message': 'A original não estava guardada: baixada de novo e reprocessada.',
+                            'imagem_url': resultado[0].get_json().get('imagem_url'), 'fonte': fonte, 'metodo': 'fontes'}), 200
+    return jsonify({'message': 'Não há original guardada pra este EAN (foto enviada manualmente ou anterior ao registro de origem) e nenhuma fonte achou outra. Envie a imagem de novo.'}), 404
+
+
 @app.route('/admin/buscar-imagem-ia/<string:codbar>', methods=['POST'])
 @jwt_required()
 def admin_buscar_imagem_ia(codbar):
@@ -5510,6 +5608,7 @@ def admin_marcar_sem_imagem(codbar):
 
     _marcar_tem_foto(produto, True)
     _eliminar_duplicatas_pendentes(codbar)
+    _registrar_origem_imagem(codbar, None)
     db.session.commit()
 
     img_url = _static_url(processed_file_path)
@@ -6637,6 +6736,7 @@ def admin_quarentena_liberar(quarentena_id):
         if produto:
             produto.busca_imagem_bloqueada = False
         _marcar_tem_foto(entrada.codbar, True)
+        _registrar_origem_imagem(entrada.codbar, entrada.url_origem, entrada.origem)
 
         removidas = _eliminar_duplicatas_pendentes(entrada.codbar, excluir_id=entrada.id)
 

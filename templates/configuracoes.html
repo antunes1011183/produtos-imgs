@@ -2419,6 +2419,7 @@
                     <input type="file" id="detail-input-imagem" accept="image/png,image/jpeg,image/webp" style="display:none;">
                     <button class="btn btn-secondary btn-sm" id="detail-btn-enviar-arte" title="Subir a arte pronta deste produto (orientação automática)">Enviar arte</button>
                     <input type="file" id="detail-input-arte" accept="image/png,image/jpeg,image/webp" style="display:none;">
+                    <button class="btn btn-secondary btn-sm" id="detail-btn-reprocessar" title="Baixa a imagem original de novo e refaz a melhoria de qualidade e a remoção de fundo">Reprocessar imagem</button>
                     <button class="btn btn-secondary btn-sm" id="detail-btn-marcar-sem-imagem">Marcar como sem imagem</button>
                     <button class="btn btn-danger btn-sm" id="detail-btn-excluir-imagem">Excluir imagem</button>
                 </div>
@@ -2489,6 +2490,7 @@
                     <input type="file" id="hist-detail-input-imagem" accept="image/png,image/jpeg,image/webp" style="display:none;">
                     <button class="btn btn-secondary btn-sm" id="hist-detail-btn-enviar-arte" title="Subir a arte pronta deste produto (orientação automática)">Enviar arte</button>
                     <input type="file" id="hist-detail-input-arte" accept="image/png,image/jpeg,image/webp" style="display:none;">
+                    <button class="btn btn-secondary btn-sm" id="hist-detail-btn-reprocessar" title="Baixa a imagem original de novo e refaz a melhoria de qualidade e a remoção de fundo">Reprocessar imagem</button>
                     <button class="btn btn-secondary btn-sm" id="hist-detail-btn-marcar-sem-imagem">Marcar como sem imagem</button>
                 </div>
 
@@ -3708,6 +3710,38 @@ function ligarEnviarArtePopup(btnSel, inputSel, ean) {
     };
 }
 
+// Botão "Reprocessar imagem" dos popups: baixa a original de novo (ou busca nas fontes, se a origem
+// não estiver registrada) e refaz melhoria de qualidade + remoção de fundo. `aindaNoMesmo()` evita
+// trocar a imagem na tela se o usuário já navegou pra outro produto durante o processamento.
+function ligarReprocessarPopup(btnSel, imgBoxSel, zoomSel, ean, aoConcluir, aindaNoMesmo) {
+    const btn = $(btnSel);
+    btn.disabled = false;
+    btn.onclick = async () => {
+        if (!confirm(`Reprocessar a imagem de ${ean}?\n\nBaixa a original de novo e refaz a qualidade e a remoção de fundo. Se a origem desta foto não estiver registrada, busca nas fontes e a foto pode ser outra. Foto enviada manualmente não tem original: envie de novo.`)) return;
+        const original = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Reprocessando...';
+        try {
+            const res = await fetch('/admin/reprocessar-imagem/' + encodeURIComponent(ean), { method: 'POST', headers: authHeaders() });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(d.message || `HTTP ${res.status}`);
+            const fonte = rotuloFonte(d.fonte);
+            toast(d.metodo === 'original' ? 'Imagem reprocessada a partir da original'
+                : (fonte ? `Original não guardada: baixada de novo via ${fonte} e reprocessada` : 'Original não guardada: baixada de novo e reprocessada'), 'success');
+            if (d.imagem_url && aindaNoMesmo()) {
+                $(imgBoxSel).innerHTML = `<img src="${escHtml(d.imagem_url)}?t=${Date.now()}" alt="Foto do produto" onclick="openLightbox(this.src)">`;
+                $(zoomSel).style.display = 'flex';
+            }
+            aoConcluir();
+        } catch (e) {
+            toast(e.message || 'Erro ao reprocessar', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = original;
+        }
+    };
+}
+
 // Arte pronta enviada direto da linha (Imagens Pendentes). Orientação automática (imagem mais alta
 // que larga vira vertical). A linha continua na lista: subir a arte não resolve a falta da foto.
 async function handleUploadArteRapida(e) {
@@ -4066,6 +4100,7 @@ async function openHistDetailPanel(ean, origemLista) {
     };
 
     ligarEnviarArtePopup('#hist-detail-btn-enviar-arte', '#hist-detail-input-arte', ean);
+    ligarReprocessarPopup('#hist-detail-btn-reprocessar', '#hist-detail-modal-image', '#hist-detail-zoom', ean, () => removerLinhaEmTodasAsListas(ean), () => histDetailEan === ean);
 
     const semImagemBtn = $('#hist-detail-btn-marcar-sem-imagem');
     semImagemBtn.onclick = async () => {
@@ -6446,6 +6481,7 @@ async function openDetailModal(ean) {
     };
 
     ligarEnviarArtePopup('#detail-btn-enviar-arte', '#detail-input-arte', ean);
+    ligarReprocessarPopup('#detail-btn-reprocessar', '#detail-modal-image', '#detail-zoom', ean, () => loadConsulta(consultaPage), () => detailEan === ean);
 
     const semImagemBtn = $('#detail-btn-marcar-sem-imagem');
     semImagemBtn.onclick = async () => {
