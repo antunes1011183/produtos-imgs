@@ -44,6 +44,7 @@ import re
 import json
 from io import BytesIO
 from texto_utils import reparar_mojibake
+import fundo_produto
 
 # Quando compilado com PyInstaller (`sys.frozen`), __file__ e o cwd herdado do processo que
 # lançou o .exe (ex.: o NSSM, ou um duplo-clique) não são confiáveis como base pra caminhos
@@ -212,10 +213,22 @@ def save_image_with_background_removal(image, file_path):
     inteiro falhar com 500."""
     # Converte para RGBA se necessário
     image = image.convert("RGBA") if image.mode != "RGBA" else image
+    # Melhoria de qualidade ANTES de tirar o fundo (ver `fundo_produto`): foto pequena é ampliada, sem
+    # ruído de JPEG e com nitidez leve. Qualquer falha cai pra imagem original, nunca derruba o upload.
+    try:
+        if _ler_todas_config().get('MELHORAR_IMAGEM_ATIVA', 'true') != 'false':
+            base = image
+            if image.getchannel('A').getextrema()[0] < 250:      # PNG com transparência: assenta sobre branco
+                base = Image.new('RGBA', image.size, (255, 255, 255, 255))
+                base.alpha_composite(image)
+            image = fundo_produto.melhorar_qualidade(base).convert('RGBA')
+    except Exception as e:
+        logging.warning(f"Melhoria de qualidade falhou em {file_path}, seguindo com a imagem original: {e}")
     if REMBG_ENABLED:
         try:
-            # Remove o fundo, com matting pra não cortar pedaço do produto nas bordas
-            output_image = remove(image, alpha_matting=True)
+            # rembg só como máscara + conferência pelo fundo uniforme. O `alpha_matting=True` antigo
+            # apagava produto fino/pequeno (caneta, corpo transparente) — ver `fundo_produto`.
+            output_image = fundo_produto.remover_fundo(image)
             if _remocao_de_fundo_falhou(output_image):
                 logging.warning(f"rembg aparentemente apagou a imagem inteira (quase 100% transparente) salvando {file_path} — mantendo a imagem original em vez de uma miniatura em branco.")
                 output_image = image
