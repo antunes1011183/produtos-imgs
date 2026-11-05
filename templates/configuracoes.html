@@ -1909,6 +1909,7 @@
                             <div id="quarentena-detail-acoes-triagem" style="display:flex; flex-wrap:wrap; gap:0.6rem; margin:1rem 0;">
                                 <button class="btn btn-danger btn-sm" id="quarentena-detail-confirmar">Confirmar (é mesmo imprópria)</button>
                                 <button class="btn btn-secondary btn-sm" id="quarentena-detail-liberar">Liberar (falso positivo)</button>
+                                <button class="btn btn-secondary btn-sm" id="quarentena-detail-reprocessar" title="Mostra como a imagem fica depois da melhoria de qualidade e da remoção de fundo. Não grava nada: pra publicar, use Liberar.">Reprocessar imagem (prévia)</button>
                             </div>
 
                             <div id="quarentena-detail-acoes-consertar" style="margin-top:1.25rem;">
@@ -5254,6 +5255,8 @@ async function openQuarentenaDetail(id) {
 
     $('#quarentena-detail-panel').dataset.id = id;
     $('#quarentena-detail-panel').dataset.codbar = r.codbar;
+    const btnPrevia = $('#quarentena-detail-reprocessar');      // volta ao estado normal em cada item
+    btnPrevia.dataset.previa = ''; btnPrevia.textContent = 'Reprocessar imagem (prévia)'; btnPrevia.disabled = false;
     $('#quarentena-detail-backdrop').classList.add('show');
     $('#quarentena-detail-ia-picker').style.display = 'none';
     $('#quarentena-detail-ia-picker').innerHTML = '';
@@ -5436,6 +5439,39 @@ $('#quarentena-detail-input-upload').addEventListener('change', async (e) => {
         btn.disabled = false;
         btn.textContent = original;
         e.target.value = '';
+    }
+});
+
+// Prévia do reprocessamento da ORIGINAL em quarentena (não grava nada). Com a prévia na tela, o mesmo
+// botão vira "Ver original" e volta a mostrar o arquivo da quarentena.
+$('#quarentena-detail-reprocessar').addEventListener('click', async (e) => {
+    const btn = e.currentTarget, id = $('#quarentena-detail-panel').dataset.id;
+    if (btn.dataset.previa === '1') {
+        btn.dataset.previa = ''; btn.textContent = 'Reprocessar imagem (prévia)';
+        openQuarentenaDetail(id);
+        return;
+    }
+    const original = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Reprocessando...';
+    try {
+        const res = await fetch(`/admin/quarentena/${id}/reprocessar`, { method: 'POST', headers: authHeaders() });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message || `HTTP ${res.status}`);
+        const url = URL.createObjectURL(await res.blob());
+        if ($('#quarentena-detail-panel').dataset.id !== id) { URL.revokeObjectURL(url); return; }   // navegou pra outro item
+        if (quarentenaDetailBlobUrl) URL.revokeObjectURL(quarentenaDetailBlobUrl);
+        quarentenaDetailBlobUrl = url;
+        $('#quarentena-detail-image').innerHTML = `<img src="${url}" alt="Prévia reprocessada" onclick="openLightbox(this.src)">`;
+        $('#quarentena-detail-zoom').style.display = 'flex';
+        btn.dataset.previa = '1';
+        btn.textContent = 'Ver original';
+        toast('Prévia do reprocessamento (nada foi gravado). Se estiver boa, use Liberar.', 'success');
+        return;
+    } catch (err) {
+        toast('Erro ao reprocessar: ' + err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        if (btn.dataset.previa !== '1') btn.innerHTML = original;
     }
 });
 

@@ -11,6 +11,7 @@ import base64
 import threading
 import concurrent.futures
 import unicodedata
+import tempfile
 import time
 import queue
 import subprocess
@@ -6674,6 +6675,35 @@ def admin_quarentena_imagem(quarentena_id):
     with open(caminho, 'rb') as f:
         dados = f.read()
     return send_file(io.BytesIO(dados), mimetype='image/jpeg')
+
+
+@app.route('/admin/quarentena/<int:quarentena_id>/reprocessar', methods=['POST'])
+@jwt_required()
+def admin_quarentena_reprocessar(quarentena_id):
+    """PRÉVIA do reprocessamento: roda a melhoria de qualidade + remoção de fundo (`fundo_produto`) na
+    ORIGINAL que está na quarentena e devolve o PNG resultante, pra o revisor ver como a foto ficaria
+    antes de decidir. Não grava nada: não troca a foto do produto, não mexe na entrada nem no bloqueio
+    do EAN. Quem publica é "Liberar", que processa o mesmo arquivo com o mesmo pipeline."""
+    entrada = ImagemQuarentena.query.get_or_404(quarentena_id)
+    if not entrada.arquivo:
+        return jsonify({'message': 'Arquivo não existe mais (já revisado).'}), 400
+    caminho = os.path.join(QUARENTENA_FOLDER, entrada.arquivo)
+    if not os.path.exists(caminho):
+        return jsonify({'message': 'Arquivo não encontrado no disco.'}), 404
+    with open(caminho, 'rb') as f:
+        dados = f.read()
+    temporario = os.path.join(tempfile.gettempdir(), f'previa_{secrets.token_hex(8)}.png')
+    try:
+        save_image_with_background_removal(Image.open(io.BytesIO(dados)), temporario)
+        with open(temporario, 'rb') as f:
+            png = f.read()
+    except Exception as e:
+        logging.warning(f"Prévia de reprocessamento da quarentena {quarentena_id} falhou: {e}")
+        return jsonify({'message': 'Não foi possível reprocessar esta imagem.'}), 500
+    finally:
+        if os.path.exists(temporario):
+            os.remove(temporario)
+    return send_file(io.BytesIO(png), mimetype='image/png')
 
 
 @app.route('/admin/quarentena/<int:quarentena_id>/confirmar', methods=['POST'])
