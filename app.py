@@ -4444,7 +4444,7 @@ COMPOSIÇÃO:
 POSIÇÃO DOS ELEMENTOS (imagem em pé; os percentuais são só referência de onde cada coisa fica dentro da MESMA foto — não crie divisões visíveis entre eles):
 - Parte de CIMA (até cerca de 26% da altura): ambiente escuro de fundo (parede, folhagem, prateleira) desfocado, SEM o produto e SEM texto. Um sistema separado cobre depois esta parte com um painel gráfico de cor sólida com o nome do produto, então ela só precisa estar limpa.
 - Parte do MEIO (de cerca de 28% a 66% da altura): o PRODUTO, GRANDE, perfeitamente legível e totalmente integrado ao cenário, no lado ESQUERDO / centro-esquerdo (ocupando de cerca de 5% a 62% da largura), com a base apoiada na mesa. A BASE do produto fica no MÁXIMO a 66% da altura da imagem — abaixo dele sobra mesa livre. REGRA CRÍTICA: o produto PRECISA aparecer 100% visível e sem nenhum corte — nenhuma parte dele (rótulo, tampa, base) pode ficar cortada pelas bordas. Ao lado dele (centro-direita) ficam elementos de apoio bem iluminados — prato ou tigela com o alimento pronto, ingredientes frescos, vapor, texturas — que reforçam o desejo, sem repetir o produto.
-- Parte de BAIXO (de cerca de 72% até a borda inferior): é a própria MESA em primeiro plano (madeira escura ou bancada, com textura natural), continuando a mesma cena. No lado direito pode haver poucos elementos pequenos e discretos (folhas, grãos, temperos soltos). O CANTO INFERIOR ESQUERDO (da borda esquerda até cerca de 58% da largura, a partir de cerca de 76% da altura) deve ficar com a mesa VAZIA e uniforme — sem produto, sem ingredientes, sem objetos, sem texto: um sistema separado coloca ali uma caixa com o preço. O CANTO INFERIOR DIREITO (de cerca de 52% da largura até a borda) também fica sem o produto, pois ali entram selos de benefício.
+- Parte de BAIXO (de cerca de 72% até a borda inferior): é a própria MESA em primeiro plano (madeira escura ou bancada, com textura natural), continuando a mesma cena. No lado direito pode haver poucos elementos pequenos e discretos (folhas, grãos, temperos soltos). O CANTO INFERIOR ESQUERDO (da borda esquerda até cerca de 58% da largura, a partir de cerca de 76% da altura) deve ficar com a mesa VAZIA e uniforme — sem produto, sem ingredientes, sem objetos, sem texto: um sistema separado coloca ali o preço do produto. O CANTO INFERIOR DIREITO (de cerca de 52% da largura até a borda) também fica sem o produto, pois ali entram selos de benefício.
 - Use as cores da própria embalagem como referência para a identidade visual da arte.
 """
 
@@ -5118,9 +5118,9 @@ def gerar_arte_publicitaria(produto, image_path):
 # ===== Layout da arte VERTICAL (referência do usuário, 05/11/2026) =====
 # Painel de cor sólida no TOPO (borda de baixo em curva) com marca/nome/sublinhado/frase, cena em tela
 # cheia, selos de benefício no canto inferior DIREITO e a caixa do preço no canto inferior ESQUERDO.
-# As posições da caixa do preço são FIXAS (% da arte) porque o app (PlayerActivity.kt, bloco
-# `isVerticalArtLayout`) desenha o preço exatamente ali, sem ter como saber o que o servidor desenhou:
-# MANTENHA OS DOIS LADOS IGUAIS. `_montar_prompt_arte_manual` também usa estes valores.
+# A área reservada ao preço é FIXA (% da arte) e fica VAZIA na arte (sem caixa): o app (PlayerActivity.kt,
+# bloco `isVerticalArtLayout`) desenha o cartão do preço centrado exatamente ali, sem ter como saber o que
+# o servidor desenhou: MANTENHA OS DOIS LADOS IGUAIS. `_montar_prompt_arte_manual` também usa estes valores.
 VERT_PRECO_X0_PCT, VERT_PRECO_X1_PCT = 0.05, 0.55
 VERT_PRECO_Y0_PCT, VERT_PRECO_Y1_PCT = 0.80, 0.94
 
@@ -5145,9 +5145,9 @@ def compor_arte_vertical(cena_bytes, produto, cor_acento, nome_produto=None, hea
     garantida): marca grande, nome do produto menor e mais leve, sublinhado branco e a frase de destaque
     — a altura do painel acompanha o texto. Os selos de benefício ficam no canto inferior DIREITO.
 
-    O canto inferior ESQUERDO é reservado ao PREÇO: uma caixa branca com sombra (VERT_PRECO_*), vazia —
-    quem desenha o preço de verdade, por cima e em tempo real, é o app (cada loja tem o seu). Por isso a
-    cena é pedida com essa área limpa (ver ARTE_PROMPT_TEMPLATE_VERTICAL)."""
+    O canto inferior ESQUERDO é reservado ao PREÇO (VERT_PRECO_*), mas NADA é desenhado ali (nem caixa): quem
+    desenha o cartão do preço, por cima e em tempo real, é o app (cada loja tem o seu). Por isso a cena é
+    pedida com essa área limpa (ver ARTE_PROMPT_TEMPLATE_VERTICAL)."""
     largura, altura = ARTE_LARGURA_VERTICAL, ARTE_ALTURA_VERTICAL
 
     cena = Image.open(BytesIO(cena_bytes)).convert('RGBA')
@@ -5244,21 +5244,10 @@ def compor_arte_vertical(cena_bytes, produto, cor_acento, nome_produto=None, hea
             _desenhar_bullet_beneficio(draw, icone_x, bloco_y + i * passo, diametro, cor_painel, txt,
                                        f_benef, largura_texto + 40, alinhar_direita=True)
 
-    # Caixa vazia (com sombra) reservando o espaço do preço — ver docstring. Posição FIXA (VERT_PRECO_*).
-    cx0, cx1 = int(largura * VERT_PRECO_X0_PCT), int(largura * VERT_PRECO_X1_PCT)
-    cy0, cy1 = int(altura * VERT_PRECO_Y0_PCT), int(altura * VERT_PRECO_Y1_PCT)
-    raio = int(altura * 0.018)
-    sombra_caixa = Image.new('RGBA', (largura, altura), (0, 0, 0, 0))
-    d_s = int(altura * 0.006)
-    ImageDraw.Draw(sombra_caixa).rounded_rectangle((cx0, cy0 + d_s, cx1, cy1 + d_s), radius=raio, fill=(0, 0, 0, 130))
-    sombra_caixa = sombra_caixa.filter(ImageFilter.GaussianBlur(int(altura * 0.012)))
-    caixa = Image.new('RGBA', (largura, altura), (0, 0, 0, 0))
-    ImageDraw.Draw(caixa).rounded_rectangle((cx0, cy0, cx1, cy1), radius=raio, fill=(255, 255, 255, 235))
-
+    # O espaço do preço (VERT_PRECO_*) NÃO é desenhado: fica só a cena limpa, pedida assim no prompt. O app
+    # desenha o próprio cartão de preço por cima dessa área (ver PlayerActivity.kt).
     final = Image.alpha_composite(canvas, sombra_painel)
     final = Image.alpha_composite(final, overlay)
-    final = Image.alpha_composite(final, sombra_caixa)
-    final = Image.alpha_composite(final, caixa)
 
     saida = BytesIO()
     final.convert('RGB').save(saida, format='WEBP', quality=88)
@@ -7414,7 +7403,7 @@ def _montar_prompt_arte_manual(descricao, marca, nome, quantidade, headline, ben
 - Dentro do painel, alinhados à esquerda (margem de cerca de 10% da largura), a partir do topo, nesta ordem:
 {bloco_textos}
 - FAIXA CENTRAL (de cerca de 28% a 70% da altura): o produto, GRANDE, do lado esquerdo / centro-esquerdo, 100% visível e sem nenhum corte, integrado à cena; ao lado dele (centro-direita), elementos de apoio do cenário (prato ou tigela com o alimento pronto, ingredientes, vapor) sem repetir o produto.
-- CAIXA RESERVADA PARA O PREÇO, no CANTO INFERIOR ESQUERDO: um retângulo branco de cantos bem arredondados com sombra suave embaixo (efeito de elevação), ocupando de {px0}% a {px1}% da largura e de {py0}% a {py1}% da altura total da imagem. Deve ficar COMPLETAMENTE VAZIA (sem número, sem "R$", sem texto) — o preço real é colocado por cima depois pelo app. Nenhum outro elemento da cena entra nessa área.
+- ÁREA RESERVADA PARA O PREÇO, no CANTO INFERIOR ESQUERDO: de {px0}% a {px1}% da largura e de {py0}% a {py1}% da altura total da imagem. Deixe essa área COMPLETAMENTE LIVRE, com a própria cena (mesa/superfície) continuando lisa por baixo: NÃO desenhe caixa, retângulo, cartão, sombra, número nem "R$" ali, e nenhum elemento da cena (produto, ingredientes, objetos) entra nessa área — o preço real é colocado por cima depois pelo app.
 - CANTO INFERIOR DIREITO (de cerca de {px1 + 2}% da largura até a borda direita, ao mesmo nível da caixa do preço): composição simples e escura, sem o produto.
 {bloco_benef}"""
     else:
@@ -7450,7 +7439,7 @@ REGRAS DO PRODUTO:
 
 REGRA DE TEXTO: escreva SOMENTE os textos listados acima, exatamente como estão, com ortografia e acentuação corretas, em fonte limpa e legível. Nenhum outro texto na imagem além do que já vem impresso na embalagem.
 
-ANTES DE ENTREGAR: confira se todos os textos estão sem erro de digitação, se o produto está inteiro e aparece uma vez só, e se a caixa/área do preço está vazia. Se algo estiver errado, corrija e gere de novo.
+ANTES DE ENTREGAR: confira se todos os textos estão sem erro de digitação, se o produto está inteiro e aparece uma vez só, e se a área do preço está livre (sem caixa, sem número). Se algo estiver errado, corrija e gere de novo.
 
 SAÍDA: imagem {largura}x{altura} px ({proporcao}). Se a ferramenta não aceitar o tamanho exato, gere nessa proporção."""
 
