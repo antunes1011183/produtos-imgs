@@ -4431,12 +4431,35 @@ RESULTADO ESPERADO: a cena deve parecer uma campanha de merchandising digital cr
 Produto de referência: {descricao}."""
 
 
-def _montar_prompt_arte(produto):
+# Versão VERTICAL do prompt: mesmas regras (produto fiel, uma única vez, sem texto, sem pessoas...), só a
+# COMPOSIÇÃO/LAYOUT muda — cena em tela cheia em retrato, com o produto à esquerda/centro e as áreas do
+# painel (topo), do preço (canto inferior esquerdo) e dos selos (canto inferior direito) livres.
+_COMPOSICAO_E_LAYOUT_VERTICAL = """
+COMPOSIÇÃO:
+- Crie uma arte VERTICAL (retrato), moderna e sofisticada, própria para Digital Signage em supermercado, com o cenário preenchendo TODA a imagem (sem áreas de fundo branco isoladas).
+- Use profundidade de campo e fundo suavemente desfocado. Iluminação profissional de fotografia publicitária, com sombras e reflexos realistas integrando totalmente o produto ao cenário.
+- Aparência de fotografia comercial de alto nível, como uma campanha publicitária real de uma grande marca — nunca aparência de panfleto promocional, ficha técnica ou tela informativa.
+
+LAYOUT (imagem em pé, divida a altura em faixas e siga exatamente — é uma regra rígida de posicionamento):
+- FAIXA SUPERIOR (de 0% a cerca de 26% da altura): fundo simples, escuro e suavemente desfocado (ambiente, folhagem, parede), SEM o produto e SEM texto. Um sistema separado cobre depois esta faixa com um painel gráfico de cor sólida com o nome do produto, então ela não precisa ficar "bonita", só limpa.
+- FAIXA CENTRAL (de cerca de 28% a 70% da altura): o PRODUTO, GRANDE, perfeitamente legível e totalmente integrado ao cenário, posicionado do lado ESQUERDO / centro-esquerdo (ocupando de cerca de 5% a 62% da largura). REGRA CRÍTICA: o produto PRECISA aparecer 100% visível e sem nenhum corte — nenhuma parte dele (rótulo, tampa, base) pode ficar cortada pelas bordas. Ao lado dele (centro-direita) ficam elementos de apoio do cenário bem iluminados — prato ou tigela com o alimento pronto, ingredientes frescos, vapor, texturas — que reforçam o desejo, sem repetir o produto.
+- FAIXA INFERIOR (de cerca de 72% a 100% da altura):
+  - CANTO INFERIOR ESQUERDO (da borda esquerda até cerca de 58% da largura, a partir de cerca de 76% da altura): RESERVADO. Deixe apenas uma superfície simples e calma (mesa de madeira escura, bancada), suavemente desfocada, SEM o produto, SEM ingredientes ou objetos de destaque e SEM texto — um sistema separado coloca ali uma caixa com o preço.
+  - CANTO INFERIOR DIREITO (de cerca de 52% da largura até a borda direita): composição simples e escura (mesa, ingredientes soltos desfocados), SEM o produto — um sistema separado coloca ali selos de benefício.
+- Use as cores da própria embalagem como referência para a identidade visual da arte.
+"""
+
+_a = ARTE_PROMPT_TEMPLATE.index("\nCOMPOSIÇÃO:\n")
+_b = ARTE_PROMPT_TEMPLATE.index("\nTEXTOS:\n")
+ARTE_PROMPT_TEMPLATE_VERTICAL = ARTE_PROMPT_TEMPLATE[:_a] + _COMPOSICAO_E_LAYOUT_VERTICAL + ARTE_PROMPT_TEMPLATE[_b:]
+
+
+def _montar_prompt_arte(produto, vertical=False):
     """Monta o prompt de geração de arte a partir das regras fixas + dados do produto."""
     descricao = produto.description or 'produto embalado'
     if _marca_valida(produto.marca):
         descricao = f"{descricao} (marca {_marca_valida(produto.marca)})"
-    return ARTE_PROMPT_TEMPLATE.format(descricao=descricao)
+    return (ARTE_PROMPT_TEMPLATE_VERTICAL if vertical else ARTE_PROMPT_TEMPLATE).format(descricao=descricao)
 
 
 _REGEX_QUANTIDADE_EMBALAGEM = re.compile(
@@ -5093,118 +5116,147 @@ def gerar_arte_publicitaria(produto, image_path):
     return output_path
 
 
-def _desenhar_painel_curvo_topo(draw, width, y_topo_painel, altura_painel, cor_rgba, amplitude_pct=0.035):
-    """Equivalente vertical de _desenhar_painel_curvo: em vez de um painel lateral com borda
-    direita em curva, desenha um painel cobrindo a faixa de BAIXO inteira da arte vertical, com
-    a borda de CIMA em curva (mesma sanoide, só que percorrendo a largura em vez da altura).
-    Retorna o y mais alto que a curva alcança, útil pra nunca colidir texto com ela (mesmo papel
-    de 'borda_segura' em _desenhar_painel_curvo, só que no eixo vertical)."""
-    amplitude = width * amplitude_pct
+# ===== Layout da arte VERTICAL (referência do usuário, 05/11/2026) =====
+# Painel de cor sólida no TOPO (borda de baixo em curva) com marca/nome/sublinhado/frase, cena em tela
+# cheia, selos de benefício no canto inferior DIREITO e a caixa do preço no canto inferior ESQUERDO.
+# As posições da caixa do preço são FIXAS (% da arte) porque o app (PlayerActivity.kt, bloco
+# `isVerticalArtLayout`) desenha o preço exatamente ali, sem ter como saber o que o servidor desenhou:
+# MANTENHA OS DOIS LADOS IGUAIS. `_montar_prompt_arte_manual` também usa estes valores.
+VERT_PRECO_X0_PCT, VERT_PRECO_X1_PCT = 0.05, 0.55
+VERT_PRECO_Y0_PCT, VERT_PRECO_Y1_PCT = 0.80, 0.94
+
+
+def _desenhar_painel_curvo_base(draw, width, y_base, amplitude, cor_rgba):
+    """Painel de cor sólida colado no TOPO da arte vertical, com a borda de BAIXO em onda suave (mais
+    baixa no lado esquerdo, subindo até a direita, como na referência). Cobre de y=0 até a curva."""
     passos = 60
-    pontos = [(0, y_topo_painel + altura_painel), (0, y_topo_painel)]
-    y_min = y_topo_painel
-    for i in range(passos + 1):
+    pontos = [(0, 0), (width, 0)]
+    for i in range(passos, -1, -1):
         x = width * i / passos
-        y = y_topo_painel + amplitude * math.sin((x / width) * math.pi * 1.4)
-        pontos.append((x, y))
-        y_min = min(y_min, y)
-    pontos.append((width, y_topo_painel + altura_painel))
+        pontos.append((x, y_base + amplitude * math.sin((x / width) * math.pi * 1.4)))
     draw.polygon(pontos, fill=cor_rgba)
-    return y_min
+    return pontos
 
 
-def compor_arte_vertical(cena_bytes, produto, cor_acento, altura_foto=None):
-    """Compõe a arte vertical (retrato, ver ARTE_LARGURA_VERTICAL/ARTE_ALTURA_VERTICAL): a cena
-    gerada pela IA ocupa só a faixa de CIMA (45% da altura) e um painel de cor sólida (dominante
-    extraída da própria foto do produto, ver _cor_painel_vibrante) cobre a faixa de BAIXO (55%),
-    com o nome do produto desenhado por PIL (mesma garantia de ortografia 100% correta do
-    pipeline horizontal) e uma caixa branca com sombra reservando o espaço onde o preço real vai
-    entrar depois.
+def compor_arte_vertical(cena_bytes, produto, cor_acento, nome_produto=None, headline=None,
+                         beneficios=None, quantidade=None, marca=None):
+    """Compõe a arte vertical (retrato, ARTE_LARGURA_VERTICAL x ARTE_ALTURA_VERTICAL): a cena gerada pela
+    IA ocupa a imagem INTEIRA e, por cima, um painel de cor sólida (dominante da foto do produto, ver
+    _cor_painel_vibrante) cobre o TOPO com a borda de baixo em curva. No painel, em fonte real (ortografia
+    garantida): marca grande, nome do produto menor e mais leve, sublinhado branco e a frase de destaque
+    — a altura do painel acompanha o texto. Os selos de benefício ficam no canto inferior DIREITO.
 
-    Diferença deliberada em relação à arte horizontal: o PREÇO não é desenhado aqui. Pedido
-    explícito do usuário ("os preços vai retornar do cliente") — cada loja/integração tem seu
-    próprio preço em tempo real, então gravar um valor fixo na arte não faz sentido; a arte só
-    reserva visualmente o espaço (caixa com sombra), e quem desenha o preço de verdade por cima
-    é o app (nativo, dinâmico), igual já faz hoje pro badge de preço da arte horizontal."""
-    largura = ARTE_LARGURA_VERTICAL
-    altura_total = ARTE_ALTURA_VERTICAL
-    altura_foto = altura_foto or round(altura_total * 0.45)
-    altura_painel = altura_total - altura_foto
+    O canto inferior ESQUERDO é reservado ao PREÇO: uma caixa branca com sombra (VERT_PRECO_*), vazia —
+    quem desenha o preço de verdade, por cima e em tempo real, é o app (cada loja tem o seu). Por isso a
+    cena é pedida com essa área limpa (ver ARTE_PROMPT_TEMPLATE_VERTICAL)."""
+    largura, altura = ARTE_LARGURA_VERTICAL, ARTE_ALTURA_VERTICAL
 
     cena = Image.open(BytesIO(cena_bytes)).convert('RGBA')
-    cena = _normalizar_tamanho_arte(cena, largura=largura, altura=altura_foto)
+    cena = _normalizar_tamanho_arte(cena, largura=largura, altura=altura)
+    cena = _aplicar_vinheta(cena)
 
-    canvas = Image.new('RGBA', (largura, altura_total), (0, 0, 0, 255))
+    nome = nome_produto or produto.description or ''
+    marca_destaque, resto_nome = _separar_marca_do_nome(nome, marca or produto.marca)
+
+    medir = ImageDraw.Draw(Image.new('RGBA', (8, 8)))
+    margem = int(largura * 0.10)
+    max_w = int(largura * 0.80)
+
+    def fonte(tam, peso):
+        f = ImageFont.truetype(FONT_PATH, max(10, int(tam)))
+        f.set_variation_by_name(peso)
+        return f
+
+    branco, branco_suave = (255, 255, 255, 255), (255, 255, 255, 225)
+    tam_marca = largura * 0.062
+    f_marca = fonte(tam_marca, 'Bold')
+    texto_marca = marca_destaque or nome
+    while medir.textbbox((0, 0), texto_marca, font=f_marca)[2] > max_w and tam_marca > largura * 0.044:
+        tam_marca -= 2          # marca comprida: encolhe até ~70% antes de quebrar em 2 linhas
+        f_marca = fonte(tam_marca, 'Bold')
+    f_resto = fonte(largura * 0.041, 'Light')
+    f_headline = fonte(largura * 0.029, 'Regular')
+
+    ops, y = [], int(altura * 0.036)
+    for linha in _quebrar_texto(texto_marca, f_marca, max_w, medir)[:2]:
+        ops.append((margem, y, linha, f_marca, branco))
+        y += int(f_marca.size * 1.12)
+    if marca_destaque:
+        y += int(altura * 0.004)
+        texto_resto = f"{resto_nome} {quantidade}".strip() if quantidade else resto_nome
+        for linha in _quebrar_texto(texto_resto, f_resto, max_w, medir)[:2]:
+            ops.append((margem, y, linha, f_resto, branco_suave))
+            y += int(f_resto.size * 1.22)
+    elif quantidade:
+        ops.append((margem, y, quantidade, f_resto, branco_suave))
+        y += int(f_resto.size * 1.22)
+    y += int(altura * 0.012)
+    esp = max(6, int(largura * 0.0085))
+    sublinhado = [margem, y, margem + int(largura * 0.45), y + esp]
+    y += esp + int(altura * 0.016)
+    for linha in _quebrar_texto(headline or '', f_headline, max_w, medir)[:2]:
+        ops.append((margem, y, linha, f_headline, branco_suave))
+        y += int(f_headline.size * 1.3)
+
+    amplitude = int(altura * 0.02)
+    y_base = min(int(altura * 0.32), max(int(altura * 0.205), y + amplitude + int(altura * 0.012)))
+
+    canvas = Image.new('RGBA', (largura, altura), (0, 0, 0, 255))
     canvas.paste(cena.convert('RGB'), (0, 0))
 
-    overlay = Image.new('RGBA', (largura, altura_total), (0, 0, 0, 0))
+    # sombra suave sob a borda do painel (profundidade) + o painel e todo o texto
+    sombra_painel = Image.new('RGBA', (largura, altura), (0, 0, 0, 0))
+    _desenhar_painel_curvo_base(ImageDraw.Draw(sombra_painel), largura, y_base + int(altura * 0.006), amplitude, (0, 0, 0, 120))
+    sombra_painel = sombra_painel.filter(ImageFilter.GaussianBlur(int(altura * 0.006)))
+
+    overlay = Image.new('RGBA', (largura, altura), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
-
     cor_painel = _cor_painel_vibrante(cor_acento)
-    y_min_curva = _desenhar_painel_curvo_topo(draw, largura, altura_foto, altura_painel, (*cor_painel, 255))
+    _desenhar_painel_curvo_base(draw, largura, y_base, amplitude, (*cor_painel, 255))
+    for (x, yy, linha, f, cor) in ops:
+        draw.text((x, yy), linha, font=f, fill=cor)
+    draw.rounded_rectangle(sublinhado, radius=esp // 2, fill=(255, 255, 255, 235))
 
-    marca_destaque, resto_nome = _separar_marca_do_nome(produto.description, produto.marca)
-    margin = int(largura * 0.07)
-    y_texto = int(y_min_curva + altura_total * 0.045)
+    if beneficios:
+        # Selos no canto inferior DIREITO, empilhados e ancorados na base (referência). A cápsula escura
+        # translúcida de `_desenhar_bullet_beneficio` garante leitura sobre qualquer parte da cena.
+        f_benef = fonte(altura * 0.0185, 'Medium')
+        diametro = int(altura * 0.034)
+        passo = int(altura * 0.052)
+        usados = beneficios[:3]
+        bloco_h = passo * (len(usados) - 1) + diametro
+        icone_x = int(largura * 0.955) - diametro
+        bloco_y = int(altura * VERT_PRECO_Y1_PCT) - bloco_h
+        for i, txt in enumerate(usados):
+            _desenhar_bullet_beneficio(draw, icone_x, bloco_y + i * passo, diametro, cor_painel, txt,
+                                       f_benef, int(largura * 0.34), alinhar_direita=True)
 
-    font_marca = ImageFont.truetype(FONT_PATH, int(altura_total * 0.052))
-    font_marca.set_variation_by_name('Bold')
-    font_resto = ImageFont.truetype(FONT_PATH, int(altura_total * 0.028))
-    font_resto.set_variation_by_name('Regular')
+    # Caixa vazia (com sombra) reservando o espaço do preço — ver docstring. Posição FIXA (VERT_PRECO_*).
+    cx0, cx1 = int(largura * VERT_PRECO_X0_PCT), int(largura * VERT_PRECO_X1_PCT)
+    cy0, cy1 = int(altura * VERT_PRECO_Y0_PCT), int(altura * VERT_PRECO_Y1_PCT)
+    raio = int(altura * 0.018)
+    sombra_caixa = Image.new('RGBA', (largura, altura), (0, 0, 0, 0))
+    d_s = int(altura * 0.006)
+    ImageDraw.Draw(sombra_caixa).rounded_rectangle((cx0, cy0 + d_s, cx1, cy1 + d_s), radius=raio, fill=(0, 0, 0, 130))
+    sombra_caixa = sombra_caixa.filter(ImageFilter.GaussianBlur(int(altura * 0.012)))
+    caixa = Image.new('RGBA', (largura, altura), (0, 0, 0, 0))
+    ImageDraw.Draw(caixa).rounded_rectangle((cx0, cy0, cx1, cy1), radius=raio, fill=(255, 255, 255, 235))
 
-    if marca_destaque:
-        _desenhar_texto_com_sombra(draw, (margin, y_texto), marca_destaque.upper(), font_marca, fill=(255, 255, 255, 255))
-        y_texto += int(altura_total * 0.058)
-        if resto_nome:
-            _desenhar_texto_com_sombra(draw, (margin, y_texto), resto_nome, font_resto, fill=(255, 255, 255, 230))
-            y_texto += int(altura_total * 0.045)
-    else:
-        _desenhar_texto_com_sombra(draw, (margin, y_texto), (produto.description or '').upper(), font_marca, fill=(255, 255, 255, 255))
-        y_texto += int(altura_total * 0.058)
+    final = Image.alpha_composite(canvas, sombra_painel)
+    final = Image.alpha_composite(final, overlay)
+    final = Image.alpha_composite(final, sombra_caixa)
+    final = Image.alpha_composite(final, caixa)
 
-    # Caixa vazia (com sombra) reservando o espaço do preço real — ver docstring da função.
-    # Posição FIXA (% de altura_foto/altura_total), não derivada de y_texto/quebra de linha do
-    # nome — de propósito: o app (Kotlin) precisa desenhar o preço de verdade exatamente nesse
-    # mesmo lugar, sem ter como saber quantas linhas o nome ocupou aqui no servidor. Com uma
-    # posição fixa, as constantes abaixo (CAIXA_PRECO_*) podem ser espelhadas do lado do app
-    # como estão, garantindo que os dois lados sempre concordem — ver
-    # updatePriceBadgeVertical/CAIXA_PRECO_* no PlayerActivity.kt.
-    CAIXA_PRECO_Y0_PCT = 0.16
-    CAIXA_PRECO_ALTURA_PCT = 0.14
-    caixa_x0 = margin
-    caixa_y0 = altura_foto + int(altura_total * CAIXA_PRECO_Y0_PCT)
-    caixa_x1 = largura - margin
-    caixa_y1 = caixa_y0 + int(altura_total * CAIXA_PRECO_ALTURA_PCT)
-
-    sombra_layer = Image.new('RGBA', (largura, altura_total), (0, 0, 0, 0))
-    sombra_draw = ImageDraw.Draw(sombra_layer)
-    deslocamento_sombra = int(altura_total * 0.006)
-    sombra_draw.rounded_rectangle(
-        (caixa_x0, caixa_y0 + deslocamento_sombra, caixa_x1, caixa_y1 + deslocamento_sombra),
-        radius=int(altura_total * 0.018), fill=(0, 0, 0, 130),
-    )
-    sombra_layer = sombra_layer.filter(ImageFilter.GaussianBlur(int(altura_total * 0.012)))
-
-    caixa_layer = Image.new('RGBA', (largura, altura_total), (0, 0, 0, 0))
-    caixa_draw = ImageDraw.Draw(caixa_layer)
-    caixa_draw.rounded_rectangle(
-        (caixa_x0, caixa_y0, caixa_x1, caixa_y1),
-        radius=int(altura_total * 0.018), fill=(255, 255, 255, 235),
-    )
-
-    final_image = Image.alpha_composite(canvas, overlay)
-    final_image = Image.alpha_composite(final_image, sombra_layer)
-    final_image = Image.alpha_composite(final_image, caixa_layer)
-
-    output = BytesIO()
-    final_image.convert('RGB').save(output, format='WEBP', quality=88)
-    return output.getvalue()
+    saida = BytesIO()
+    final.convert('RGB').save(saida, format='WEBP', quality=88)
+    return saida.getvalue()
 
 
 def gerar_arte_publicitaria_vertical(produto, image_path):
-    """Equivalente vertical de gerar_arte_publicitaria: gera só a CENA (Gemini, mesmas regras
-    de ARTE_PROMPT_TEMPLATE, só que enquadrada em 4:3 pra caber na faixa de cima da arte
-    vertical) e delega a composição do painel+nome+caixa de preço pra compor_arte_vertical.
+    """Equivalente vertical de gerar_arte_publicitaria: gera só a CENA em tela cheia (Gemini, mesmas
+    regras de ARTE_PROMPT_TEMPLATE mas com o LAYOUT vertical de ARTE_PROMPT_TEMPLATE_VERTICAL, em 2:3)
+    e delega a composição (painel no topo, nome/frase/selos e a caixa do preço no canto inferior
+    esquerdo) pra compor_arte_vertical.
     Salva em ARTES_FOLDER/<codbar>_vertical.webp — nome de arquivo distinto da arte horizontal
     (<codbar>.webp), pra nunca colidir/sobrescrever uma com a outra; os dois podem coexistir
     pro mesmo produto (um terminal horizontal e um vertical na mesma loja, por exemplo)."""
@@ -5212,7 +5264,7 @@ def gerar_arte_publicitaria_vertical(produto, image_path):
     if not api_key or not _gemini_ativo():
         raise ValueError('Gemini desativado (sem chave configurada, ou desligado em Configurações → Flags de Funcionamento).')
 
-    prompt = _montar_prompt_arte(produto)
+    prompt = _montar_prompt_arte(produto, vertical=True)
 
     ext = image_path.rsplit('.', 1)[-1].lower()
     mime_type = 'image/png' if ext == 'png' else 'image/jpeg' if ext in ('jpg', 'jpeg') else 'image/webp'
@@ -5228,7 +5280,7 @@ def gerar_arte_publicitaria_vertical(produto, image_path):
                 prompt,
             ],
             config=genai_types.GenerateContentConfig(
-                image_config=genai_types.ImageConfig(aspect_ratio='4:3'),
+                image_config=genai_types.ImageConfig(aspect_ratio='2:3'),
             ),
         )
         _registrar_uso_gemini('imagem', sucesso=True)
@@ -5249,7 +5301,8 @@ def gerar_arte_publicitaria_vertical(produto, image_path):
 
     cena_bytes = _cortar_tarjas_pretas(cena_bytes)
     cor_acento = _extrair_cor_acento(image_path)
-    output_bytes = compor_arte_vertical(cena_bytes, produto, cor_acento)
+    nome_produto, headline, beneficios, quantidade, marca = gerar_textos_arte_ia(produto)
+    output_bytes = compor_arte_vertical(cena_bytes, produto, cor_acento, nome_produto, headline, beneficios, quantidade, marca)
 
     output_path = os.path.join(ARTES_FOLDER, f'{produto.codbar}_vertical.webp')
     with open(output_path, 'wb') as out_file:
@@ -7333,7 +7386,7 @@ def _montar_prompt_arte_manual(descricao, marca, nome, quantidade, headline, ben
     bloco_textos = '\n'.join(textos)
     if beneficios:
         lista = '\n'.join(f'  {i + 1}. "{b}"' for i, b in enumerate(beneficios))
-        onde = ('dentro da faixa superior, encostados na borda direita e na parte de baixo da cena' if vertical
+        onde = ('no canto inferior DIREITO, encostados na borda direita, na altura da caixa do preço (que fica à esquerda)' if vertical
                 else 'encostados na borda direita da imagem, na parte de baixo')
         quantos = 'exatamente este texto' if len(beneficios) == 1 else 'exatamente estes %d textos, nesta ordem' % len(beneficios)
         bloco_benef = f'SELOS DE BENEFÍCIO ({quantos}):\n{lista}\nCada um dentro de uma cápsula escura translúcida com um círculo de check na cor do painel, empilhados, {onde}, sem cobrir o produto.'
@@ -7341,13 +7394,15 @@ def _montar_prompt_arte_manual(descricao, marca, nome, quantidade, headline, ben
         bloco_benef = 'NÃO inclua selos de benefício nem listas de vantagens.'
 
     if vertical:
+        px0, px1 = round(VERT_PRECO_X0_PCT * 100), round(VERT_PRECO_X1_PCT * 100)
+        py0, py1 = round(VERT_PRECO_Y0_PCT * 100), round(VERT_PRECO_Y1_PCT * 100)
         layout = f"""LAYOUT (imagem EM PÉ, {largura}x{altura} px, proporção {proporcao}) — siga exatamente:
-- FAIXA SUPERIOR (de 0% a 45% da altura): a cena fotográfica com o produto, grande, centralizado e 100% visível, sem nenhum corte. Nenhum texto aqui.
-- FAIXA INFERIOR (de 45% a 100% da altura): um painel de cor sólida, na cor: {cor_txt}, cobrindo toda a largura, com a borda de cima em uma curva suave e orgânica (uma onda), sobreposto à base da cena.
-- Dentro do painel, a partir do topo (logo abaixo da curva), nesta ordem:
+- A cena fotográfica ocupa a imagem INTEIRA (tela cheia). Por cima dela, no TOPO, um painel de cor sólida, na cor: {cor_txt}, cobrindo toda a largura, de 0% até cerca de 22-28% da altura, com a borda de BAIXO em uma curva suave e orgânica (uma onda: mais baixa no lado esquerdo, subindo até o lado direito).
+- Dentro do painel, alinhados à esquerda (margem de cerca de 10% da largura), a partir do topo, nesta ordem:
 {bloco_textos}
-- CAIXA RESERVADA PARA O PREÇO: um retângulo branco de cantos bem arredondados com sombra suave embaixo (efeito de elevação), ocupando de 7% a 93% da largura e de 61% a 75% da altura total da imagem. Deve ficar COMPLETAMENTE VAZIA (sem número, sem "R$", sem texto) — o preço real é colocado por cima depois pelo app.
-- O restante do painel abaixo da caixa fica liso, só na cor do painel.
+- FAIXA CENTRAL (de cerca de 28% a 70% da altura): o produto, GRANDE, do lado esquerdo / centro-esquerdo, 100% visível e sem nenhum corte, integrado à cena; ao lado dele (centro-direita), elementos de apoio do cenário (prato ou tigela com o alimento pronto, ingredientes, vapor) sem repetir o produto.
+- CAIXA RESERVADA PARA O PREÇO, no CANTO INFERIOR ESQUERDO: um retângulo branco de cantos bem arredondados com sombra suave embaixo (efeito de elevação), ocupando de {px0}% a {px1}% da largura e de {py0}% a {py1}% da altura total da imagem. Deve ficar COMPLETAMENTE VAZIA (sem número, sem "R$", sem texto) — o preço real é colocado por cima depois pelo app. Nenhum outro elemento da cena entra nessa área.
+- CANTO INFERIOR DIREITO (de cerca de {px1 + 2}% da largura até a borda direita, ao mesmo nível da caixa do preço): composição simples e escura, sem o produto.
 {bloco_benef}"""
     else:
         layout = f"""LAYOUT (imagem DEITADA, {largura}x{altura} px, proporção {proporcao}) — siga exatamente:
