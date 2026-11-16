@@ -4443,7 +4443,7 @@ COMPOSIÇÃO:
 
 POSIÇÃO DOS ELEMENTOS (imagem em pé; os percentuais são só referência de onde cada coisa fica dentro da MESMA foto — não crie divisões visíveis entre eles):
 - Parte de CIMA (até cerca de 26% da altura): ambiente escuro de fundo (parede, folhagem, prateleira) desfocado, SEM o produto e SEM texto. Um sistema separado cobre depois esta parte com um painel gráfico de cor sólida com o nome do produto, então ela só precisa estar limpa.
-- Parte do MEIO (de cerca de 28% a 70% da altura): o PRODUTO, GRANDE, perfeitamente legível e totalmente integrado ao cenário, no lado ESQUERDO / centro-esquerdo (ocupando de cerca de 5% a 62% da largura), com a base apoiada na mesa. REGRA CRÍTICA: o produto PRECISA aparecer 100% visível e sem nenhum corte — nenhuma parte dele (rótulo, tampa, base) pode ficar cortada pelas bordas. Ao lado dele (centro-direita) ficam elementos de apoio bem iluminados — prato ou tigela com o alimento pronto, ingredientes frescos, vapor, texturas — que reforçam o desejo, sem repetir o produto.
+- Parte do MEIO (de cerca de 28% a 66% da altura): o PRODUTO, GRANDE, perfeitamente legível e totalmente integrado ao cenário, no lado ESQUERDO / centro-esquerdo (ocupando de cerca de 5% a 62% da largura), com a base apoiada na mesa. A BASE do produto fica no MÁXIMO a 66% da altura da imagem — abaixo dele sobra mesa livre. REGRA CRÍTICA: o produto PRECISA aparecer 100% visível e sem nenhum corte — nenhuma parte dele (rótulo, tampa, base) pode ficar cortada pelas bordas. Ao lado dele (centro-direita) ficam elementos de apoio bem iluminados — prato ou tigela com o alimento pronto, ingredientes frescos, vapor, texturas — que reforçam o desejo, sem repetir o produto.
 - Parte de BAIXO (de cerca de 72% até a borda inferior): é a própria MESA em primeiro plano (madeira escura ou bancada, com textura natural), continuando a mesma cena. No lado direito pode haver poucos elementos pequenos e discretos (folhas, grãos, temperos soltos). O CANTO INFERIOR ESQUERDO (da borda esquerda até cerca de 58% da largura, a partir de cerca de 76% da altura) deve ficar com a mesa VAZIA e uniforme — sem produto, sem ingredientes, sem objetos, sem texto: um sistema separado coloca ali uma caixa com o preço. O CANTO INFERIOR DIREITO (de cerca de 52% da largura até a borda) também fica sem o produto, pois ali entram selos de benefício.
 - Use as cores da própria embalagem como referência para a identidade visual da arte.
 """
@@ -5219,16 +5219,30 @@ def compor_arte_vertical(cena_bytes, produto, cor_acento, nome_produto=None, hea
     if beneficios:
         # Selos no canto inferior DIREITO, empilhados e ancorados na base (referência). A cápsula escura
         # translúcida de `_desenhar_bullet_beneficio` garante leitura sobre qualquer parte da cena.
-        f_benef = fonte(altura * 0.0185, 'Medium')
         diametro = int(altura * 0.034)
         passo = int(altura * 0.052)
-        usados = beneficios[:3]
+        usados = list(beneficios[:3])
+        # largura útil do texto: da borda direita da caixa do preço até o ícone (menos os respiros da cápsula)
+        largura_texto = int(largura * 0.955) - diametro - int(diametro * 0.35) - int(largura * (VERT_PRECO_X1_PCT + 0.02)) - int(diametro * 0.35)
+        tam_benef = altura * 0.0185
+        f_benef = fonte(tam_benef, 'Medium')
+        while max(medir.textbbox((0, 0), b, font=f_benef)[2] for b in usados) > largura_texto and tam_benef > altura * 0.0146:
+            tam_benef -= 1          # a IA às vezes devolve frases de 4-5 palavras: encolhe até caber (mínimo ~28px)
+            f_benef = fonte(tam_benef, 'Medium')
+        soltas = {'a', 'o', 'as', 'os', 'de', 'da', 'do', 'das', 'dos', 'que', 'e', 'para', 'pra', 'com', 'na', 'no', 'em', 'um', 'uma', 'por'}
+        for i, b in enumerate(usados):
+            palavras = b.split()
+            while len(palavras) > 1 and medir.textbbox((0, 0), ' '.join(palavras), font=f_benef)[2] > largura_texto:
+                palavras.pop()
+            while len(palavras) > 1 and palavras[-1].lower() in soltas:
+                palavras.pop()      # nunca termina em "a", "que"...
+            usados[i] = ' '.join(palavras)
         bloco_h = passo * (len(usados) - 1) + diametro
         icone_x = int(largura * 0.955) - diametro
         bloco_y = int(altura * VERT_PRECO_Y1_PCT) - bloco_h
         for i, txt in enumerate(usados):
             _desenhar_bullet_beneficio(draw, icone_x, bloco_y + i * passo, diametro, cor_painel, txt,
-                                       f_benef, int(largura * 0.34), alinhar_direita=True)
+                                       f_benef, largura_texto + 40, alinhar_direita=True)
 
     # Caixa vazia (com sombra) reservando o espaço do preço — ver docstring. Posição FIXA (VERT_PRECO_*).
     cx0, cx1 = int(largura * VERT_PRECO_X0_PCT), int(largura * VERT_PRECO_X1_PCT)
